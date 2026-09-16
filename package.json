@@ -6,10 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "assemble": "node scripts/assemble.js",
-    "predev": "node scripts/assemble.js",
-    "prebuild": "node scripts/assemble.js"
+    "lint": "next lint"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.13",
