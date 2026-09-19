@@ -1,0 +1,15 @@
+server/middleware/grok-pwa.ts
+scripts/write-atomic.mjs
+src/lib/auth/verify.server.ts
+src/lib/app-data/use-connector-readiness.ts
+src/lib/auth/pglite-dialect.ts
+scripts/check-auth-invariant.mjs
+scripts/check-auth-invariant.test.mjs
+scripts/with-app-env.test.mjs
+scripts/with-app-env.mjs
+scripts/browser-smoke-verdict.mjs
+src/lib/auth/gates.tsx
+src/utils/compileAttachments.js
+scripts/install-page.html
+src/lib/auth/gate-identity.server.ts
+src/lib/estimator/zeroValues.js

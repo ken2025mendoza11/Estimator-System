@@ -1,0 +1,5 @@
+src/lib/app-data/client.server.ts
+src/lib/auth/gate-session.server.ts
+src/utils/exportDocuments.js
+src/lib/auth/server.ts
+src/lib/auth/gate-identity.test.ts

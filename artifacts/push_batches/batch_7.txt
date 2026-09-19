@@ -1,0 +1,2 @@
+supabase/schema.sql
+src/components/AdminHub.jsx

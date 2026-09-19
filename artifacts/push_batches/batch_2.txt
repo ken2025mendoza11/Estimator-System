@@ -1,0 +1,9 @@
+scripts/sign-out-plan.mjs
+scripts/browser-smoke.mjs
+src/lib/auth/popup.server.ts
+scripts/grok-pwa-plugin.mjs
+public/__grok/install/styles.css
+vite.config.ts
+scripts/write-atomic.test.mjs
+src/lib/estimator/supabase-workspace.ts
+scripts/sign-out-plan.test.mjs
