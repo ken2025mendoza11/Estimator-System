@@ -35,8 +35,8 @@ export const STANDARD_TEMPLATES = [
   {
     id: 'hybrid',
     title: 'Hybrid',
-    description: 'Combination of onsite, shopwork, and trading — coming later.',
-    enabled: false,
+    description: 'Onsite + shop + trading in one CE. Work-type groups are created from the RCE ticks.',
+    enabled: true,
   },
 ];
 
@@ -78,6 +78,9 @@ export function NewCostEstimateWizard({
   ceList = [],
   initialRce = null,
   currentUserName,
+  officialPacks = [],
+  documents = {},
+  inspectionReports = [],
   onCancel,
   onCreate,
 }) {
@@ -97,9 +100,21 @@ export function NewCostEstimateWizard({
   const [standardId, setStandardId] = useState('onsite');
   const [prebuiltId, setPrebuiltId] = useState('pre-onsite');
   const [previousCeId, setPreviousCeId] = useState('');
+  const [stripNotes, setStripNotes] = useState(true);
+  const [stripAttachments, setStripAttachments] = useState(true);
+  const [seedOif, setSeedOif] = useState(true);
+  const [packId, setPackId] = useState('');
 
   const selectedRce = (rceList || []).find(
     (r) => rceLabel(r) === form.rceId
+  );
+  const liveForRce = (ceList || []).find(
+    (ce) =>
+      form.rceId &&
+      (ce.rceId === form.rceId || ce.rceId === selectedRce?.id) &&
+      ce.status !== 'Cancelled' &&
+      ce.status !== 'No quote' &&
+      ce.status !== 'Done'
   );
 
   function applyRce(rce) {
@@ -122,7 +137,32 @@ export function NewCostEstimateWizard({
       templateKind === 'previous'
         ? 'onsite'
         : tpl?.standardId || tpl?.id || 'onsite';
-    if (templateType === 'hybrid') return;
+    if (liveForRce) {
+      const reuse = window.confirm(
+        `RCE ${form.rceId} already has live CE ${liveForRce.id}. Open that CE instead of creating a second number?`
+      );
+      if (reuse) {
+        onCreate({
+          ...form,
+          reuseCeId: liveForRce.id,
+          rceId: form.rceId.trim(),
+          client: form.client.trim(),
+          project: form.project.trim() || 'New Cost Estimate',
+          location: form.location.trim(),
+          description: form.description.trim(),
+        });
+        return;
+      }
+      window.alert(
+        'Generate is disabled while a live CE exists. Cancel or No-quote the first CE, or ask an admin for a duplicate exception.'
+      );
+      return;
+    }
+    const oif = (inspectionReports || []).find(
+      (rep) =>
+        rep.rceNo === form.rceId ||
+        (rep.project && rep.project === form.project)
+    );
     onCreate({
       rceId: form.rceId.trim(),
       client: form.client.trim(),
@@ -134,10 +174,16 @@ export function NewCostEstimateWizard({
       templateId:
         templateKind === 'previous'
           ? previousCeId
+          : templateKind === 'pack'
+          ? packId
           : templateKind === 'prebuilt'
           ? prebuiltId
           : standardId,
       sourceCeId: templateKind === 'previous' ? previousCeId : null,
+      packId: templateKind === 'pack' ? packId : null,
+      stripNotes: templateKind === 'previous' ? stripNotes : false,
+      stripAttachments: templateKind === 'previous' ? stripAttachments : false,
+      seedOif: !!oif && seedOif,
       assignedTo: currentUserName || 'Estimator A',
     });
   }
@@ -224,8 +270,11 @@ export function NewCostEstimateWizard({
 
           {selectedRce && rceMode === 'existing' && (
             <p className="wiz-hint">
-              Linked to {rceLabel(selectedRce)}. Client, project, and location
-              were filled from the RCE — edit if needed.
+              Linked to {rceLabel(selectedRce)}. Client, project, location,
+              remarks, work-type ticks, and attachments will stamp into the CE.
+              {liveForRce
+                ? ` Live CE ${liveForRce.id} already exists for this RCE.`
+                : ''}
             </p>
           )}
 
@@ -274,7 +323,19 @@ export function NewCostEstimateWizard({
             <button
               type="button"
               className="ce-btn-primary"
-              onClick={() => setStep(2)}
+              onClick={() => {
+                const missing = [];
+                if (!String(form.rceId || '').trim()) missing.push('RCE #');
+                if (!String(form.client || '').trim()) missing.push('Client');
+                if (!String(form.project || '').trim()) missing.push('Project description');
+                if (missing.length) {
+                  window.alert(
+                    `Fill the required fields before choosing a template:\n- ${missing.join('\n- ')}`
+                  );
+                  return;
+                }
+                setStep(2);
+              }}
             >
               Next — choose template
             </button>
@@ -284,6 +345,11 @@ export function NewCostEstimateWizard({
 
       {step === 2 && (
         <div className="ce-card wiz-card">
+          <p className="wiz-hint">
+            Work-type groups, RCE remarks, attachments, and a matching
+            inspection (if any) stamp into the CE. Cloning a previous CE
+            strips notes by default so old assumptions stay off the new price.
+          </p>
           <div className="wiz-rce-mode">
             <button
               type="button"
@@ -298,6 +364,13 @@ export function NewCostEstimateWizard({
               onClick={() => setTemplateKind('prebuilt')}
             >
               Pre-built
+            </button>
+            <button
+              type="button"
+              className={`ce-pill ${templateKind === 'pack' ? 'ce-pill-active' : ''}`}
+              onClick={() => setTemplateKind('pack')}
+            >
+              Task pack
             </button>
             <button
               type="button"
@@ -346,6 +419,32 @@ export function NewCostEstimateWizard({
             </div>
           )}
 
+          {templateKind === 'pack' && (
+            <div className="wiz-tpl-grid">
+              {(officialPacks || []).length === 0 ? (
+                <p className="wiz-hint">
+                  No packs yet. Department packs (seal, retube, blast-and-coat,
+                  shop fab) live under Per Task Template — official ones are
+                  marked.
+                </p>
+              ) : (
+                (officialPacks || []).map((p) => (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className={'wiz-tpl' + (packId === p.id ? ' wiz-tpl-on' : '')}
+                    onClick={() => setPackId(p.id)}
+                  >
+                    <strong>
+                      {p.name} {p.official ? '· Official' : '· Private'}
+                    </strong>
+                    <span>{p.notes || p.workType || 'Subtask pack'}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+
           {templateKind === 'previous' && (
             <div>
               {previousCEs.length === 0 ? (
@@ -371,6 +470,46 @@ export function NewCostEstimateWizard({
                   ))}
                 </div>
               )}
+              {previousCeId ? (
+                <div className="wiz-preview">
+                  <label className="wiz-field">
+                    <span className="ce-field-label">
+                      <input
+                        type="checkbox"
+                        checked={stripNotes}
+                        onChange={(e) => setStripNotes(e.target.checked)}
+                      />{' '}
+                      Strip notes from the clone (recommended)
+                    </span>
+                  </label>
+                  <label className="wiz-field">
+                    <span className="ce-field-label">
+                      <input
+                        type="checkbox"
+                        checked={stripAttachments}
+                        onChange={(e) => setStripAttachments(e.target.checked)}
+                      />{' '}
+                      Strip client attachments / remarks
+                    </span>
+                  </label>
+                  {(() => {
+                    const src = documents[previousCeId] || {};
+                    const tasks = src.tasks || [];
+                    const nSub = tasks.reduce(
+                      (s, t) => s + (t.subtasks || []).length,
+                      0
+                    );
+                    return (
+                      <p className="wiz-hint">
+                        Will copy {tasks.length} main task(s), {nSub} subtask(s).
+                        Rates and structure stay. Notes{' '}
+                        {stripNotes ? 'stripped' : 'copied'}. Attachments{' '}
+                        {stripAttachments ? 'stripped' : 'copied'}.
+                      </p>
+                    );
+                  })()}
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -382,10 +521,30 @@ export function NewCostEstimateWizard({
             >
               Back
             </button>
+            {(() => {
+              const oif = (inspectionReports || []).find(
+                (rep) =>
+                  rep.rceNo === form.rceId ||
+                  (rep.project && rep.project === form.project)
+              );
+              return oif ? (
+                <label className="ce-field-label" style={{ marginRight: 'auto' }}>
+                  <input
+                    type="checkbox"
+                    checked={seedOif}
+                    onChange={(e) => setSeedOif(e.target.checked)}
+                  />{' '}
+                  Create draft tasks from inspection {oif.oifNo || ''}
+                </label>
+              ) : null;
+            })()}
             <button
               type="button"
               className="ce-btn-primary"
-              disabled={templateKind === 'previous' && !previousCeId}
+              disabled={
+                (templateKind === 'previous' && !previousCeId) ||
+                (templateKind === 'pack' && !packId)
+              }
               onClick={handleCreate}
             >
               Create and open editor
@@ -1088,6 +1247,13 @@ const EL_STANDARDS = [
   { id: 's8', group: 'Coating', name: 'Volume solids (epoxy)', value: '70–80%', note: 'High-build' },
   { id: 's9', group: 'Coating', name: 'Wastage allowance', value: '15–25%', note: 'Onsite spray' },
   { id: 's10', group: 'Pipe', name: 'Steel pipe weight factor', value: '0.02466', note: '(OD−WT)×WT×L' },
+  { id: 's11', group: 'Welding', name: 'GTAW deposition efficiency', value: '100%', note: 'TIG' },
+  { id: 's12', group: 'Air cargo', name: 'Cebu Air rate', value: 'PHP 65.00/kg', note: 'Weight charge' },
+  { id: 's13', group: 'Air cargo', name: 'Valuation charge', value: '1% of declared value', note: 'Cebu Air Cargo' },
+  { id: 's14', group: 'Air cargo', name: 'Other charges', value: '10% of weight + valuation', note: 'Estimate only; Ceb Pac sets the actual' },
+  { id: 's15', group: 'Air cargo', name: 'VAT', value: '12%', note: 'On weight, valuation, and other charges' },
+  { id: 's16', group: 'Air cargo', name: 'Payment buffer', value: '25%', note: 'Add when requesting payment' },
+  { id: 's17', group: 'Air cargo', name: 'Volumetric divisor', value: '6000', note: 'L × W × H (cm) ÷ 6000 = kg' },
 ];
 
 function num(v) {
@@ -1095,80 +1261,122 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function ElCalculatorView() {
+const DEPOSITION = { SMAW: 65, GMAW: 90, FCAW: 85, SAW: 98, GTAW: 100 };
+
+export function ElCalculatorView({ onInsert }) {
   const [tool, setTool] = useState('weld');
   const [weld, setWeld] = useState({
     process: 'SMAW',
     jointType: 'fillet',
-    lengthM: 10,
-    sizeMm: 6,
-    efficiency: 65,
-    wastage: 10,
+    lengthM: '',
+    sizeMm: '',
+    efficiency: DEPOSITION.SMAW,
+    wastage: '',
     density: 7.85,
   });
   const [paint, setPaint] = useState({
-    area: 100,
-    coats: 2,
-    dft: 200,
-    solids: 75,
-    wastage: 20,
+    area: '',
+    coats: '',
+    dft: '',
+    solids: '',
+    wastage: '',
   });
   const [raw, setRaw] = useState({
     kind: 'plate',
-    length: 1.2,
-    width: 2.4,
-    thick: 12,
-    od: 168.3,
-    wt: 7.11,
+    length: '',
+    width: '',
+    thick: '',
+    od: '',
+    wt: '',
     density: 7.85,
+  });
+  const [air, setAir] = useState({
+    grossKg: '',
+    lengthCm: '',
+    widthCm: '',
+    heightCm: '',
+    declaredValue: '',
+    ratePerKg: 65,
+    valuationPct: 1,
+    otherPct: 10,
+    vatPct: 12,
+    bufferPct: 25,
+    divisor: 6000,
   });
   const [stdQuery, setStdQuery] = useState('');
 
+  const weldReady = weld.lengthM !== '' && weld.sizeMm !== '';
   const weldKg = useMemo(() => {
+    if (!weldReady) return null;
     const lengthMm = num(weld.lengthM) * 1000;
     const z = num(weld.sizeMm);
-    const areaMm2 =
-      weld.jointType === 'fillet' ? (z * z) / 2 : z * z * 0.7;
+    const areaMm2 = weld.jointType === 'fillet' ? (z * z) / 2 : z * z * 0.7;
     const volumeCm3 = (areaMm2 * lengthMm) / 1000;
     const theoreticalKg = (volumeCm3 * num(weld.density)) / 1000;
     const deposited = theoreticalKg / Math.max(num(weld.efficiency) / 100, 0.01);
     return deposited * (1 + num(weld.wastage) / 100);
-  }, [weld]);
+  }, [weld, weldReady]);
 
+  const paintReady = paint.area !== '' && paint.coats !== '' && paint.dft !== '' && paint.solids !== '';
   const paintL = useMemo(() => {
+    if (!paintReady) return null;
     const coverage = (num(paint.solids) / 100) * (10 / Math.max(num(paint.dft), 1));
     const liters = (num(paint.area) * num(paint.coats)) / Math.max(coverage, 0.0001);
     return liters * (1 + num(paint.wastage) / 100);
-  }, [paint]);
+  }, [paint, paintReady]);
 
+  const rawReady = raw.kind === 'pipe' ? raw.od !== '' && raw.wt !== '' && raw.length !== '' : raw.length !== '' && raw.width !== '' && raw.thick !== '';
   const rawKg = useMemo(() => {
+    if (!rawReady) return null;
     if (raw.kind === 'pipe') {
-      return (
-        (num(raw.od) - num(raw.wt)) *
-        num(raw.wt) *
-        0.02466 *
-        num(raw.length)
-      );
+      return (num(raw.od) - num(raw.wt)) * num(raw.wt) * 0.02466 * num(raw.length);
     }
     return num(raw.length) * num(raw.width) * num(raw.thick) * num(raw.density);
-  }, [raw]);
+  }, [raw, rawReady]);
+
+  const airFreight = useMemo(() => {
+    const hasDims = air.lengthCm !== '' && air.widthCm !== '' && air.heightCm !== '';
+    const volumetric = hasDims
+      ? (num(air.lengthCm) * num(air.widthCm) * num(air.heightCm)) / Math.max(num(air.divisor), 1)
+      : null;
+    const gross = air.grossKg === '' ? null : num(air.grossKg);
+    const chargeable =
+      gross == null && volumetric == null ? null : Math.max(gross || 0, volumetric || 0);
+    const weightCharge = chargeable == null ? null : chargeable * num(air.ratePerKg);
+    const valuation = air.declaredValue === '' ? null : num(air.declaredValue) * (num(air.valuationPct) / 100);
+    const other =
+      weightCharge == null || valuation == null
+        ? null
+        : (weightCharge + valuation) * (num(air.otherPct) / 100);
+    const vat =
+      weightCharge == null || valuation == null || other == null
+        ? null
+        : (weightCharge + valuation + other) * (num(air.vatPct) / 100);
+    const total =
+      weightCharge == null || valuation == null || other == null || vat == null
+        ? null
+        : weightCharge + valuation + other + vat;
+    const request = total == null ? null : total * (1 + num(air.bufferPct) / 100);
+    return { volumetric, chargeable, weightCharge, valuation, other, vat, total, request };
+  }, [air]);
 
   const standards = EL_STANDARDS.filter(
-    (s) =>
-      !stdQuery ||
-      `${s.group} ${s.name} ${s.note}`.toLowerCase().includes(stdQuery.toLowerCase())
+    (s) => !stdQuery || `${s.group} ${s.name} ${s.note}`.toLowerCase().includes(stdQuery.toLowerCase())
   );
+  const money = (n) => (n == null ? '—' : `₱${n.toFixed(2)}`);
 
   return (
     <div className="dash-container">
       <div className="dash-header">
         <h2 className="ce-serif">EL Calculator</h2>
+        <p className="wiz-hint">Job inputs start blank. Highlighted fields are standards or part of the formula.</p>
       </div>
       <div className="wiz-rce-mode" style={{ marginBottom: '1rem' }}>
         {[
           ['weld', '6.1 Welding consumables'],
           ['paint', '6.2 Paints & coatings'],
           ['raw', '6.3 Raw materials'],
+          ['air', '6.5 Cebu Air Cargo'],
           ['std', '6.4 Standards database'],
         ].map(([k, label]) => (
           <button
@@ -1193,10 +1401,7 @@ export function ElCalculatorView() {
                 value={weld.process}
                 onChange={(e) => {
                   const process = e.target.value;
-                  const eff = { SMAW: 65, GMAW: 90, FCAW: 85, SAW: 98, GTAW: 100 }[
-                    process
-                  ];
-                  setWeld({ ...weld, process, efficiency: eff });
+                  setWeld({ ...weld, process, efficiency: DEPOSITION[process] });
                 }}
               >
                 <option>SMAW</option>
@@ -1219,43 +1424,43 @@ export function ElCalculatorView() {
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">Weld length (m)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={weld.lengthM}
-                onChange={(e) => setWeld({ ...weld, lengthM: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={weld.lengthM} placeholder="" onChange={(e) => setWeld({ ...weld, lengthM: e.target.value })} />
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">Size / leg (mm)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={weld.sizeMm}
-                onChange={(e) => setWeld({ ...weld, sizeMm: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={weld.sizeMm} onChange={(e) => setWeld({ ...weld, sizeMm: e.target.value })} />
             </label>
             <label className="wiz-field">
-              <span className="ce-field-label">Deposition efficiency (%)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={weld.efficiency}
-                onChange={(e) => setWeld({ ...weld, efficiency: e.target.value })}
-              />
+              <span className="ce-field-label">Deposition efficiency (%) — standard</span>
+              <input className="ce-input el-air-input" type="number" value={weld.efficiency} onChange={(e) => setWeld({ ...weld, efficiency: e.target.value })} />
+            </label>
+            <label className="wiz-field">
+              <span className="ce-field-label">Density (g/cm³) — standard</span>
+              <input className="ce-input el-air-input" type="number" value={weld.density} onChange={(e) => setWeld({ ...weld, density: e.target.value })} />
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">Wastage (%)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={weld.wastage}
-                onChange={(e) => setWeld({ ...weld, wastage: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={weld.wastage} onChange={(e) => setWeld({ ...weld, wastage: e.target.value })} />
             </label>
           </div>
           <div className="el-result">
-            Required consumable <b>{weldKg.toFixed(2)} kg</b>
+            Required consumable <b>{weldKg == null ? '—' : `${weldKg.toFixed(2)} kg`}</b>
+            {onInsert && weldKg != null ? (
+              <button
+                type="button"
+                className="ce-btn-primary ce-btn-sm"
+                style={{ marginLeft: '0.75rem' }}
+                onClick={() =>
+                  onInsert({
+                    qty: Number(weldKg.toFixed(2)),
+                    unit: 'kg',
+                    notes: `from EL: weld ${weld.process} ${weld.jointType} ${weld.sizeMm}mm × ${weld.lengthM}m`,
+                  })
+                }
+              >
+                Insert as BOCM qty
+              </button>
+            ) : null}
           </div>
         </div>
       )}
@@ -1266,52 +1471,43 @@ export function ElCalculatorView() {
           <div className="wiz-grid">
             <label className="wiz-field">
               <span className="ce-field-label">Area (m²)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={paint.area}
-                onChange={(e) => setPaint({ ...paint, area: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={paint.area} onChange={(e) => setPaint({ ...paint, area: e.target.value })} />
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">Coats</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={paint.coats}
-                onChange={(e) => setPaint({ ...paint, coats: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={paint.coats} onChange={(e) => setPaint({ ...paint, coats: e.target.value })} />
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">DFT (µm)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={paint.dft}
-                onChange={(e) => setPaint({ ...paint, dft: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={paint.dft} onChange={(e) => setPaint({ ...paint, dft: e.target.value })} />
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">Volume solids (%)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={paint.solids}
-                onChange={(e) => setPaint({ ...paint, solids: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={paint.solids} onChange={(e) => setPaint({ ...paint, solids: e.target.value })} />
             </label>
             <label className="wiz-field">
               <span className="ce-field-label">Wastage (%)</span>
-              <input
-                className="ce-input"
-                type="number"
-                value={paint.wastage}
-                onChange={(e) => setPaint({ ...paint, wastage: e.target.value })}
-              />
+              <input className="ce-input" type="number" value={paint.wastage} onChange={(e) => setPaint({ ...paint, wastage: e.target.value })} />
             </label>
           </div>
           <div className="el-result">
-            Paint required <b>{paintL.toFixed(2)} L</b>
+            Paint required <b>{paintL == null ? '—' : `${paintL.toFixed(2)} L`}</b>
+            {onInsert && paintL != null ? (
+              <button
+                type="button"
+                className="ce-btn-primary ce-btn-sm"
+                style={{ marginLeft: '0.75rem' }}
+                onClick={() =>
+                  onInsert({
+                    qty: Number(paintL.toFixed(2)),
+                    unit: 'L',
+                    notes: `from EL: paint ${paint.area} m² × ${paint.coats} coats DFT ${paint.dft}µm`,
+                  })
+                }
+              >
+                Insert as BOCM qty
+              </button>
+            ) : null}
           </div>
         </div>
       )}
@@ -1320,85 +1516,103 @@ export function ElCalculatorView() {
         <div className="ce-card wiz-card">
           <h3 className="ce-serif">Raw materials</h3>
           <div className="wiz-rce-mode">
-            <button
-              type="button"
-              className={`ce-pill ${raw.kind === 'plate' ? 'ce-pill-active' : ''}`}
-              onClick={() => setRaw({ ...raw, kind: 'plate' })}
-            >
-              Plate
-            </button>
-            <button
-              type="button"
-              className={`ce-pill ${raw.kind === 'pipe' ? 'ce-pill-active' : ''}`}
-              onClick={() => setRaw({ ...raw, kind: 'pipe' })}
-            >
-              Pipe
-            </button>
+            <button type="button" className={`ce-pill ${raw.kind === 'plate' ? 'ce-pill-active' : ''}`} onClick={() => setRaw({ ...raw, kind: 'plate' })}>Plate</button>
+            <button type="button" className={`ce-pill ${raw.kind === 'pipe' ? 'ce-pill-active' : ''}`} onClick={() => setRaw({ ...raw, kind: 'pipe' })}>Pipe</button>
           </div>
           {raw.kind === 'plate' ? (
             <div className="wiz-grid">
-              <label className="wiz-field">
-                <span className="ce-field-label">Length (m)</span>
-                <input
-                  className="ce-input"
-                  type="number"
-                  value={raw.length}
-                  onChange={(e) => setRaw({ ...raw, length: e.target.value })}
-                />
-              </label>
-              <label className="wiz-field">
-                <span className="ce-field-label">Width (m)</span>
-                <input
-                  className="ce-input"
-                  type="number"
-                  value={raw.width}
-                  onChange={(e) => setRaw({ ...raw, width: e.target.value })}
-                />
-              </label>
-              <label className="wiz-field">
-                <span className="ce-field-label">Thickness (mm)</span>
-                <input
-                  className="ce-input"
-                  type="number"
-                  value={raw.thick}
-                  onChange={(e) => setRaw({ ...raw, thick: e.target.value })}
-                />
-              </label>
+              <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
+              <label className="wiz-field"><span className="ce-field-label">Width (m)</span><input className="ce-input" type="number" value={raw.width} onChange={(e) => setRaw({ ...raw, width: e.target.value })} /></label>
+              <label className="wiz-field"><span className="ce-field-label">Thickness (mm)</span><input className="ce-input" type="number" value={raw.thick} onChange={(e) => setRaw({ ...raw, thick: e.target.value })} /></label>
+              <label className="wiz-field"><span className="ce-field-label">Density (g/cm³) — standard</span><input className="ce-input el-air-input" type="number" value={raw.density} onChange={(e) => setRaw({ ...raw, density: e.target.value })} /></label>
             </div>
           ) : (
             <div className="wiz-grid">
-              <label className="wiz-field">
-                <span className="ce-field-label">Outside Ø (mm)</span>
-                <input
-                  className="ce-input"
-                  type="number"
-                  value={raw.od}
-                  onChange={(e) => setRaw({ ...raw, od: e.target.value })}
-                />
-              </label>
-              <label className="wiz-field">
-                <span className="ce-field-label">Wall thickness (mm)</span>
-                <input
-                  className="ce-input"
-                  type="number"
-                  value={raw.wt}
-                  onChange={(e) => setRaw({ ...raw, wt: e.target.value })}
-                />
-              </label>
-              <label className="wiz-field">
-                <span className="ce-field-label">Length (m)</span>
-                <input
-                  className="ce-input"
-                  type="number"
-                  value={raw.length}
-                  onChange={(e) => setRaw({ ...raw, length: e.target.value })}
-                />
-              </label>
+              <label className="wiz-field"><span className="ce-field-label">Outside Ø (mm)</span><input className="ce-input" type="number" value={raw.od} onChange={(e) => setRaw({ ...raw, od: e.target.value })} /></label>
+              <label className="wiz-field"><span className="ce-field-label">Wall thickness (mm)</span><input className="ce-input" type="number" value={raw.wt} onChange={(e) => setRaw({ ...raw, wt: e.target.value })} /></label>
+              <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
             </div>
           )}
+          <p className="wiz-hint">Pipe weight uses the standard factor 0.02466: (OD − wall) × wall × 0.02466 × length.</p>
           <div className="el-result">
-            Estimated weight <b>{rawKg.toFixed(2)} kg</b>
+            Estimated weight <b>{rawKg == null ? '—' : `${rawKg.toFixed(2)} kg`}</b>
+            {onInsert && rawKg != null ? (
+              <button
+                type="button"
+                className="ce-btn-primary ce-btn-sm"
+                style={{ marginLeft: '0.75rem' }}
+                onClick={() =>
+                  onInsert({
+                    qty: Number(rawKg.toFixed(2)),
+                    unit: 'kg',
+                    notes: `from EL: ${raw.kind} ${raw.kind === 'pipe' ? `OD ${raw.od} × ${raw.length}m` : `${raw.length}×${raw.width}×${raw.thick}mm`}`,
+                  })
+                }
+              >
+                Insert as BOCM qty
+              </button>
+            ) : null}
           </div>
+        </div>
+      )}
+
+      {tool === 'air' && (
+        <div className="ce-card wiz-card">
+          <h3 className="ce-serif">Cebu Air Cargo — freight calculator</h3>
+          <p className="wiz-hint">Weight and size are the packaging, not the item. Yellow fields are the standard rate or part of the formula. Chargeable weight is the higher of gross weight and volumetric weight.</p>
+          <div className="wiz-grid">
+            {[
+              ['grossKg', 'Gross weight (kg)', false],
+              ['lengthCm', 'Length (cm)', false],
+              ['widthCm', 'Width (cm)', false],
+              ['heightCm', 'Height (cm)', false],
+              ['declaredValue', 'Declared value (PHP)', false],
+              ['ratePerKg', 'Rate (PHP / kg) — standard', true],
+              ['valuationPct', 'Valuation (% of declared value) — formula', true],
+              ['otherPct', 'Other charges (% of weight + valuation) — formula', true],
+              ['vatPct', 'VAT (%) — formula', true],
+              ['bufferPct', 'Payment buffer (%) — formula', true],
+              ['divisor', 'Volumetric divisor — formula', true],
+            ].map(([key, label, standard]) => (
+              <label className="wiz-field" key={key}>
+                <span className="ce-field-label">{label}</span>
+                <input
+                  className={standard ? 'ce-input el-air-input' : 'ce-input'}
+                  type="number"
+                  value={air[key]}
+                  onChange={(e) => setAir({ ...air, [key]: e.target.value })}
+                />
+              </label>
+            ))}
+          </div>
+          <table className="ce-table" style={{ marginTop: '0.8rem' }}>
+            <tbody>
+              <tr><td>Volumetric weight</td><td className="ce-right ce-mono">{airFreight.volumetric == null ? '—' : `${airFreight.volumetric.toFixed(3)} kg`}</td></tr>
+              <tr><td>Chargeable weight</td><td className="ce-right ce-mono">{airFreight.chargeable == null ? '—' : `${airFreight.chargeable.toFixed(3)} kg`}</td></tr>
+              <tr><td>Weight charge</td><td className="ce-right ce-mono">{money(airFreight.weightCharge)}</td></tr>
+              <tr><td>Valuation charge</td><td className="ce-right ce-mono">{money(airFreight.valuation)}</td></tr>
+              <tr><td>Other charges</td><td className="ce-right ce-mono">{money(airFreight.other)}</td></tr>
+              <tr><td>VAT</td><td className="ce-right ce-mono">{money(airFreight.vat)}</td></tr>
+              <tr><td><b>Estimated total</b></td><td className="ce-right ce-mono"><b>{money(airFreight.total)}</b></td></tr>
+              <tr><td>Request of payment</td><td className="ce-right ce-mono">{money(airFreight.request)}</td></tr>
+            </tbody>
+          </table>
+          <p className="wiz-hint">Other charges are set by the Ceb Pac checker. The formula uses the standard percent until they confirm the actual amount. Actual weight is taken at the receiving warehouse. Add the payment buffer when requesting payment so the budget is not short.</p>
+          {onInsert && airFreight.total != null ? (
+            <button
+              type="button"
+              className="ce-btn-primary ce-btn-sm"
+              onClick={() =>
+                onInsert({
+                  qty: Number(airFreight.total.toFixed(2)),
+                  unit: 'php',
+                  notes: `from EL: Cebu Air Cargo ${airFreight.chargeable.toFixed(2)} kg chargeable, est. ₱${airFreight.total.toFixed(2)}`,
+                })
+              }
+            >
+              Insert estimated total as BOCM qty
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -1407,12 +1621,7 @@ export function ElCalculatorView() {
           <h3 className="ce-serif">Standards database</h3>
           <div className="mon-filter" style={{ marginBottom: '0.8rem' }}>
             <Search size={16} />
-            <input
-              className="ce-input"
-              placeholder="Search standards…"
-              value={stdQuery}
-              onChange={(e) => setStdQuery(e.target.value)}
-            />
+            <input className="ce-input" placeholder="Search standards…" value={stdQuery} onChange={(e) => setStdQuery(e.target.value)} />
           </div>
           <table className="ce-table">
             <thead>
@@ -1439,6 +1648,7 @@ export function ElCalculatorView() {
     </div>
   );
 }
+
 
 export function nextDocNo(prefix, list, field) {
   const year = new Date().getFullYear();

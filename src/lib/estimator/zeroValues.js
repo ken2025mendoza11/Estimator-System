@@ -133,6 +133,8 @@ const MASTER_SHEETS = [
     nameKeys: ["description"],
     fields: [
       { key: "ratePerDay", label: "Daily Rate" },
+      { key: "powerKw", label: "kW" },
+      { key: "kwhRate", label: "₱/kWh" },
     ],
   },
   {

@@ -8,6 +8,13 @@ import {
   Check,
   X,
 } from 'lucide-react';
+import {
+  MASTERLIST_SHEETS,
+  SORT_OPTIONS,
+  NAMING_OPTIONS,
+  defaultMasterlistRules,
+  normalizeMasterlistRules,
+} from '../lib/estimator/masterlistRules';
 
 export const USER_LEVELS = [
   {
@@ -82,6 +89,24 @@ export function defaultAdminConfig() {
         level: 'staff',
         status: 'active',
       },
+      {
+        id: 'u-sales',
+        name: 'Sales Representative',
+        email: 'sales.rep@costing.local',
+        designation: 'Sales Representative',
+        department: 'Sales',
+        level: 'staff',
+        status: 'active',
+      },
+      {
+        id: 'u-sales-mgr',
+        name: 'Sales Manager',
+        email: 'sales.manager@costing.local',
+        designation: 'Sales Manager',
+        department: 'Sales',
+        level: 'lead',
+        status: 'active',
+      },
     ],
     pending: [
       {
@@ -114,16 +139,16 @@ export function defaultAdminConfig() {
       ce: [
         { id: 'ce-1', title: 'Prepared by Estimator', role: 'staff' },
         { id: 'ce-2', title: 'Reviewed by Lead', role: 'lead' },
-        { id: 'ce-3', title: 'Approved by Head', role: 'head' },
+        { id: 'ce-3', title: 'Approved by Head', role: 'head', isFinal: true },
       ],
       rce: [
         { id: 'rce-1', title: 'Prepared by Sales', role: 'staff' },
         { id: 'rce-2', title: 'Reviewed by Sales Manager', role: 'lead' },
-        { id: 'rce-3', title: 'Accepted by Costing', role: 'head' },
+        { id: 'rce-3', title: 'Accepted by Final approver', role: 'head', isFinal: true },
       ],
       oif: [
         { id: 'oif-1', title: 'Prepared by Inspector', role: 'staff' },
-        { id: 'oif-2', title: 'Noted by Lead', role: 'lead' },
+        { id: 'oif-2', title: 'Noted by Lead', role: 'lead', isFinal: true },
       ],
     },
     documentControl: {
@@ -141,7 +166,33 @@ export function defaultAdminConfig() {
       revision: '1.0',
       showLogo: true,
     },
+    masterlistRules: defaultMasterlistRules(),
   };
+}
+
+function ensureSalesUsers(users) {
+  const list = Array.isArray(users) ? [...users] : [];
+  const have = new Set(list.map((u) => String(u.email || u.name || '').toLowerCase()));
+  defaultAdminConfig()
+    .users.filter((u) => u.department === 'Sales')
+    .forEach((u) => {
+      if (!have.has(String(u.email).toLowerCase()) && !have.has(String(u.name).toLowerCase())) {
+        list.push(u);
+      }
+    });
+  return list;
+}
+
+function normalizeRceFlow(steps, fallback) {
+  const list = Array.isArray(steps) && steps.length ? steps.map((s) => ({ ...s })) : fallback;
+  return list.map((s) => {
+    if (s.role === 'head' && /costing/i.test(String(s.title || ''))) {
+      return { ...s, title: 'Accepted by Final approver', isFinal: true };
+    }
+    if (s.role === 'staff' && !s.title) return { ...s, title: 'Prepared by Sales' };
+    if (s.role === 'lead' && !s.title) return { ...s, title: 'Reviewed by Sales Manager' };
+    return s;
+  });
 }
 
 export function normalizeAdminConfig(raw) {
@@ -152,7 +203,9 @@ export function normalizeAdminConfig(raw) {
     : {};
   return {
     users:
-      Array.isArray(src.users) && src.users.length ? src.users : base.users,
+      Array.isArray(src.users) && src.users.length
+        ? ensureSalesUsers(src.users)
+        : base.users,
     pending: Array.isArray(src.pending) ? src.pending : base.pending,
     designations:
       Array.isArray(src.designations) && src.designations.length
@@ -160,7 +213,7 @@ export function normalizeAdminConfig(raw) {
         : base.designations,
     approvalFlows: {
       ce: Array.isArray(flows.ce) ? flows.ce : base.approvalFlows.ce,
-      rce: Array.isArray(flows.rce) ? flows.rce : base.approvalFlows.rce,
+      rce: normalizeRceFlow(flows.rce, base.approvalFlows.rce),
       oif: Array.isArray(flows.oif) ? flows.oif : base.approvalFlows.oif,
     },
     documentControl: {
@@ -169,6 +222,7 @@ export function normalizeAdminConfig(raw) {
         ? src.documentControl
         : {}),
     },
+    masterlistRules: normalizeMasterlistRules(src.masterlistRules),
   };
 }
 
@@ -197,7 +251,7 @@ export function AdminHub({ config, onChange }) {
         <div>
           <h2 className="ce-serif">Admin</h2>
           <p className="wiz-sub">
-            Registration, roles, approval routes, and export letterhead.
+            Registration, roles, approval routes, masterlist order, and export letterhead.
             Login will lock this to Administrators — settings save now.
           </p>
         </div>
@@ -206,6 +260,7 @@ export function AdminHub({ config, onChange }) {
         {[
           ['users', 'User access'],
           ['flow', 'Approval flow'],
+          ['list', 'Masterlist'],
           ['docs', 'Document control'],
         ].map(([k, label]) => (
           <button
@@ -222,6 +277,7 @@ export function AdminHub({ config, onChange }) {
       </div>
       {tab === 'users' && <UserAccessPanel cfg={cfg} patch={patch} />}
       {tab === 'flow' && <ApprovalFlowPanel cfg={cfg} patch={patch} />}
+      {tab === 'list' && <MasterlistRulesPanel cfg={cfg} patch={patch} />}
       {tab === 'docs' && <DocumentControlPanel cfg={cfg} patch={patch} />}
     </div>
   );
@@ -689,9 +745,9 @@ function ApprovalFlowPanel({ cfg, patch }) {
     <div className="ce-card wiz-card">
       <h3 className="ce-serif">Approval flow</h3>
       <p className="wiz-hint">
-        Ordered route for each document. Add, remove, or swap steps — the
-        document follows this list, not hardcoded 1st / 2nd / 3rd titles.
-        Login will walk this list on submit.
+        Ordered route for each document. Mark one step as Final — that
+        acceptance creates the job (RCE) or closes the CE. Login is not
+        required; the acting user on the sidebar walks this list.
       </p>
       <div className="wiz-rce-mode">
         {DOC_TYPES.map((d) => (
@@ -737,6 +793,22 @@ function ApprovalFlowPanel({ cfg, patch }) {
                 </option>
               ))}
             </select>
+            <label className="ce-picker-row" title="Final approver">
+              <input
+                type="checkbox"
+                checked={!!step.isFinal}
+                onChange={() =>
+                  setSteps(
+                    steps.map((s) =>
+                      s.id === step.id
+                        ? { ...s, isFinal: !s.isFinal }
+                        : { ...s, isFinal: false }
+                    )
+                  )
+                }
+              />
+              <span>Final</span>
+            </label>
             <button
               type="button"
               className="ce-btn-ghost ce-btn-sm"
@@ -785,7 +857,7 @@ function ApprovalFlowPanel({ cfg, patch }) {
       </button>
       <p className="wiz-hint" style={{ marginTop: '0.9rem' }}>
         {current?.label} currently:{' '}
-        {steps.map((s) => s.title).join(' → ') || 'no route'}
+        {steps.map((s) => s.title + (s.isFinal ? ' (Final)' : '')).join(' → ') || 'no route'}
       </p>
     </div>
   );
@@ -1006,3 +1078,149 @@ function DocumentControlPanel({ cfg, patch }) {
     </div>
   );
 }
+
+function MasterlistRulesPanel({ cfg, patch }) {
+  const rules = normalizeMasterlistRules(cfg.masterlistRules);
+  function setSheet(key, partial) {
+    patch({
+      masterlistRules: {
+        ...rules,
+        sheets: {
+          ...rules.sheets,
+          [key]: { ...rules.sheets[key], ...partial },
+        },
+      },
+    });
+  }
+  function applyAll(field, value) {
+    const sheets = { ...rules.sheets };
+    MASTERLIST_SHEETS.forEach((s) => {
+      sheets[s.key] = { ...sheets[s.key], [field]: value };
+    });
+    patch({ masterlistRules: { ...rules, sheets } });
+  }
+  return (
+    <div className="ce-card wiz-card">
+      <h3 className="ce-serif" style={{ marginTop: 0 }}>
+        Masterlist sort and naming
+      </h3>
+      <p className="wiz-sub">
+        Change how Database lists items without a code change. Naming is applied
+        when a new item is saved. Sort is the default until someone clicks a
+        column header.
+      </p>
+      <div className="wiz-grid" style={{ margin: '0.9rem 0 1rem' }}>
+        <label className="wiz-field">
+          <span className="ce-field-label">Apply this sort to every sheet</span>
+          <select
+            className="ce-input"
+            defaultValue=""
+            onChange={(e) => {
+              if (e.target.value) applyAll('sort', e.target.value);
+              e.target.value = '';
+            }}
+          >
+            <option value="">Choose…</option>
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="wiz-field">
+          <span className="ce-field-label">Apply this naming to every sheet</span>
+          <select
+            className="ce-input"
+            defaultValue=""
+            onChange={(e) => {
+              if (e.target.value) applyAll('naming', e.target.value);
+              e.target.value = '';
+            }}
+          >
+            <option value="">Choose…</option>
+            {NAMING_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="wiz-field">
+          <span className="ce-field-label">
+            Similar-name warning (0.50–0.95)
+          </span>
+          <input
+            className="ce-input"
+            type="number"
+            min="0.5"
+            max="0.95"
+            step="0.01"
+            value={rules.similarity}
+            onChange={(e) =>
+              patch({
+                masterlistRules: {
+                  ...rules,
+                  similarity: Number(e.target.value) || 0.78,
+                },
+              })
+            }
+          />
+        </label>
+      </div>
+      <table className="ce-table admin-rules-table">
+        <thead>
+          <tr>
+            <th>Sheet</th>
+            <th>Default sort</th>
+            <th>Standard naming</th>
+          </tr>
+        </thead>
+        <tbody>
+          {MASTERLIST_SHEETS.map((s) => {
+            const row = rules.sheets[s.key] || {};
+            return (
+              <tr key={s.key}>
+                <td>{s.label}</td>
+                <td>
+                  <select
+                    className="ce-input"
+                    value={row.sort || 'name-asc'}
+                    onChange={(e) => setSheet(s.key, { sort: e.target.value })}
+                  >
+                    {SORT_OPTIONS.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    className="ce-input"
+                    value={row.naming || 'title'}
+                    onChange={(e) => setSheet(s.key, { naming: e.target.value })}
+                  >
+                    {NAMING_OPTIONS.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="wiz-hint">
+        Title Case keeps short codes (BOL, PPE, NDT) in capitals. Custom order
+        uses the Sort # field on each item. Custom Standard groups Manpower as
+        PM, Admin, then Manpower; Consumables from Welding through Materials;
+        Tools & Equipment from Equipment to Safety Equipment; and PPE from
+        General through Safety Equipment. Other sheets stay A–Z.
+      </p>
+    </div>
+  );
+}
+

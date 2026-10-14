@@ -83,7 +83,7 @@ const drawHeaderFooter = (doc, data) => {
   doc.text(footerRight || '', pageWidth - 12, pageHeight - 8, { align: 'right' });
 };
 
-export function exportToPDF(data) {
+function renderCostEstimatePdf(data) {
   const { ceNumber, sections } = data;
 
   const doc = new jsPDF({
@@ -132,7 +132,13 @@ export function exportToPDF(data) {
     });
   });
 
-  doc.save(`Cost_Estimate_${ceNumber || 'export'}.pdf`);
+  return doc;
+}
+
+export function exportToPDF(data) {
+  const doc = renderCostEstimatePdf(data);
+  doc.save(`Cost_Estimate_${data.ceNumber || 'export'}.pdf`);
+  return doc;
 }
 
 export function exportToExcel(data) {
@@ -188,6 +194,163 @@ export function exportToExcel(data) {
   });
 
   XLSX.writeFile(wb, `Cost_Estimate_${ceNumber || 'export'}.xlsx`);
+}
+
+function sheetName(title) {
+  return String(title || 'Sheet').replace(/[\\/?*[\]]/g, ' ').slice(0, 31);
+}
+
+function issuePdfData(data = {}) {
+  const cover = data.cover || {};
+  const grand = Number(cover.grandTotal) || 0;
+  const checksum = Math.round(grand * 100) / 100;
+  const stamp = cover.exportedAt || new Date().toISOString();
+  const ceNumber = data.ceNumber || cover.ceNumber || 'CE';
+  const rceLabel = cover.rceLabel || '';
+  const packNote = `Checksum ${checksum} · ${stamp}`;
+  return {
+    ...data,
+    ceNumber,
+    documentControl: {
+      ...(data.documentControl || {}),
+      footerLeft: data.documentControl?.footerLeft || 'Uncontrolled if printed',
+      footerRight: `{docNo} · ${rceLabel}`,
+    },
+    sections: [
+      {
+        title: 'Cover',
+        columns: ['Field', 'Value'],
+        rows: [
+          ['Client', cover.client || ''],
+          ['Site', cover.location || ''],
+          ['CE #', ceNumber],
+          ['RCE #', rceLabel],
+          ['Date', cover.date || ''],
+          ['Validity (days)', String(cover.validityDays || 30)],
+          ['Prepared', cover.preparedBy || ''],
+          ['Reviewed', cover.reviewedBy || ''],
+          ['Approved', cover.approvedBy || ''],
+          ['Grand total', String(checksum)],
+          ['Contingency %', String(cover.contingencyPct || 0)],
+          ['Discount %', String(cover.discountPct || 0)],
+          ['Net', String(cover.netTotal || checksum)],
+          ['Assumptions', cover.assumptions || ''],
+          ['Export', packNote],
+        ],
+      },
+      ...(data.sections || []),
+      {
+        title: 'ATTCH',
+        columns: ['File', 'Source'],
+        rows: (data.attachments || []).map((f) => [
+          f.name || '',
+          f.tag || f.sheet || '',
+        ]),
+      },
+    ],
+  };
+}
+
+export function previewIssuePdf(data = {}) {
+  return renderCostEstimatePdf(issuePdfData(data)).output('bloburl');
+}
+
+export function exportIssuePdf(data = {}) {
+  const pdfData = issuePdfData(data);
+  renderCostEstimatePdf(pdfData).save(`Cost_Estimate_${pdfData.ceNumber || 'export'}.pdf`);
+}
+
+export function exportIssueExcel(data = {}) {
+  const cover = data.cover || {};
+  const grand = Number(cover.grandTotal) || 0;
+  const checksum = Math.round(grand * 100) / 100;
+  const stamp = cover.exportedAt || new Date().toISOString();
+  const ceNumber = data.ceNumber || cover.ceNumber || 'CE';
+  const rceLabel = cover.rceLabel || '';
+  const wb = XLSX.utils.book_new();
+  const letter = resolvedLetterhead(data, '&P');
+  const categorySheets = (data.sections || []).filter(
+    (s) => s.title && s.title !== 'Cover'
+  );
+  const coverAoA = [
+    [letter.headerLeft, '', letter.headerRight],
+    [],
+    ['Project cover — formulas sum category sheets. Do not paste over the net.'],
+    ['Client', cover.client || ''],
+    ['Site', cover.location || ''],
+    ['CE #', ceNumber],
+    ['RCE #', rceLabel],
+    ['Date', cover.date || ''],
+    ['Validity days', cover.validityDays || 30],
+    ['Prepared', cover.preparedBy || ''],
+    ['Reviewed', cover.reviewedBy || ''],
+    ['Approved', cover.approvedBy || ''],
+    [],
+    ['Category', 'Onsite', 'Shop', 'Trading', 'Total'],
+  ];
+  const catNames = ['BOL', 'BOTE', 'BOCM', 'PPE', 'MISC', 'MOB'];
+  catNames.forEach((name, i) => {
+    const row = 15 + i;
+    coverAoA.push([
+      name,
+      { f: `IFERROR('${name}'!B2,0)` },
+      { f: `IFERROR('${name}'!C2,0)` },
+      { f: `IFERROR('${name}'!D2,0)` },
+      { f: `B${row}+C${row}+D${row}` },
+    ]);
+  });
+  const first = 15;
+  const last = 14 + catNames.length;
+  coverAoA.push([]);
+  coverAoA.push(['Grand', '', '', '', { f: `SUM(E${first}:E${last})` }]);
+  coverAoA.push(['Contingency %', cover.contingencyPct || 0]);
+  coverAoA.push(['Discount %', cover.discountPct || 0]);
+  coverAoA.push([
+    'Net',
+    '',
+    '',
+    '',
+    { f: `E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100)` },
+  ]);
+  coverAoA.push([]);
+  coverAoA.push(['Assumptions / exclusions', cover.assumptions || '']);
+  const coverWs = XLSX.utils.aoa_to_sheet(coverAoA);
+  coverWs['!freeze'] = { xSplit: 0, ySplit: 1 };
+  XLSX.utils.book_append_sheet(wb, coverWs, 'Cover');
+  categorySheets.forEach((section) => {
+    const wsData = [
+      [letter.headerLeft, '', letter.headerRight],
+      section.columns,
+      ...section.rows,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!freeze'] = { xSplit: 0, ySplit: 2 };
+    const colWidths = (section.columns || []).map((col, i) => ({
+      wch: Math.max(
+        String(col || '').length,
+        ...section.rows.map((row) => (row[i] ? String(row[i]).length : 0)),
+        8
+      ),
+    }));
+    ws['!cols'] = colWidths;
+    XLSX.utils.book_append_sheet(wb, ws, sheetName(section.title));
+  });
+  const meta = XLSX.utils.aoa_to_sheet([
+    ['CE #', ceNumber],
+    ['RCE', rceLabel],
+    ['Exported by', cover.exportedBy || ''],
+    ['Timestamp', stamp],
+    ['Grand total checksum', checksum],
+    ['Net', cover.netTotal || checksum],
+  ]);
+  XLSX.utils.book_append_sheet(wb, meta, 'ExportMeta');
+  XLSX.writeFile(wb, `Issue_Pack_${ceNumber}.xlsx`);
+  return { checksum, stamp };
+}
+
+export function exportIssuePack(data = {}) {
+  exportIssuePdf(data);
+  return exportIssueExcel(data);
 }
 
 function rceMark(doc, x, y, on) {
