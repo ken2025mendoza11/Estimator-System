@@ -17,6 +17,7 @@ import Papa from "papaparse";
 import CeOfficialSummary, { notesForTemplates, SheetNotesEditor, honorificName } from "./CeOfficialSummary";
 import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
 import { SystemManual } from "./SystemManual";
+import { addDaysLocal, todayLocal } from "../lib/estimator/workflow";
 
 //#region src/components/CostEstimatorApp.jsx
 function interpolateDocTokens(template, vars) {
@@ -1979,7 +1980,7 @@ function emptyOif() {
 	return {
 		id: "",
 		oifNo: "",
-		date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+		date: todayLocal(),
 		projectDescription: "",
 		rfqNo: "",
 		customerName: "",
@@ -2046,19 +2047,117 @@ function emptyOif() {
 		materialsRight: ""
 	};
 }
-function InspectionFormView({ initial, onBack, onSave }) {
+const OIF_TPL_KEY = "oif-check-templates";
+function readOifTemplates() {
+	try {
+		const list = JSON.parse(localStorage.getItem(OIF_TPL_KEY) || "[]");
+		return Array.isArray(list) ? list : [];
+	} catch {
+		return [];
+	}
+}
+function writeOifTemplates(list) {
+	try {
+		localStorage.setItem(OIF_TPL_KEY, JSON.stringify(list || []));
+	} catch {}
+}
+function oifDraftKey(initial) {
+	return `oif-draft:${initial?.id || initial?.oifNo || "new"}`;
+}
+function SignaturePad({ value, onChange }) {
+	const ref = useRef(null);
+	const drawing = useRef(false);
+	useEffect(() => {
+		const canvas = ref.current;
+		if (!canvas) return;
+		const ctx = canvas.getContext("2d");
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		ctx.lineWidth = 1.6;
+		ctx.lineCap = "round";
+		ctx.strokeStyle = "#18170f";
+		if (!value) return;
+		const img = new Image();
+		img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+		img.src = value;
+	}, [value]);
+	function point(e) {
+		const canvas = ref.current;
+		const rect = canvas.getBoundingClientRect();
+		const src = e.touches ? e.touches[0] : e;
+		return {
+			x: (src.clientX - rect.left) * (canvas.width / rect.width),
+			y: (src.clientY - rect.top) * (canvas.height / rect.height)
+		};
+	}
+	function start(e) {
+		e.preventDefault();
+		const canvas = ref.current;
+		const ctx = canvas.getContext("2d");
+		const p = point(e);
+		drawing.current = true;
+		ctx.beginPath();
+		ctx.moveTo(p.x, p.y);
+	}
+	function move(e) {
+		if (!drawing.current) return;
+		e.preventDefault();
+		const p = point(e);
+		const ctx = ref.current.getContext("2d");
+		ctx.lineTo(p.x, p.y);
+		ctx.stroke();
+	}
+	function end() {
+		if (!drawing.current) return;
+		drawing.current = false;
+		onChange?.(ref.current.toDataURL("image/png"));
+	}
+	return /* @__PURE__ */ jsxs("div", {
+		className: "oif-sign",
+		children: [/* @__PURE__ */ jsx("canvas", {
+			ref,
+			width: 520,
+			height: 140,
+			className: "oif-sign-pad",
+			onPointerDown: start,
+			onPointerMove: move,
+			onPointerUp: end,
+			onPointerLeave: end
+		}), /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			onClick: () => onChange?.(""),
+			children: "Clear signature"
+		})]
+	});
+}
+function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "" }) {
+	const clients = useMasterlist().clients || [];
+	const roles = useMasterlist().BOL || [];
+	const materialsList = useMasterlist().BOCM || [];
 	const [form, setForm] = useState(() => ({
 		...emptyOif(),
+		onsiteInspector: currentUserName || "",
 		...initial || {}
 	}));
+	const [oifErrors, setOifErrors] = useState([]);
+	const [templates, setTemplates] = useState(() => readOifTemplates());
+	const [tplOpen, setTplOpen] = useState(false);
+	const [tplType, setTplType] = useState("");
+	const [tplItem, setTplItem] = useState("");
+	const [draftNote, setDraftNote] = useState("");
+	const [voiceOn, setVoiceOn] = useState(false);
 	const photoRef = useRef(null);
+	const cameraRef = useRef(null);
+	const voiceRef = useRef(null);
+	const canEditTemplates = !actingLevel || actingLevel === "admin" || actingLevel === "head" || actingLevel === "lead";
+	const speechOk = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 	function patch(partial) {
 		setForm((prev) => ({
 			...prev,
 			...partial
 		}));
 	}
-	async function addPhotos(e) {
+	async function addPhotos(e, section) {
 		const files = Array.from(e.target.files || []);
 		e.target.value = "";
 		const records = await Promise.all(files.map((file) => new Promise((resolve) => {
@@ -2067,10 +2166,15 @@ function InspectionFormView({ initial, onBack, onSave }) {
 				id: `ph-${Date.now()}-${Math.random().toString(16).slice(2)}`,
 				name: file.name,
 				type: file.type,
-				dataUrl: String(reader.result || "")
+				dataUrl: String(reader.result || ""),
+				section: section || "Photos"
 			});
 			reader.readAsDataURL(file);
 		})));
+		const start = (form.photos || []).length;
+		records.forEach((rec, index) => {
+			rec.caption = `Photo ${start + index + 1} – ${rec.section}`;
+		});
 		patch({ photos: [...form.photos || [], ...records] });
 	}
 	function updateManpower(id, field, value) {
@@ -2079,6 +2183,180 @@ function InspectionFormView({ initial, onBack, onSave }) {
 			[field]: value
 		} : row) });
 	}
+	const clientOptions = clientsRecentFirst(clients, (priorReports || []).map((r) => ({ customer: r.customerName })));
+	function onCustomerName(value) {
+		const needle = value.trim().toLowerCase();
+		const match = clientOptions.find((c) => (c.fullName || "").toLowerCase() === needle || (c.clientCode || "").toLowerCase() === needle);
+		const contact = clientContactText(match);
+		patch({
+			customerName: value,
+			customerAddress: match && match.address ? match.address : form.customerAddress || "",
+			contactNo: contact || form.contactNo || ""
+		});
+	}
+	function saveReport(opts = {}) {
+		const misses = [];
+		if (!String(form.customerName || "").trim()) misses.push("Customer is required.");
+		if (!String(form.projectDescription || "").trim()) misses.push("Project description is required.");
+		if (!form.date) misses.push("Date is required.");
+		if (!String(form.onsiteInspector || "").trim()) misses.push("Inspector is required.");
+		const svc = form.serviceType || {};
+		if (!Object.entries(svc).some(([key, value]) => key !== "othersText" && value)) misses.push("Tick at least one service type.");
+		setOifErrors(misses);
+		if (misses.length) {
+			requestAnimationFrame(() => {
+				document.querySelector(".oif-sheet .rce-field-error, .oif-sheet .rce-invalid")?.scrollIntoView({
+					behavior: "smooth",
+					block: "center"
+				});
+			});
+			return;
+		}
+		try {
+			localStorage.removeItem(oifDraftKey(initial));
+		} catch {}
+		onSave(form, opts);
+	}
+	function copyFromLast() {
+		const tag = String(form.equipmentTag || "").trim().toLowerCase();
+		if (!tag) return;
+		const last = [...priorReports || []].reverse().find((r) => String(r.equipmentTag || "").trim().toLowerCase() === tag && (r.id || r.oifNo) !== (form.id || form.oifNo));
+		if (!last) {
+			window.alert("No earlier report for this equipment tag.");
+			return;
+		}
+		patch({
+			customerName: last.customerName || form.customerName,
+			customerAddress: last.customerAddress || form.customerAddress || "",
+			customerRep: last.customerRep || "",
+			contactNo: last.contactNo || "",
+			projectDescription: last.projectDescription || "",
+			rfqNo: last.rfqNo || "",
+			activity: last.activity || form.activity,
+			serviceType: last.serviceType || form.serviceType,
+			quantity: last.quantity || "",
+			length: last.length || "",
+			width: last.width || "",
+			thk: last.thk || "",
+			outsideDia: last.outsideDia || "",
+			insideDia: last.insideDia || "",
+			dimLength: last.dimLength || "",
+			weightTons: !!last.weightTons,
+			weightKg: !!last.weightKg,
+			weightValue: last.weightValue || "",
+			drawingAvailable: last.drawingAvailable || "",
+			duration: last.duration || "",
+			manpower: last.manpower || form.manpower,
+			scopeLeft: last.scopeLeft || "",
+			scopeRight: last.scopeRight || "",
+			materialsLeft: last.materialsLeft || "",
+			materialsRight: last.materialsRight || "",
+			materialRows: last.materialRows || [],
+			equipmentType: last.equipmentType || form.equipmentType,
+			checklist: (last.checklist || []).map((row) => ({
+				...row,
+				result: "",
+				remark: ""
+			})),
+			checklistLoadedFor: last.equipmentType || form.equipmentType || ""
+		});
+	}
+	function addMaterialRow() {
+		patch({ materialRows: [...form.materialRows || [], {
+			id: `mat-${Date.now()}`,
+			description: "",
+			qty: ""
+		}] });
+	}
+	function startVoice() {
+		const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+		if (!SR) return;
+		const rec = voiceRef.current || new SR();
+		voiceRef.current = rec;
+		rec.lang = "en-PH";
+		rec.onresult = (event) => {
+			const text = Array.from(event.results).map((row) => row[0]?.transcript || "").join(" ");
+			setForm((prev) => ({
+				...prev,
+				remarks: `${prev.remarks || ""} ${text}`.trim()
+			}));
+		};
+		rec.onend = () => setVoiceOn(false);
+		setVoiceOn(true);
+		rec.start();
+	}
+	function saveTemplateItem() {
+		const type = tplType.trim();
+		const text = tplItem.trim();
+		if (!type || !text) return;
+		const next = templates.slice();
+		let tpl = next.find((row) => String(row.equipmentType || "").toLowerCase() === type.toLowerCase());
+		if (!tpl) {
+			tpl = { id: `otpl-${Date.now()}`, equipmentType: type, items: [] };
+			next.push(tpl);
+		}
+		tpl.items = [...tpl.items || [], { id: `oti-${Date.now()}`, text }];
+		setTemplates(next);
+		writeOifTemplates(next);
+		setTplItem("");
+	}
+	useEffect(() => {
+		try {
+			const raw = localStorage.getItem(oifDraftKey(initial));
+			if (!raw) return;
+			const saved = JSON.parse(raw);
+			if (!saved?.form) return;
+			const fresh = !initial?.customerName && !initial?.projectDescription && !(initial?.checklist || []).length;
+			if (!fresh) return;
+			setForm((prev) => ({
+				...prev,
+				...saved.form,
+				oifNo: prev.oifNo || saved.form.oifNo,
+				date: saved.form.date || prev.date,
+				onsiteInspector: saved.form.onsiteInspector || prev.onsiteInspector
+			}));
+			setDraftNote("Draft restored");
+		} catch {}
+	}, []);
+	useEffect(() => {
+		const timer = setInterval(() => {
+			const key = oifDraftKey(initial);
+			try {
+				localStorage.setItem(key, JSON.stringify({ form, at: Date.now() }));
+				setDraftNote("Saved");
+			} catch {
+				try {
+					const photos = (form.photos || []).map((p) => ({ ...p, dataUrl: "" }));
+					localStorage.setItem(key, JSON.stringify({ form: { ...form, photos, inspectorSignature: "" }, at: Date.now() }));
+					setDraftNote("Saved");
+				} catch {}
+			}
+		}, 4000);
+		return () => clearInterval(timer);
+	}, [form]);
+	useEffect(() => {
+		const type = String(form.equipmentType || "").trim();
+		if (!type || form.checklistLoadedFor === type) return;
+		const tpl = templates.find((row) => String(row.equipmentType || "").trim().toLowerCase() === type.toLowerCase());
+		if (!tpl) return;
+		if ((form.checklist || []).some((row) => row.result)) {
+			if (!window.confirm(`Load the “${tpl.equipmentType}” checklist? Current answers will be replaced.`)) {
+				setForm((prev) => ({ ...prev, checklistLoadedFor: type }));
+				return;
+			}
+		}
+		setForm((prev) => ({
+			...prev,
+			checklistLoadedFor: type,
+			checklist: (tpl.items || []).map((it, index) => ({
+				id: it.id || `ck-${index}`,
+				text: it.text,
+				result: "",
+				remark: ""
+			}))
+		}));
+	}, [form.equipmentType, templates]);
+	const oifBad = (test) => oifErrors.some(test);
 	function addManpower() {
 		patch({ manpower: [...form.manpower, {
 			id: `m-${Date.now()}`,
@@ -2086,6 +2364,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 			pax: ""
 		}] });
 	}
+	const lastTag = String(form.equipmentTag || "").trim();
 	return /* @__PURE__ */ jsxs("div", {
 		className: "oif-wrap",
 		children: [/* @__PURE__ */ jsxs("div", {
@@ -2106,9 +2385,34 @@ function InspectionFormView({ initial, onBack, onSave }) {
 				}), /* @__PURE__ */ jsx("button", {
 					type: "button",
 					className: "ce-btn-primary",
-					onClick: () => onSave(form),
+					onClick: () => saveReport(),
 					children: "Save report"
-				})]
+				}), /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: () => saveReport({ andNew: true }),
+					children: "Save & new for same client"
+				}), /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: () => {
+						const hasPeople = (form.manpower || []).some((row) => String(row.designation || "").trim());
+						const hasMats = (form.materialRows || []).some((row) => String(row.description || "").trim());
+						if (!hasPeople && !hasMats) {
+							window.alert("Add a role or a material row first. The free-text material boxes stay on the report and are not sent as priced lines.");
+							return;
+						}
+						const id = onSendToCe?.(form);
+						if (id) {
+							patch({ ceId: id });
+							setDraftNote(`Lines added on ${id}`);
+						}
+					},
+					children: "Send to CE"
+				}), draftNote ? /* @__PURE__ */ jsx("span", {
+					className: "ce-save-note",
+					children: draftNote
+				}) : null]
 			})]
 		}), /* @__PURE__ */ jsxs("div", {
 			className: "oif-sheet",
@@ -2120,8 +2424,13 @@ function InspectionFormView({ initial, onBack, onSave }) {
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-headgrid",
 					children: [
+						oifErrors.length ? /* @__PURE__ */ jsx("div", {
+							className: "oif-span2 rce-field-error",
+							style: { padding: "0.45rem 0.7rem" },
+							children: oifErrors.join(" ")
+						}) : null,
 						/* @__PURE__ */ jsxs("label", { children: ["DATE", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
+							className: "ce-input" + (oifBad((m) => m.startsWith("Date")) ? " rce-invalid" : ""),
 							type: "date",
 							value: form.date,
 							onChange: (e) => patch({ date: e.target.value })
@@ -2134,7 +2443,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 						/* @__PURE__ */ jsxs("label", {
 							className: "oif-span2",
 							children: ["PROJECT DESCRIPTION", /* @__PURE__ */ jsx("input", {
-								className: "ce-input",
+								className: "ce-input" + (oifBad((m) => m.startsWith("Project")) ? " rce-invalid" : ""),
 								value: form.projectDescription,
 								onChange: (e) => patch({ projectDescription: e.target.value })
 							})]
@@ -2145,9 +2454,43 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							onChange: (e) => patch({ rfqNo: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CUSTOMER NAME", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
+							className: "ce-input" + (oifBad((m) => m.startsWith("Customer")) ? " rce-invalid" : ""),
+							list: "oif-client-list",
 							value: form.customerName,
-							onChange: (e) => patch({ customerName: e.target.value })
+							onChange: (e) => onCustomerName(e.target.value)
+						}), /* @__PURE__ */ jsx("datalist", {
+							id: "oif-client-list",
+							children: clientOptions.map((c) => /* @__PURE__ */ jsx("option", {
+								value: c.fullName || c.clientCode || "",
+								children: [c.clientCode, c.fullName].filter(Boolean).join(" — ")
+							}, c.id))
+						})] }),
+						/* @__PURE__ */ jsxs("label", { children: ["ADDRESS", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							value: form.customerAddress || "",
+							onChange: (e) => patch({ customerAddress: e.target.value })
+						})] }),
+						/* @__PURE__ */ jsxs("label", { children: ["EQUIPMENT TYPE", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							list: "oif-equip-list",
+							value: form.equipmentType || "",
+							onChange: (e) => patch({ equipmentType: e.target.value })
+						}), /* @__PURE__ */ jsx("datalist", {
+							id: "oif-equip-list",
+							children: templates.map((tpl) => /* @__PURE__ */ jsx("option", { value: tpl.equipmentType }, tpl.id))
+						})] }),
+						/* @__PURE__ */ jsxs("label", { children: ["EQUIPMENT / TAG", /* @__PURE__ */ jsxs("span", {
+							className: "oif-inline",
+							children: [/* @__PURE__ */ jsx("input", {
+								className: "ce-input",
+								value: form.equipmentTag || "",
+								onChange: (e) => patch({ equipmentTag: e.target.value })
+							}), lastTag ? /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: copyFromLast,
+								children: "Copy from last report"
+							}) : null]
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CUSTOMER REPRESENTATIVE", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
@@ -2155,7 +2498,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							onChange: (e) => patch({ customerRep: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["ONSITE INSPECTOR", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
+							className: "ce-input" + (oifBad((m) => m.startsWith("Inspector")) ? " rce-invalid" : ""),
 							value: form.onsiteInspector,
 							onChange: (e) => patch({ onsiteInspector: e.target.value })
 						})] }),
@@ -2179,6 +2522,12 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							onClick: () => photoRef.current?.click(),
 							children: "Upload photos"
 						}),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => cameraRef.current?.click(),
+							children: "Take photo"
+						}),
 						/* @__PURE__ */ jsx("input", {
 							ref: photoRef,
 							type: "file",
@@ -2187,14 +2536,26 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							hidden: true,
 							onChange: addPhotos
 						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: cameraRef,
+							type: "file",
+							accept: "image/*",
+							capture: "environment",
+							hidden: true,
+							onChange: addPhotos
+						}),
 						/* @__PURE__ */ jsx("div", {
 							className: "oif-photo-grid",
-							children: (form.photos || []).map((p) => /* @__PURE__ */ jsxs("div", {
+							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
 								className: "oif-photo",
 								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
 									src: p.dataUrl,
-									alt: p.name
-								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("button", {
+									alt: p.caption || p.name
+								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input oif-caption",
+									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
+									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
+								}), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
 									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
@@ -2238,7 +2599,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								children: "Service type"
 							}),
 							/* @__PURE__ */ jsx("div", {
-								className: "oif-checks oif-checks-grid",
+								className: "oif-checks oif-checks-grid" + (oifBad((m) => /service type/i.test(m)) ? " rce-invalid" : ""),
 								children: [
 									["repair", "Repair"],
 									["electrical", "Electrical"],
@@ -2281,6 +2642,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 						children: [
 							/* @__PURE__ */ jsxs("label", { children: ["A. Quantity", /* @__PURE__ */ jsx("input", {
 								className: "ce-input",
+								inputMode: "decimal",
 								value: form.quantity,
 								onChange: (e) => patch({ quantity: e.target.value })
 							})] }),
@@ -2293,18 +2655,21 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								children: [
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Length",
 										value: form.length,
 										onChange: (e) => patch({ length: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Width",
 										value: form.width,
 										onChange: (e) => patch({ width: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Thk",
 										value: form.thk,
 										onChange: (e) => patch({ thk: e.target.value })
@@ -2316,18 +2681,21 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								children: [
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Outside Ø",
 										value: form.outsideDia,
 										onChange: (e) => patch({ outsideDia: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Inside Ø",
 										value: form.insideDia,
 										onChange: (e) => patch({ insideDia: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Length",
 										value: form.dimLength,
 										onChange: (e) => patch({ dimLength: e.target.value })
@@ -2411,23 +2779,31 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								const a = form.manpower[i * 2];
 								const b = form.manpower[i * 2 + 1];
 								return /* @__PURE__ */ jsxs("tr", { children: [
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
 										value: a.designation,
-										onChange: (e) => updateManpower(a.id, "designation", e.target.value)
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(a.id, "designation", value)
 									}) }),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										value: a.pax,
 										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
 										value: b.designation,
-										onChange: (e) => updateManpower(b.id, "designation", e.target.value)
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(b.id, "designation", value)
 									}) : null }),
 									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										value: b.pax,
 										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
 									}) : null })
@@ -2477,6 +2853,112 @@ function InspectionFormView({ initial, onBack, onSave }) {
 						rows: 10,
 						value: form.materialsRight,
 						onChange: (e) => patch({ materialsRight: e.target.value })
+					})]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [/* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Materials from the list"
+					}), (form.materialRows || []).map((row) => /* @__PURE__ */ jsxs("div", {
+						className: "oif-mat-row",
+						children: [/* @__PURE__ */ jsx(LineNamePicker, {
+							category: "BOCM",
+							list: materialsList,
+							value: row.description,
+							placeholder: "Material or free text",
+							inputClass: "ce-input",
+							onChange: (value) => patch({ materialRows: (form.materialRows || []).map((item) => item.id === row.id ? { ...item, description: value } : item) })
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							inputMode: "decimal",
+							placeholder: "Qty",
+							value: row.qty,
+							onChange: (e) => patch({ materialRows: (form.materialRows || []).map((item) => item.id === row.id ? { ...item, qty: e.target.value } : item) })
+						})]
+					}, row.id)), /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: addMaterialRow,
+						children: "Add material"
+					})]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [/* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: "Equipment checklist"
+						}), canEditTemplates ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => setTplOpen((v) => !v),
+							children: "Checklist templates"
+						}) : null]
+					}), tplOpen && /* @__PURE__ */ jsxs("div", {
+						className: "oif-tpl",
+						children: [/* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Equipment type",
+							value: tplType,
+							onChange: (e) => setTplType(e.target.value)
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Check item",
+							value: tplItem,
+							onChange: (e) => setTplItem(e.target.value)
+						}), /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: saveTemplateItem,
+							children: "Add item"
+						}), templates.map((tpl) => /* @__PURE__ */ jsx("p", {
+							className: "ce-empty",
+							children: `${tpl.equipmentType}: ${(tpl.items || []).map((it) => it.text).join("; ") || "—"}`
+						}, tpl.id))]
+					}), (form.checklist || []).map((row) => /* @__PURE__ */ jsxs("div", {
+						className: "oif-checkline",
+						children: [/* @__PURE__ */ jsx("span", { children: row.text }), /* @__PURE__ */ jsx("span", {
+							className: "rce-tri",
+							children: ["Pass", "Fail", "N/A"].map((value) => /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "rce-tri-btn" + (row.result === value ? " is-on" : ""),
+								onClick: () => patch({ checklist: form.checklist.map((item) => item.id === row.id ? { ...item, result: item.result === value ? "" : value } : item) }),
+								children: value
+							}, value))
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Remark",
+							value: row.remark || "",
+							onChange: (e) => patch({ checklist: form.checklist.map((item) => item.id === row.id ? { ...item, remark: e.target.value } : item) })
+						})]
+					}, row.id))]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [/* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: "Remarks"
+						}), speechOk ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: startVoice,
+							children: voiceOn ? "Listening…" : "Mic"
+						}) : null]
+					}), /* @__PURE__ */ jsx("textarea", {
+						className: "ce-input ce-notes-box",
+						rows: 4,
+						value: form.remarks || "",
+						onChange: (e) => patch({ remarks: e.target.value })
+					}), /* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Inspector signature"
+					}), /* @__PURE__ */ jsx(SignaturePad, {
+						value: form.inspectorSignature || "",
+						onChange: (inspectorSignature) => patch({ inspectorSignature })
 					})]
 				})
 			]
@@ -4976,6 +5458,23 @@ function DocumentControlPanel({ cfg, patch }) {
 						})]
 					}),
 					/* @__PURE__ */ jsxs("label", {
+						className: "wiz-field",
+						children: [/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: "Default contingency %"
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							type: "number",
+							min: "0",
+							step: "any",
+							value: dc.defaultContingencyPct ?? 0,
+							onChange: (e) => setDc({ defaultContingencyPct: e.target.value === "" ? 0 : Number(e.target.value) })
+						}), /* @__PURE__ */ jsx("span", {
+							className: "wiz-hint",
+							children: "Used only when a new cost estimate is created. Existing estimates keep their own contingency."
+						})]
+					}),
+					/* @__PURE__ */ jsxs("label", {
 						className: "wiz-field wiz-span",
 						children: [/* @__PURE__ */ jsx("span", {
 							className: "ce-field-label",
@@ -7064,12 +7563,16 @@ function emptySummaryTaskFilters() {
 		selectedTaskIds: []
 	};
 }
+function defaultContingencyPct(documentControl) {
+	const n = Number(documentControl?.defaultContingencyPct);
+	return Number.isFinite(n) ? n : 0;
+}
 function buildEmptyProject() {
 	return {
 		meta: {
 			client: "",
 			location: "",
-			date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+			date: todayLocal(),
 			title: "New Cost Estimate",
 			subtitle: ""
 		},
@@ -7438,6 +7941,32 @@ function reducer(state, action) {
 				[action.category]: [...s.items[action.category], ...(action.items || []).map((it) => priceFromException(action.category, it, state.rateExceptions))]
 			}
 		})));
+		case "APPLY_SCOPE_ADDS": {
+			const category = action.category;
+			const ops = Array.isArray(action.ops) ? action.ops : [];
+			if (!category || !ops.length) return state;
+			return ops.reduce((next, op) => mapTask(next, op.taskId, (t) => mapSubtask(t, op.subtaskId, (s) => {
+				const list = s.items?.[category] || [];
+				if (op.itemId) return {
+					...s,
+					items: {
+						...s.items,
+						[category]: list.map((i) => i.id === op.itemId ? {
+							...i,
+							qty: num2(i.qty) + num2(op.qty)
+						} : i)
+					}
+				};
+				if (!op.item) return s;
+				return {
+					...s,
+					items: {
+						...s.items,
+						[category]: [...list, priceFromException(category, op.item, state.rateExceptions)]
+					}
+				};
+			})), state);
+		}
 		case "COPY_SUBTASK_PACK": {
 			const pack = action.pack || {};
 			const incoming = pack.items || {};
@@ -7481,6 +8010,26 @@ function reducer(state, action) {
 				[action.category]: s.items[action.category].filter((i) => i.id !== action.itemId)
 			}
 		})));
+		case "DELETE_MATCHING_ITEMS": {
+			const ids = new Set(action.itemIds || []);
+			const category = action.category;
+			if (!ids.size || !category) return state;
+			const strip = (list) => (list || []).map((s) => ({
+				...s,
+				items: {
+					...s.items,
+					[category]: (s.items?.[category] || []).filter((i) => !ids.has(i.id))
+				},
+				children: strip(s.children)
+			}));
+			return {
+				...state,
+				tasks: state.tasks.map((t) => ({
+					...t,
+					subtasks: strip(t.subtasks)
+				}))
+			};
+		}
 		case "UPDATE_ITEM": return mapTask(state, action.taskId, (t) => mapSubtask(t, action.subtaskId, (s) => ({
 			...s,
 			items: {
@@ -7501,8 +8050,19 @@ function reducer(state, action) {
 							rateOverridden: true
 						};
 					}
+					if (next.entryGap && !lineGapFields(action.category, next).length) next = {
+						...next,
+						entryGap: false
+					};
 					return next;
 				})
+			}
+		})));
+		case "ADD_ITEMS_RAW": return mapTask(state, action.taskId, (t) => mapSubtask(t, action.subtaskId, (s) => ({
+			...s,
+			items: {
+				...s.items,
+				[action.category]: [...s.items[action.category] || [], ...(action.items || [])]
 			}
 		})));
 		case "SYNC_DATABASE_RATES": {
@@ -7848,23 +8408,40 @@ function collectNotes(tasks) {
 	});
 	return rows;
 }
-function SummaryNotesBlock({ tasks }) {
-	const noteRows = collectNotes(tasks);
+function organizeSummaryNotes(tasks) {
+	return collectNotes(tasks).slice().sort((a, b) => {
+		const taskA = String(a.who || "").split(" / ")[0];
+		const taskB = String(b.who || "").split(" / ")[0];
+		const byTask = taskA.localeCompare(taskB, undefined, { sensitivity: "base" });
+		if (byTask) return byTask;
+		if (a.kind !== b.kind) return a.kind === "main" ? -1 : 1;
+		return String(a.who || "").localeCompare(String(b.who || ""), undefined, { sensitivity: "base" }) || String(a.notes || "").localeCompare(String(b.notes || ""), undefined, { sensitivity: "base" });
+	});
+}
+function SummaryNotesBlock({ groups }) {
+	const sections = (groups || []).map((group) => ({
+		...group,
+		notes: organizeSummaryNotes(group.tasks)
+	})).filter((group) => group.notes.length);
+	if (!sections.length) return null;
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-summary-notes-block",
 		children: [/* @__PURE__ */ jsx("h4", {
 			className: "ce-serif ce-summary-subheading",
 			children: "Notes"
-		}), noteRows.length === 0 ? /* @__PURE__ */ jsx("p", {
-			className: "ce-empty",
-			children: "No notes from breakdown main tasks or subtasks."
-		}) : /* @__PURE__ */ jsxs("table", {
-			className: "ce-table",
-			children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("th", { children: "From" }), /* @__PURE__ */ jsx("th", { children: "Notes" })] }) }), /* @__PURE__ */ jsx("tbody", { children: noteRows.map((row) => /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("td", { children: row.who }), /* @__PURE__ */ jsx("td", {
-				className: "ce-summary-notes-cell",
-				children: row.notes
-			})] }, row.id)) })]
-		})]
+		}), sections.map((group) => /* @__PURE__ */ jsxs("div", {
+			className: "ce-summary-notes-group",
+			children: [/* @__PURE__ */ jsx("h5", {
+				className: "ce-serif ce-summary-subheading",
+				children: group.label
+			}), /* @__PURE__ */ jsxs("table", {
+				className: "ce-table ce-summary-notes-table",
+				children: [/* @__PURE__ */ jsxs("colgroup", { children: [/* @__PURE__ */ jsx("col", { className: "ce-summary-notes-from-col" }), /* @__PURE__ */ jsx("col", {})] }), /* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("th", { children: "From" }), /* @__PURE__ */ jsx("th", { className: "ce-summary-notes-cell", children: "Notes" })] }) }), /* @__PURE__ */ jsx("tbody", { children: group.notes.map((row) => /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("td", { className: "ce-summary-notes-from", children: row.who }), /* @__PURE__ */ jsx("td", {
+					className: "ce-summary-notes-cell",
+					children: row.notes
+				})] }, row.id)) })]
+			})]
+		}, group.id))]
 	});
 }
 function collectScopeFiles(tasks) {
@@ -8145,6 +8722,11 @@ function defaultDaysForSubtask(task2, subtask2) {
 	}));
 	if (d < 1) d = num2(task2?.duration) || 1;
 	return d;
+}
+function defaultLabourDays(task2, subtask2) {
+	const job = num2(task2?.duration);
+	if (job > 0) return job;
+	return defaultDaysForSubtask(task2, subtask2);
 }
 function buildCePreflight(tasks, opts = {}) {
 	const zeros = scanCostEstimate(tasks);
@@ -8758,11 +9340,516 @@ function rowDrag(row, category, task2, subtask2, dispatch) {
 		}
 	};
 }
+function lineRowName(category, row) {
+	if (!row) return "";
+	if (category === "BOL") return String(row.role || "").trim();
+	if (category === "PPE") return String(row.item || "").trim();
+	return String(row.description || "").trim();
+}
+function lineRequiredKeys(category) {
+	if (category === "BOL" || category === "BOTE") return [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]];
+	return [["qty", "Qty"], ["unitCost", "Unit cost"]];
+}
+function lineFieldMissing(value) {
+	return value === "" || value == null || !(Number(value) > 0);
+}
+function lineGapFields(category, row) {
+	if (!lineRowName(category, row)) return [];
+	return lineRequiredKeys(category).filter(([key]) => lineFieldMissing(row[key]));
+}
+function lineGapClass(category, row, field) {
+	if (!lineRequiredKeys(category).some(([key]) => key === field)) return "";
+	if (!lineRowName(category, row)) return "";
+	const blank = row[field] === "" || row[field] == null;
+	if (row.isDraft && blank) return "ce-cell-missing";
+	if (row.entryGap && lineFieldMissing(row[field])) return "ce-cell-missing";
+	return "";
+}
+function lineGapNote(category, row, field) {
+	if (!lineGapClass(category, row, field)) return "";
+	const hit = lineRequiredKeys(category).find(([key]) => key === field);
+	return hit ? `Enter ${hit[1]}` : "";
+}
+function blankOrNumber(value) {
+	if (value === "" || value == null) return "";
+	const n = Number(value);
+	return Number.isFinite(n) ? n : "";
+}
+function optionalNumber(value) {
+	const n = Number(value);
+	return Number.isFinite(n) ? n : 0;
+}
+function listEntryGaps(tasks) {
+	const out = [];
+	(tasks || []).forEach((task2) => {
+		flattenSubs(task2).forEach((sub) => {
+			["BOL", "BOTE", "BOCM", "PPE"].forEach((cat) => {
+				(sub.items?.[cat] || []).forEach((it) => {
+					const name = lineRowName(cat, it);
+					if (!name) return;
+					const miss = lineRequiredKeys(cat).filter(([key]) => {
+						const v = it[key];
+						if (v === "" || v == null) return true;
+						return !!it.entryGap && !(Number(v) > 0);
+					});
+					if (!miss.length) return;
+					out.push(`${task2.title || "Task"} / ${sub.title || "Scope"} / ${cat} / ${name} — missing ${miss.map(([, label]) => label).join(", ")}`);
+				});
+			});
+		});
+	});
+	return out;
+}
+function draftLooksEmpty(category, row) {
+	if (lineRowName(category, row)) return false;
+	const extras = {
+		BOL: ["qty", "days", "rate", "otHrs", "perDiem", "allowance"],
+		BOTE: ["qty", "days", "rate", "powerKw", "hoursPerDay", "kwhRate"],
+		BOCM: ["qty", "unit", "unitCost"],
+		PPE: ["qty", "unitCost"]
+	}[category] || [];
+	return extras.every((key) => String(row?.[key] ?? "").trim() === "");
+}
+function lineCellsIn(root) {
+	if (!root?.querySelectorAll) return [];
+	return [...root.querySelectorAll("input, select, textarea")].filter((el) => !el.closest(".ce-grid-del") && !el.disabled);
+}
+function useLineEntry({ category, makeEmpty, taskId, subtaskId, dispatch, toItem, rowsRef }) {
+	const [draftRows, setDraftState] = useState(() => [makeEmpty()]);
+	const draftsRef = useRef(draftRows);
+	const committedRef = useRef(/* @__PURE__ */ new Set());
+	const ctxRef = useRef({});
+	ctxRef.current = {
+		category,
+		makeEmpty,
+		taskId,
+		subtaskId,
+		dispatch,
+		toItem,
+		rowsRef
+	};
+	const setDraftRows = (next) => {
+		const resolved = typeof next === "function" ? next(draftsRef.current) : next;
+		draftsRef.current = resolved;
+		setDraftState(resolved);
+	};
+	const commitNamed = (rows) => {
+		const ctx = ctxRef.current;
+		const named = [];
+		const rest = [];
+		(rows || []).forEach((row) => {
+			if (lineRowName(ctx.category, row) && !committedRef.current.has(row.id)) {
+				committedRef.current.add(row.id);
+				named.push(row);
+			} else if (!committedRef.current.has(row.id)) rest.push(row);
+		});
+		if (named.length) {
+			const complete = [];
+			const incomplete = [];
+			named.forEach((row) => {
+				const item = ctx.toItem(row);
+				if (lineGapFields(ctx.category, row).length) incomplete.push({
+					...item,
+					entryGap: true
+				});
+				else complete.push(item);
+			});
+			if (complete.length) ctx.dispatch({
+				type: "ADD_ITEMS",
+				taskId: ctx.taskId,
+				subtaskId: ctx.subtaskId,
+				category: ctx.category,
+				items: complete
+			});
+			if (incomplete.length) ctx.dispatch({
+				type: "ADD_ITEMS_RAW",
+				taskId: ctx.taskId,
+				subtaskId: ctx.subtaskId,
+				category: ctx.category,
+				items: incomplete
+			});
+		}
+		let next = rest.length ? rest : [ctx.makeEmpty()];
+		if (lineRowName(ctx.category, next[next.length - 1])) next = [...next, ctx.makeEmpty()];
+		draftsRef.current = next;
+		return next;
+	};
+	useEffect(() => () => {
+		commitNamed(draftsRef.current);
+	}, []);
+	const saveDrafts = () => setDraftRows(commitNamed(draftsRef.current));
+	const pasteFields = {
+		BOL: ["role", "dayType", "shift", "qty", "days", "rate", "otHrs", "perDiem", "allowance"],
+		BOTE: ["description", "qty", "days", "rate", "powerKw", "hoursPerDay", "kwhRate"],
+		BOCM: ["description", "qty", "unit", "unitCost"],
+		PPE: ["item", "qty", "unitCost"]
+	};
+	const onTablePaste = (e) => {
+		const text = e.clipboardData?.getData("text/plain") || "";
+		if (!text.includes("\t") && !text.includes("\n")) return;
+		const parsed = Papa.parse(String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim(), {
+			delimiter: "\t",
+			skipEmptyLines: true
+		});
+		const grid = (parsed.data || []).filter((row) => (row || []).some((cell) => String(cell || "").trim()));
+		if (!grid.length) return;
+		e.preventDefault();
+		if (grid.length > 5 && !window.confirm(`Paste ${grid.length} rows into this table?`)) return;
+		const ctx = ctxRef.current;
+		const fields = pasteFields[ctx.category] || [];
+		const made = grid.map((cells) => {
+			const row = ctx.makeEmpty();
+			fields.forEach((field, index) => {
+				if (cells[index] == null) return;
+				row[field] = String(cells[index]).trim();
+			});
+			return row;
+		}).filter((row) => lineRowName(ctx.category, row));
+		if (!made.length) return;
+		setDraftRows((prev) => {
+			const base = prev.filter((row) => lineRowName(ctx.category, row) || !draftLooksEmpty(ctx.category, { ...row, isDraft: true }));
+			const next = [...base, ...made];
+			if (!next.length || lineRowName(ctx.category, next[next.length - 1])) next.push(ctx.makeEmpty());
+			return next;
+		});
+	};
+	const onTableBlur = (e) => {
+		const rowEl = e.target?.closest?.("tr[data-line-id]");
+		if (!rowEl) return;
+		const nextEl = e.relatedTarget;
+		if (nextEl && rowEl.contains(nextEl)) return;
+		const id = rowEl.getAttribute("data-line-id");
+		const row = draftsRef.current.find((r) => r.id === id);
+		if (!row || !lineRowName(ctxRef.current.category, row)) return;
+		setDraftRows(commitNamed(draftsRef.current));
+		if (nextEl && typeof nextEl.focus === "function") requestAnimationFrame(() => {
+			if (document.contains(nextEl)) nextEl.focus();
+		});
+	};
+	const addAfter = (afterId) => {
+		const fresh = ctxRef.current.makeEmpty();
+		setDraftRows((prev) => {
+			const i = prev.findIndex((r) => r.id === afterId);
+			if (i < 0) return [...prev, fresh];
+			const next = prev.slice();
+			next.splice(i + 1, 0, fresh);
+			return next;
+		});
+		requestAnimationFrame(() => {
+			const el = document.querySelector(`[data-line-id="${fresh.id}"] input, [data-line-id="${fresh.id}"] select`);
+			if (el) el.focus();
+		});
+	};
+	const onTableKeyDown = (e) => {
+		const table = e.currentTarget;
+		const tr = e.target?.closest?.("tr[data-line-id]");
+		if (!tr || !table.contains(tr)) return;
+		const id = tr.getAttribute("data-line-id");
+		const rows = ctxRef.current.rowsRef?.current?.() || [];
+		const row = rows.find((r) => r.id === id) || draftsRef.current.find((r) => r.id === id);
+		const ctx = ctxRef.current;
+		if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "d") {
+			e.preventDefault();
+			if (!row) return;
+			if (row.isDraft) {
+				const copy = {
+					...row,
+					id: uid3("dup")
+				};
+				delete copy.isDraft;
+				setDraftRows((prev) => {
+					const i = prev.findIndex((r) => r.id === row.id);
+					const next = prev.slice();
+					next.splice(i < 0 ? next.length : i + 1, 0, copy);
+					return next;
+				});
+			} else {
+				const item = ctx.toItem(row);
+				const gaps = lineGapFields(ctx.category, row);
+				ctx.dispatch({
+					type: gaps.length ? "ADD_ITEMS_RAW" : "ADD_ITEMS",
+					taskId: ctx.taskId,
+					subtaskId: ctx.subtaskId,
+					category: ctx.category,
+					items: [gaps.length ? {
+						...item,
+						entryGap: true
+					} : item]
+				});
+			}
+			return;
+		}
+		if (e.key === "Delete" && row?.isDraft && draftLooksEmpty(ctx.category, row)) {
+			e.preventDefault();
+			setDraftRows((prev) => {
+				const next = prev.filter((r) => r.id !== row.id);
+				return next.length ? next : [ctx.makeEmpty()];
+			});
+			return;
+		}
+		if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			const rowCells = lineCellsIn(tr);
+			if (!rowCells.length || e.target !== rowCells[rowCells.length - 1]) return;
+			e.preventDefault();
+			const all = [...table.querySelectorAll("tbody tr[data-line-id]")];
+			const idx = all.indexOf(tr);
+			const nextTr = all[idx + 1];
+			if (nextTr) {
+				const el = lineCellsIn(nextTr)[0];
+				if (el) el.focus();
+				return;
+			}
+			addAfter(id);
+			return;
+		}
+		if (e.key === "Tab") {
+			const cells = lineCellsIn(table);
+			const i = cells.indexOf(e.target);
+			if (i < 0) return;
+			if (e.shiftKey) {
+				if (i === 0) return;
+				e.preventDefault();
+				cells[i - 1].focus();
+				return;
+			}
+			if (i < cells.length - 1) {
+				e.preventDefault();
+				cells[i + 1].focus();
+				return;
+			}
+			e.preventDefault();
+			addAfter(id);
+		}
+	};
+	return {
+		draftRows,
+		setDraftRows,
+		onTableBlur,
+		onTableKeyDown,
+		saveDrafts,
+		onTablePaste
+	};
+}
+const CE_RECENT_KEY = "ce-recent-items";
+function readRecentIds(category) {
+	try {
+		const all = JSON.parse(localStorage.getItem(CE_RECENT_KEY) || "{}");
+		return Array.isArray(all[category]) ? all[category] : [];
+	} catch {
+		return [];
+	}
+}
+function rememberRecent(category, id) {
+	if (!id) return;
+	try {
+		const all = JSON.parse(localStorage.getItem(CE_RECENT_KEY) || "{}");
+		const prev = Array.isArray(all[category]) ? all[category].filter((x) => x !== id) : [];
+		all[category] = [id, ...prev].slice(0, 12);
+		localStorage.setItem(CE_RECENT_KEY, JSON.stringify(all));
+	} catch {}
+}
+function masterlistItemUnit(category, it) {
+	if (!it) return "";
+	if (category === "BOL") return it.unit || it.uom || "day";
+	return it.unit || it.uom || "";
+}
+function linePickMatches(category, list, query) {
+	const words = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+	const active = (list || []).filter(masterlistItemActive);
+	const filtered = words.length ? active.filter((it) => {
+		const hay = masterlistItemLabel(category, it).toLowerCase();
+		return words.every((word) => hay.includes(word));
+	}) : active;
+	const rank = new Map(readRecentIds(category).map((id, index) => [id, index]));
+	return filtered.slice().sort((a, b) => {
+		const ra = rank.has(a.id) ? rank.get(a.id) : 999;
+		const rb = rank.has(b.id) ? rank.get(b.id) : 999;
+		if (ra !== rb) return ra - rb;
+		return masterlistItemLabel(category, a).localeCompare(masterlistItemLabel(category, b));
+	}).slice(0, 12);
+}
+function LineNamePicker({ category, list, value, placeholder, onChange, onFocus, inputClass = "ce-grid-input" }) {
+	const [open, setOpen] = useState(false);
+	const [hi, setHi] = useState(0);
+	const wrapRef = useRef(null);
+	const [box, setBox] = useState(null);
+	const options = open ? linePickMatches(category, list, value) : [];
+	useEffect(() => {
+		setHi(0);
+	}, [value, open]);
+	function place() {
+		const rect = wrapRef.current?.getBoundingClientRect();
+		if (!rect) return;
+		setBox({
+			top: rect.bottom,
+			left: rect.left,
+			width: Math.max(rect.width, 260)
+		});
+	}
+	function choose(it) {
+		rememberRecent(category, it.id);
+		onChange(masterlistItemLabel(category, it));
+		setOpen(false);
+	}
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-line-pick",
+		ref: wrapRef,
+		children: [/* @__PURE__ */ jsx("input", {
+			className: inputClass,
+			value: value || "",
+			placeholder,
+			onFocus: () => {
+				setOpen(true);
+				place();
+				onFocus?.();
+			},
+			onChange: (e) => {
+				onChange(e.target.value);
+				setOpen(true);
+				place();
+			},
+			onBlur: () => {
+				setTimeout(() => setOpen(false), 140);
+			},
+			onKeyDown: (e) => {
+				if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !open) {
+					setOpen(true);
+					place();
+					e.preventDefault();
+					e.stopPropagation();
+					return;
+				}
+				if (e.key === "Escape") {
+					setOpen(false);
+					e.stopPropagation();
+					return;
+				}
+				if (!options.length) return;
+				if (e.key === "ArrowDown") {
+					e.preventDefault();
+					e.stopPropagation();
+					setHi((i) => Math.min(options.length - 1, i + 1));
+				} else if (e.key === "ArrowUp") {
+					e.preventDefault();
+					e.stopPropagation();
+					setHi((i) => Math.max(0, i - 1));
+				} else if (e.key === "Enter" && open) {
+					e.preventDefault();
+					e.stopPropagation();
+					choose(options[Math.min(hi, options.length - 1)]);
+				}
+			}
+		}), open && options.length ? /* @__PURE__ */ jsx("div", {
+			className: "ce-line-pick-menu",
+			style: box ? {
+				position: "fixed",
+				top: box.top,
+				left: box.left,
+				width: box.width
+			} : void 0,
+			children: options.map((it, index) => /* @__PURE__ */ jsxs("button", {
+				type: "button",
+				className: "ce-line-pick-opt" + (index === hi ? " is-on" : ""),
+				onMouseDown: (e) => {
+					e.preventDefault();
+					choose(it);
+				},
+				children: [/* @__PURE__ */ jsx("span", { children: masterlistItemLabel(category, it) || "Untitled" }), /* @__PURE__ */ jsx("span", {
+					className: "ce-mono",
+					children: [masterlistItemUnit(category, it), fmt(masterlistItemRate(it))].filter(Boolean).join(" · ")
+				})]
+			}, it.id))
+		}) : null]
+	});
+}
+function CrewQuickAdd({ task: task2, subtask: subtask2, dispatch, list }) {
+	const jobDays = num2(task2?.duration);
+	const [role, setRole] = useState("");
+	const [people, setPeople] = useState("1");
+	const [days, setDays] = useState(jobDays > 0 ? String(jobDays) : "");
+	function addCrew() {
+		const name = String(role || "").trim();
+		if (!name) return;
+		const filled = fillFromMasterlist("BOL", list, name);
+		const dayCount = num2(days) > 0 ? num2(days) : defaultLabourDays(task2, subtask2);
+		dispatch({
+			type: "ADD_ITEMS",
+			taskId: task2.id,
+			subtaskId: subtask2.id,
+			category: "BOL",
+			items: [bolItem({
+				masterlistId: filled.masterlistId || null,
+				lastReviewed: filled.lastReviewed || "",
+				role: name,
+				qty: num2(people) || 1,
+				days: dayCount,
+				rate: filled.masterlistId ? num2(filled.rate) : "",
+				otHrs: 0,
+				perDiem: num2(filled.perDiem),
+				allowance: num2(filled.allowance)
+			})]
+		});
+		setRole("");
+	}
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-crew-add",
+		children: [/* @__PURE__ */ jsxs("label", { children: ["Role", /* @__PURE__ */ jsx(LineNamePicker, {
+			category: "BOL",
+			list,
+			value: role,
+			placeholder: "Role",
+			inputClass: "ce-input",
+			onChange: setRole
+		})] }), /* @__PURE__ */ jsxs("label", { children: ["People", /* @__PURE__ */ jsx("input", {
+			className: "ce-input",
+			type: "number",
+			min: "1",
+			value: people,
+			onChange: (e) => setPeople(e.target.value),
+			style: { width: 72 }
+		})] }), /* @__PURE__ */ jsxs("label", { children: ["Days", /* @__PURE__ */ jsx("input", {
+			className: "ce-input",
+			type: "number",
+			min: "0",
+			placeholder: jobDays > 0 ? String(jobDays) : "Days",
+			value: days,
+			onChange: (e) => setDays(e.target.value),
+			style: { width: 80 }
+		})] }), /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			onClick: addCrew,
+			children: "Crew quick-add"
+		})]
+	});
+}
 function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 	const { BOL: masterlistBOL } = useMasterlist();
 	const exceptions = useRateExceptions();
 	const datalistId = useState(() => uid3("dl"))[0];
-	const [draftRows, setDraftRows] = useState([emptyBOLDraft(uid3("bol-draft"))]);
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "BOL",
+		makeEmpty: () => emptyBOLDraft(uid3("bol-draft")),
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("bol-item"),
+			masterlistId: r.masterlistId,
+			role: String(r.role || "").trim(),
+			dayType: r.dayType,
+			shift: r.shift,
+			qty: blankOrNumber(r.qty),
+			days: blankOrNumber(r.days),
+			rate: blankOrNumber(r.rate),
+			otHrs: optionalNumber(r.otHrs),
+			perDiem: optionalNumber(r.perDiem),
+			allowance: optionalNumber(r.allowance)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("bol-bd-col-widths", {
 		itemNo: 55,
 		role: 180,
@@ -8788,10 +9875,11 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 		}));
 		return [...existing, ...drafts];
 	}, [subtask2.items.BOL, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
 		const extra = field === "role" ? fillFromMasterlist("BOL", masterlistBOL, value) : {};
 		if (extra.masterlistId) {
-			if (!num2(row.days)) extra.days = defaultDaysForSubtask(task2, subtask2);
+			if (!num2(row.days)) extra.days = defaultLabourDays(task2, subtask2);
 			if (!num2(row.qty)) extra.qty = 1;
 		}
 		const patch = applyIdentityException("BOL", row, {
@@ -8829,29 +9917,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.role.trim() && Number(r.qty) > 0 && Number(r.days) > 0 && Number(r.rate) > 0).map((r) => ({
-			id: uid3("bol-item"),
-			masterlistId: r.masterlistId,
-			role: r.role.trim(),
-			dayType: r.dayType,
-			shift: r.shift,
-			qty: Number(r.qty),
-			days: Number(r.days),
-			rate: Number(r.rate),
-			otHrs: Number(r.otHrs) || 0,
-			perDiem: Number(r.perDiem) || 0,
-			allowance: Number(r.allowance) || 0
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "BOL",
-			items: newItems
-		});
-		setDraftRows([emptyBOLDraft(uid3("bol-draft"))]);
-	};
+	const handleSave = () => lineEntry.saveDrafts();
 	const copyChoices = [
 		{
 			dayType: "Regular",
@@ -9040,9 +10106,11 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 					})]
 				})
 			}),
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistBOL.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.role }, l.id))
+			/* @__PURE__ */ jsx(CrewQuickAdd, {
+				task: task2,
+				subtask: subtask2,
+				dispatch,
+				list: masterlistBOL
 			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
@@ -9053,6 +10121,9 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 				},
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid ce-bol-breakdown-table",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [
 						/* @__PURE__ */ jsxs("colgroup", { children: [
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.itemNo}px` } }),
@@ -9151,6 +10222,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 							row.isDraft || calcBOL(row);
 							return /* @__PURE__ */ jsxs("tr", {
 								...rowDrag(row, "BOL", task2, subtask2, dispatch),
+								"data-line-id": row.id,
 								className: isLast && row.isDraft ? "ce-grid-row-ghost" : "ce-row-draggable",
 								children: [
 									/* @__PURE__ */ jsx("td", {
@@ -9159,13 +10231,13 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 									}),
 									/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 										className: "ce-desc-line",
-										children: [/* @__PURE__ */ jsx("input", {
-										className: "ce-grid-input",
-										list: datalistId,
+										children: [/* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: masterlistBOL,
 										value: row.role,
 										placeholder: row.isDraft ? "Type role…" : "",
-										onChange: (e) => {
-											updateRow(row, "role", e.target.value);
+										onChange: (value) => {
+											updateRow(row, "role", value);
 											appendRowIfLast(row);
 										},
 										onFocus: () => appendRowIfLast(row)
@@ -9216,7 +10288,10 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 											children: "Night"
 										})]
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+									/* @__PURE__ */ jsx("td", {
+										className: lineGapClass("BOL", row, "qty"),
+										"data-miss": lineGapNote("BOL", row, "qty"),
+										children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
 										className: "ce-grid-input",
@@ -9227,7 +10302,10 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 										},
 										onFocus: () => appendRowIfLast(row)
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+									/* @__PURE__ */ jsx("td", {
+										className: lineGapClass("BOL", row, "days"),
+										"data-miss": lineGapNote("BOL", row, "days"),
+										children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
 										className: "ce-grid-input",
@@ -9238,7 +10316,10 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 										},
 										onFocus: () => appendRowIfLast(row)
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+									/* @__PURE__ */ jsx("td", {
+										className: lineGapClass("BOL", row, "rate"),
+										"data-miss": lineGapNote("BOL", row, "rate"),
+										children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
 										className: "ce-grid-input",
@@ -9334,7 +10415,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 					className: "ce-form-footer-actions",
 					children: [/* @__PURE__ */ jsx(AddFromDatabaseButton, {
 						category: "BOL",
-						defaultDays: defaultDaysForSubtask(task2, subtask2),
+						defaultDays: defaultLabourDays(task2, subtask2),
 						onPicked: (rows) => dispatch({
 							type: "ADD_ITEMS",
 							taskId: task2.id,
@@ -9346,7 +10427,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 								role: masterlistItemLabel("BOL", r),
 								rate: masterlistItemRate(r),
 								qty: r.pickQty || 1,
-								days: defaultDaysForSubtask(task2, subtask2),
+								days: defaultLabourDays(task2, subtask2),
 								otHrs: 0,
 								perDiem: num2(r.perDiem),
 								allowance: num2(r.allowance)
@@ -9383,7 +10464,27 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		hoursPerDay: "",
 		kwhRate: ""
 	});
-	const [draftRows, setDraftRows] = useState([emptyDraft()]);
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "BOTE",
+		makeEmpty: emptyDraft,
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("bote-item"),
+			masterlistId: r.masterlistId || "",
+			description: String(r.description || "").trim(),
+			qty: blankOrNumber(r.qty),
+			days: blankOrNumber(r.days),
+			rate: blankOrNumber(r.rate),
+			powerKw: optionalNumber(r.powerKw),
+			hoursPerDay: optionalNumber(r.hoursPerDay),
+			kwhRate: optionalNumber(r.kwhRate)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("bote-col-widths", {
 		itemNo: 55,
 		description: 250,
@@ -9408,6 +10509,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		}));
 		return [...existing, ...drafts];
 	}, [items, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
 		const extra = field === "description" ? fillFromMasterlist("BOTE", masterlistBOTE, value) : {};
 		if (extra.masterlistId) {
@@ -9449,39 +10551,18 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.description.trim() && Number(r.qty) > 0 && Number(r.days) > 0 && Number(r.rate) > 0).map((r) => ({
-			id: uid3("bote-item"),
-			masterlistId: r.masterlistId || "",
-			description: r.description.trim(),
-			qty: Number(r.qty),
-			days: Number(r.days),
-			rate: Number(r.rate),
-			powerKw: Number(r.powerKw) || 0,
-			hoursPerDay: Number(r.hoursPerDay) || 0,
-			kwhRate: Number(r.kwhRate) || 0
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "BOTE",
-			items: newItems
-		});
-		setDraftRows([emptyDraft()]);
-	};
+	const handleSave = () => lineEntry.saveDrafts();
 	const boteSubtotal = items.reduce((s, it) => s + calcBOTE(it, taskWorkType(task2)), 0);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-form",
 		children: [
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistBOTE.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.description }, l.id))
-			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsxs(ResizableTh, {
 							colKey: "itemNo",
@@ -9561,6 +10642,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 						const isLast = index === allRows.length - 1;
 						return /* @__PURE__ */ jsxs("tr", {
 							...rowDrag(row, "BOTE", task2, subtask2, dispatch),
+							"data-line-id": row.id,
 							className: (isLast && row.isDraft ? "ce-grid-row-ghost " : "ce-row-draggable ") + (monthsSince(row.lastReviewed) > STALE_RATE_MONTHS ? "ce-row-stale" : ""),
 							children: [
 								/* @__PURE__ */ jsx("td", {
@@ -9570,13 +10652,13 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 									className: "ce-desc-line",
 									children: [
-									/* @__PURE__ */ jsx("input", {
-										className: "ce-grid-input",
-										list: datalistId,
+									/* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOTE",
+										list: masterlistBOTE,
 										value: row.description,
 										placeholder: row.isDraft ? "Type item…" : "",
-										onChange: (e) => {
-											updateRow(row, "description", e.target.value);
+										onChange: (value) => {
+											updateRow(row, "description", value);
 											appendRowIfLast(row);
 										},
 										onFocus: () => appendRowIfLast(row)
@@ -9611,7 +10693,10 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									})
 										]
 									})] })] }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOTE", row, "qty"),
+									"data-miss": lineGapNote("BOTE", row, "qty"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9622,7 +10707,10 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOTE", row, "days"),
+									"data-miss": lineGapNote("BOTE", row, "days"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9633,7 +10721,10 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOTE", row, "rate"),
+									"data-miss": lineGapNote("BOTE", row, "rate"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9766,13 +10857,31 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 	const { BOCM: masterlistBOCM } = useMasterlist();
 	const exceptions = useRateExceptions();
 	const datalistId = useState(() => uid3("dl"))[0];
-	const [draftRows, setDraftRows] = useState([{
+	const emptyBocm = () => ({
 		id: uid3("bocm-draft"),
 		description: "",
 		qty: "",
 		unit: "",
 		unitCost: ""
-	}]);
+	});
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "BOCM",
+		makeEmpty: emptyBocm,
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("bocm-item"),
+			masterlistId: r.masterlistId || "",
+			description: String(r.description || "").trim(),
+			qty: blankOrNumber(r.qty),
+			unit: String(r.unit || "").trim() || (lineGapFields("BOCM", r).length ? "" : "unit"),
+			unitCost: blankOrNumber(r.unitCost)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("bocm-col-widths", {
 		itemNo: 55,
 		description: 250,
@@ -9793,6 +10902,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		}));
 		return [...existing, ...drafts];
 	}, [items, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
 		const extra = field === "description" ? fillFromMasterlist("BOCM", masterlistBOCM, value) : {};
 		if (extra.masterlistId && !num2(row.qty)) extra.qty = 1;
@@ -9837,42 +10947,18 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.description.trim() && Number(r.qty) > 0 && Number(r.unitCost) > 0).map((r) => ({
-			id: uid3("bocm-item"),
-			masterlistId: r.masterlistId || "",
-			description: r.description.trim(),
-			qty: Number(r.qty),
-			unit: r.unit.trim() || "unit",
-			unitCost: Number(r.unitCost)
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "BOCM",
-			items: newItems
-		});
-		setDraftRows([{
-			id: uid3("bocm-draft"),
-			description: "",
-			qty: "",
-			unit: "",
-			unitCost: ""
-		}]);
-	};
+	const handleSave = () => lineEntry.saveDrafts();
 	const bocmSubtotal = items.reduce((s, it) => s + calcBOCM(it), 0);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-form",
 		children: [
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistBOCM.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.description }, l.id))
-			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsxs(ResizableTh, {
 							colKey: "itemNo",
@@ -9925,6 +11011,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 						const isLast = index === allRows.length - 1;
 						return /* @__PURE__ */ jsxs("tr", {
 							...rowDrag(row, "BOCM", task2, subtask2, dispatch),
+							"data-line-id": row.id,
 							className: (isLast && row.isDraft ? "ce-grid-row-ghost " : "ce-row-draggable ") + (monthsSince(row.lastReviewed) > STALE_RATE_MONTHS ? "ce-row-stale" : ""),
 							children: [
 								/* @__PURE__ */ jsx("td", {
@@ -9933,13 +11020,13 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								}),
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 									className: "ce-desc-line",
-									children: [/* @__PURE__ */ jsx("input", {
-									className: "ce-grid-input",
-									list: datalistId,
+									children: [/* @__PURE__ */ jsx(LineNamePicker, {
+									category: "BOCM",
+									list: masterlistBOCM,
 									value: row.description,
 									placeholder: row.isDraft ? "Type item…" : "",
-									onChange: (e) => {
-										updateRow(row, "description", e.target.value);
+									onChange: (value) => {
+										updateRow(row, "description", value);
 										appendRowIfLast(row);
 									},
 									onFocus: () => appendRowIfLast(row)
@@ -9964,7 +11051,10 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									checked: !!row.needsQuote,
 									onChange: (next) => updateRow(row, "needsQuote", next)
 								})] })] })] }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOCM", row, "qty"),
+									"data-miss": lineGapNote("BOCM", row, "qty"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9985,7 +11075,10 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOCM", row, "unitCost"),
+									"data-miss": lineGapNote("BOCM", row, "unitCost"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -10068,12 +11161,29 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 	const { PPE: masterlistPPE } = useMasterlist();
 	const exceptions = useRateExceptions();
 	const datalistId = useState(() => uid3("dl"))[0];
-	const [draftRows, setDraftRows] = useState([{
+	const emptyPpe = () => ({
 		id: uid3("ppe-draft"),
 		item: "",
 		qty: "",
 		unitCost: ""
-	}]);
+	});
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "PPE",
+		makeEmpty: emptyPpe,
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("ppe-item"),
+			masterlistId: r.masterlistId || "",
+			item: String(r.item || "").trim(),
+			qty: blankOrNumber(r.qty),
+			unitCost: blankOrNumber(r.unitCost)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("ppe-col-widths", {
 		itemNo: 55,
 		item: 250,
@@ -10093,6 +11203,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		}));
 		return [...existing, ...drafts];
 	}, [items, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
 		const extra = field === "item" ? fillFromMasterlist("PPE", masterlistPPE, value) : {};
 		if (extra.masterlistId && !num2(row.qty)) extra.qty = 1;
@@ -10136,40 +11247,18 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.item.trim() && Number(r.qty) > 0 && Number(r.unitCost) > 0).map((r) => ({
-			id: uid3("ppe-item"),
-			masterlistId: r.masterlistId || "",
-			item: r.item.trim(),
-			qty: Number(r.qty),
-			unitCost: Number(r.unitCost)
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "PPE",
-			items: newItems
-		});
-		setDraftRows([{
-			id: uid3("ppe-draft"),
-			item: "",
-			qty: "",
-			unitCost: ""
-		}]);
-	};
+	const handleSave = () => lineEntry.saveDrafts();
 	const ppeSubtotal = items.reduce((s, it) => s + calcPPE(it), 0);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-form",
 		children: [
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistPPE.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.item }, l.id))
-			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsxs(ResizableTh, {
 							colKey: "itemNo",
@@ -10216,6 +11305,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 						const isLast = index === allRows.length - 1;
 						return /* @__PURE__ */ jsxs("tr", {
 							...rowDrag(row, "PPE", task2, subtask2, dispatch),
+							"data-line-id": row.id,
 							className: isLast && row.isDraft ? "ce-grid-row-ghost" : "ce-row-draggable",
 							children: [
 								/* @__PURE__ */ jsx("td", {
@@ -10224,13 +11314,13 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								}),
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 									className: "ce-desc-line",
-									children: [/* @__PURE__ */ jsx("input", {
-									className: "ce-grid-input",
-									list: datalistId,
+									children: [/* @__PURE__ */ jsx(LineNamePicker, {
+									category: "PPE",
+									list: masterlistPPE,
 									value: row.item,
 									placeholder: row.isDraft ? "Type PPE item…" : "",
-									onChange: (e) => {
-										updateRow(row, "item", e.target.value);
+									onChange: (value) => {
+										updateRow(row, "item", value);
 										appendRowIfLast(row);
 									},
 									onFocus: () => appendRowIfLast(row)
@@ -10252,7 +11342,10 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										patch
 									})
 								})] })] })] }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("PPE", row, "qty"),
+									"data-miss": lineGapNote("PPE", row, "qty"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -10263,7 +11356,10 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("PPE", row, "unitCost"),
+									"data-miss": lineGapNote("PPE", row, "unitCost"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -11065,6 +12161,10 @@ var BreakdownDndContext = createContext(null);
 function useBreakdownDnd() {
 	return useContext(BreakdownDndContext);
 }
+var LineKitContext = createContext(null);
+function useLineKits() {
+	return useContext(LineKitContext);
+}
 function dropEq(a, b) {
 	if (a === b) return true;
 	if (!a || !b) return !a && !b;
@@ -11136,6 +12236,8 @@ function SubtaskCard({ task: task2, subtask: subtask2, dispatch, allTasks, taskT
 	const dnd = useBreakdownDnd();
 	const [copyOpen, setCopyOpen] = useState(false);
 	const [addOpen, setAddOpen] = useState(false);
+	const [kitOpen, setKitOpen] = useState(false);
+	const lineKits = useLineKits();
 	const [openCats, setOpenCats] = useState(() => sheetMemory?.current?.[subtask2.id] || {});
 	useEffect(() => {
 		if (!sheetMemory) return;
@@ -11297,6 +12399,63 @@ function SubtaskCard({ task: task2, subtask: subtask2, dispatch, allTasks, taskT
 							"aria-label": "Copy",
 							onClick: () => setCopyOpen(true),
 							children: /* @__PURE__ */ jsx(Copy, { size: 14 })
+						}),
+						/* @__PURE__ */ jsx("button", {
+							className: "ce-btn-ghost ce-btn-sm",
+							type: "button",
+							title: "Save the current BOL, BOTE, BOCM and PPE lines as a kit",
+							onClick: () => {
+								const name = window.prompt("Kit name", subtask2.title || "Welding repair");
+								if (!name || !String(name).trim()) return;
+								const items = emptyItems();
+								["BOL", "BOTE", "BOCM", "PPE"].forEach((c) => {
+									items[c] = (subtask2.items?.[c] || []).map((it) => ({
+										...it,
+										id: uid3(c.toLowerCase())
+									}));
+								});
+								lineKits?.save?.({
+									id: uid3("ptt"),
+									name: String(name).trim(),
+									workType: task2.workType || "onsite",
+									notes: "",
+									items
+								});
+							},
+							children: "Save lines as kit"
+						}),
+						/* @__PURE__ */ jsxs("div", {
+							className: "ce-add-menu",
+							children: [/* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost ce-btn-sm",
+								type: "button",
+								title: "Insert a kit. Lines are added, not replaced.",
+								onClick: () => setKitOpen((v) => !v),
+								children: "Insert kit"
+							}), kitOpen && /* @__PURE__ */ jsxs("div", {
+								className: "ce-add-pop",
+								children: [!(lineKits?.templates || []).length ? /* @__PURE__ */ jsx("p", {
+									className: "ce-empty",
+									children: "No kits yet."
+								}) : (lineKits.templates || []).map((tpl) => /* @__PURE__ */ jsx("button", {
+									type: "button",
+									onClick: () => {
+										if (!window.confirm(`Insert “${tpl.name}” into this scope? Lines will be added, not replaced.`)) return;
+										setKitOpen(false);
+										dispatch({
+											type: "COPY_SUBTASK_PACK",
+											taskId: task2.id,
+											subtaskId: subtask2.id,
+											pack: {
+												items: tpl.items || emptyItems(),
+												notes: "",
+												categories: ["BOL", "BOTE", "BOCM", "PPE"]
+											}
+										});
+									},
+									children: tpl.name
+								}, tpl.id))]
+							})]
 						}),
 						/* @__PURE__ */ jsxs("div", {
 							className: "ce-add-menu",
@@ -12164,7 +13323,7 @@ function KeptScopeBar({ task, sub, path, onExpand, onOpenCat }) {
 		})]
 	});
 }
-function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates, enabledWorkTypes, hiddenWorkTypes, rateExceptions = [] }) {
+function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates, onTaskTemplatesChange, enabledWorkTypes, hiddenWorkTypes, rateExceptions = [] }) {
 	const db = useMasterlist();
 	const [addingTask, setAddingTask] = useState(false);
 	const [addingWorkType, setAddingWorkType] = useState("onsite");
@@ -12328,7 +13487,12 @@ function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates
 		PPE: db.PPE,
 		MISC: db.MISC
 	};
-	return /* @__PURE__ */ jsx(RateExceptionContext.Provider, {
+	return /* @__PURE__ */ jsx(LineKitContext.Provider, {
+		value: {
+			templates: taskTemplates || [],
+			save: (tpl) => onTaskTemplatesChange?.([...(taskTemplates || []), tpl])
+		},
+		children: /* @__PURE__ */ jsx(RateExceptionContext.Provider, {
 		value: rateExceptions,
 		children: /* @__PURE__ */ jsxs(BreakdownDndContext.Provider, {
 		value: dnd,
@@ -12853,7 +14017,7 @@ function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates
 				]
 			})
 		})]
-	}) });
+	}) }) });
 }
 function computeSchedule(tasks) {
 	const visitedTasks = /* @__PURE__ */ new Set();
@@ -13447,12 +14611,14 @@ function usePersistentEdits(storeRef, key) {
 	const [edits, setEdits] = useState(() => storeRef?.current?.[key] || {});
 	const update = (id, patch) => {
 		setEdits((prev) => {
+			const merged = { ...prev[id] };
+			Object.keys(patch || {}).forEach((k) => {
+				if (patch[k] === undefined) delete merged[k];
+				else merged[k] = patch[k];
+			});
 			const next = {
 				...prev,
-				[id]: {
-					...prev[id],
-					...patch
-				}
+				[id]: merged
 			};
 			if (storeRef) {
 				if (!storeRef.current) storeRef.current = {};
@@ -13482,7 +14648,353 @@ function withBolEdit(row, edit, dt, shift) {
 	next.subtotal = bolLineAmount(next, dt, shift);
 	return next;
 }
-function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
+function matchingItemIds(tasks, category, match) {
+	const ids = [];
+	(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => {
+		(s.items?.[category] || []).forEach((it) => {
+			if (match(it)) ids.push(it.id);
+		});
+	}));
+	return ids;
+}
+function SummaryDeleteBtn({ label, onDelete }) {
+	return /* @__PURE__ */ jsx(IconBtn, {
+		danger: true,
+		title: "Remove",
+		confirm: `Remove "${label}" from this summary? This deletes the matching breakdown line and cannot be undone.`,
+		onClick: onDelete,
+		children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
+	});
+}
+function summaryQueryMatch(label, query) {
+	const q = String(query || "").trim().toLowerCase();
+	if (!q) return true;
+	return String(label || "").toLowerCase().includes(q);
+}
+function summaryScopes(tasks) {
+	const out = [];
+	(tasks || []).forEach((t) => {
+		const walk = (list) => (list || []).forEach((s) => {
+			out.push({
+				taskId: t.id,
+				taskTitle: t.title || "Untitled",
+				workType: taskWorkType(t),
+				subtaskId: s.id,
+				subtaskTitle: s.title || "Scope",
+				days: defaultDaysForSubtask(t, s)
+			});
+			walk(s.children);
+		});
+		walk(t.subtasks);
+	});
+	return out;
+}
+function summaryItemSources(tasks, category, match) {
+	const out = [];
+	(tasks || []).forEach((t) => {
+		const walk = (list) => (list || []).forEach((s) => {
+			(s.items?.[category] || []).forEach((it) => {
+				if (!match(it)) return;
+				out.push({
+					key: `${t.id}:${s.id}:${it.id}`,
+					workType: taskWorkType(t),
+					taskTitle: t.title || "Untitled",
+					subtaskTitle: s.title || "Scope",
+					qty: num2(it.qty),
+					rate: category === "BOL" || category === "BOTE" ? num2(it.rate) : num2(it.unitCost),
+					dayType: it.dayType || "Regular",
+					shift: it.shift || "Day"
+				});
+			});
+			walk(s.children);
+		});
+		walk(t.subtasks);
+	});
+	return out;
+}
+function findScopeLine(tasks, scope, category, match) {
+	const task2 = (tasks || []).find((t) => t.id === scope?.taskId);
+	if (!task2) return null;
+	const sub = flattenSubs(task2).find((s) => s.id === scope.subtaskId);
+	if (!sub) return null;
+	return (sub.items?.[category] || []).find(match) || null;
+}
+function SummarySourceBtn({ load, bol }) {
+	const [open, setOpen] = useState(false);
+	const [sources, setSources] = useState([]);
+	const [box, setBox] = useState(null);
+	const popRef = useRef(null);
+	const btnRef = useRef(null);
+	useEffect(() => {
+		if (!open) return;
+		const close = (e) => {
+			if (popRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
+			setOpen(false);
+		};
+		document.addEventListener("mousedown", close);
+		return () => document.removeEventListener("mousedown", close);
+	}, [open]);
+	return /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("button", {
+		ref: btnRef,
+		type: "button",
+		className: "ce-iconbtn ce-sum-src-btn",
+		title: "Where this belongs",
+		onClick: (e) => {
+			e.stopPropagation();
+			const r = e.currentTarget.getBoundingClientRect();
+			setBox({
+				top: r.bottom + 4,
+				left: Math.max(8, Math.min(r.left, window.innerWidth - 460))
+			});
+			if (!open) setSources(load?.() || []);
+			setOpen(!open);
+		},
+		children: /* @__PURE__ */ jsx(Pin, { size: 12 })
+	}), open && /* @__PURE__ */ jsx("div", {
+		ref: popRef,
+		className: "ce-sum-src-pop",
+		style: box || void 0,
+		children: !sources.length ? /* @__PURE__ */ jsx("p", { children: "No breakdown lines." }) : /* @__PURE__ */ jsxs("table", { children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+			/* @__PURE__ */ jsx("th", { children: "Work type" }),
+			/* @__PURE__ */ jsx("th", { children: "Scope" }),
+			/* @__PURE__ */ jsx("th", { children: "Subtask" }),
+			/* @__PURE__ */ jsx("th", { children: "Qty" }),
+			/* @__PURE__ */ jsx("th", { children: "Rate" }),
+			bol ? /* @__PURE__ */ jsx("th", { children: "Day" }) : null,
+			bol ? /* @__PURE__ */ jsx("th", { children: "Shift" }) : null
+		] }) }), /* @__PURE__ */ jsx("tbody", { children: sources.map((row) => /* @__PURE__ */ jsxs("tr", { children: [
+			/* @__PURE__ */ jsx("td", { children: workTypeMeta(row.workType).label }),
+			/* @__PURE__ */ jsx("td", { children: row.taskTitle }),
+			/* @__PURE__ */ jsx("td", { children: row.subtaskTitle }),
+			/* @__PURE__ */ jsx("td", { children: row.qty }),
+			/* @__PURE__ */ jsx("td", { children: fmt(row.rate) }),
+			bol ? /* @__PURE__ */ jsx("td", { children: row.dayType }) : null,
+			bol ? /* @__PURE__ */ jsx("td", { children: row.shift }) : null
+		] }, row.key)) })] })
+	})] });
+}
+function SummarySheetTools({ onQuery }) {
+	const [query, setQuery] = useState("");
+	const wait = useRef(null);
+	useEffect(() => () => {
+		if (wait.current) clearTimeout(wait.current);
+	}, []);
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-sum-tools",
+		children: [/* @__PURE__ */ jsx(Search, { size: 13 }), /* @__PURE__ */ jsx("input", {
+			className: "ce-input ce-sum-search",
+			value: query,
+			placeholder: "Search items",
+			onChange: (e) => {
+				const next = e.target.value;
+				setQuery(next);
+				if (wait.current) clearTimeout(wait.current);
+				wait.current = setTimeout(() => onQuery(next), 40);
+			}
+		})]
+	});
+}
+function SummaryRowAddBtn({ onClick }) {
+	return /* @__PURE__ */ jsx("button", {
+		type: "button",
+		className: "ce-iconbtn ce-sum-src-btn",
+		title: "Add to scopes",
+		onClick: (e) => {
+			e.stopPropagation();
+			onClick?.();
+		},
+		children: /* @__PURE__ */ jsx(Plus, { size: 12 })
+	});
+}
+function SummaryNewItemBtn({ onClick }) {
+	return /* @__PURE__ */ jsx("button", {
+		type: "button",
+		className: "ce-iconbtn ce-sum-src-btn ce-sum-new-btn",
+		title: "Add a new item",
+		onClick: (e) => {
+			e.stopPropagation();
+			onClick?.();
+		},
+		children: /* @__PURE__ */ jsx(Plus, { size: 12 })
+	});
+}
+function scopeAddItem(category, name, qty, days, dayType, shift, filled) {
+	if (category === "BOL") return bolItem({
+		...filled,
+		role: name,
+		qty,
+		days,
+		otHrs: 0,
+		dayType,
+		shift
+	});
+	if (category === "BOTE") return boteItem({
+		...filled,
+		description: name,
+		qty,
+		days,
+		rate: num2(filled.rate),
+		powerKw: num2(filled.powerKw),
+		hoursPerDay: num2(filled.hoursPerDay),
+		kwhRate: num2(filled.kwhRate)
+	});
+	if (category === "PPE") return ppeItem({
+		...filled,
+		item: name,
+		qty,
+		unitCost: num2(filled.unitCost)
+	});
+	return bocmItem({
+		...filled,
+		description: name,
+		qty,
+		unitCost: num2(filled.unitCost),
+		unit: filled.unit || "pc"
+	});
+}
+function SummaryAddDialog({ category, tasks, item, onClose, dispatch }) {
+	const lists = useMasterlist();
+	const creating = !!item?.create;
+	const scopes = useMemo(() => {
+		const list = summaryScopes(tasks);
+		if (!item?.workType) return list;
+		return [...list].sort((a, b) => (a.workType === item.workType ? 0 : 1) - (b.workType === item.workType ? 0 : 1));
+	}, [tasks, item?.workType]);
+	const [name, setName] = useState(String(item?.label || ""));
+	const [dayType, setDayType] = useState(item?.dayType || "Regular");
+	const [shift, setShift] = useState(item?.shift || "Day");
+	const label = creating ? String(name || "").trim() : String(item?.label || "").trim();
+	const [qtyByScope, setQtyByScope] = useState({});
+	const sameLine = (it) => lineItemLabel(category, it).toLowerCase() === label.toLowerCase() && (category !== "BOL" || (it.dayType || "Regular") === dayType && (it.shift || "Day") === shift);
+	const filled = fillFromMasterlist(category, lists[category] || [], label);
+	const dbRate = category === "BOL" || category === "BOTE" ? num2(filled.rate) : num2(filled.unitCost);
+	const suggestions = useMemo(() => {
+		if (!creating) return [];
+		const seen = /* @__PURE__ */ new Set();
+		const out = [];
+		(lists[category] || []).filter(masterlistItemActive).forEach((it) => {
+			const text = String(masterlistItemLabel(category, it) || "").trim();
+			const key = text.toLowerCase();
+			if (!text || seen.has(key)) return;
+			seen.add(key);
+			out.push(text);
+		});
+		collectCeItems(tasks, category).forEach((it) => {
+			const key = it.label.toLowerCase();
+			if (!it.label || seen.has(key)) return;
+			seen.add(key);
+			out.push(it.label);
+		});
+		return out.sort((a, b) => a.localeCompare(b));
+	}, [creating, lists, category, tasks]);
+	const listId = `ce-sum-new-${category}`;
+	const chosen = scopes.filter((s) => {
+		const key = `${s.taskId}|${s.subtaskId}`;
+		return Object.prototype.hasOwnProperty.call(qtyByScope, key) && num2(qtyByScope[key]) > 0;
+	});
+	function toggleScope(scope) {
+		const key = `${scope.taskId}|${scope.subtaskId}`;
+		setQtyByScope((prev) => {
+			const next = { ...prev };
+			if (Object.prototype.hasOwnProperty.call(next, key)) delete next[key];
+			else next[key] = "1";
+			return next;
+		});
+	}
+	function commit() {
+		if (!label || !chosen.length) return;
+		const ops = chosen.map((scope) => {
+			const qty = num2(qtyByScope[`${scope.taskId}|${scope.subtaskId}`]);
+			const existing = findScopeLine(tasks, scope, category, sameLine);
+			if (existing) return {
+				taskId: scope.taskId,
+				subtaskId: scope.subtaskId,
+				itemId: existing.id,
+				qty
+			};
+			return {
+				taskId: scope.taskId,
+				subtaskId: scope.subtaskId,
+				qty,
+				item: scopeAddItem(category, label, qty, scope.days, dayType, shift, filled)
+			};
+		});
+		dispatch({
+			type: "APPLY_SCOPE_ADDS",
+			category,
+			ops
+		});
+		onClose();
+	}
+	return /* @__PURE__ */ jsx("div", {
+		className: "ce-confirm-backdrop",
+		onMouseDown: onClose,
+		children: /* @__PURE__ */ jsxs("div", {
+			className: "ce-confirm ce-sum-add",
+			onMouseDown: (e) => e.stopPropagation(),
+			children: [
+				/* @__PURE__ */ jsx("h3", { className: "ce-serif", children: creating ? "New item" : label || "Add to scopes" }),
+				creating ? /* @__PURE__ */ jsxs("label", { className: "ce-field", children: [/* @__PURE__ */ jsx("span", { children: "Item" }), /* @__PURE__ */ jsx("input", {
+					className: "ce-input",
+					list: listId,
+					value: name,
+					autoFocus: true,
+					placeholder: "Name of the new resource",
+					onChange: (e) => setName(e.target.value)
+				}), /* @__PURE__ */ jsx("datalist", { id: listId, children: suggestions.map((text) => /* @__PURE__ */ jsx("option", { value: text }, text)) })] }) : null,
+				creating && category === "BOL" ? /* @__PURE__ */ jsxs("div", { className: "ce-sum-add-row", children: [/* @__PURE__ */ jsxs("label", { className: "ce-field", children: [/* @__PURE__ */ jsx("span", { children: "Day type" }), /* @__PURE__ */ jsx("select", {
+					className: "ce-input",
+					value: dayType,
+					onChange: (e) => setDayType(e.target.value),
+					children: DAY_TYPES.map((d) => /* @__PURE__ */ jsx("option", { value: d, children: d }, d))
+				})] }), /* @__PURE__ */ jsxs("label", { className: "ce-field", children: [/* @__PURE__ */ jsx("span", { children: "Shift" }), /* @__PURE__ */ jsx("select", {
+					className: "ce-input",
+					value: shift,
+					onChange: (e) => setShift(e.target.value),
+					children: ["Day", "Night"].map((d) => /* @__PURE__ */ jsx("option", { value: d, children: d }, d))
+				})] })] }) : null,
+				/* @__PURE__ */ jsx("p", { className: "ce-sum-add-note", children: creating ? category === "BOL" ? "Name the resource, then tick the scopes and set each quantity." : "Name the resource, then tick the scopes and set each quantity." : category === "BOL" ? `${dayType} · ${shift}. Tick the scopes and set each quantity.` : "Tick the scopes and set each quantity." }),
+				/* @__PURE__ */ jsx("div", { className: "ce-sum-scopes", children: scopes.length ? scopes.map((scope) => {
+					const key = `${scope.taskId}|${scope.subtaskId}`;
+					const on = Object.prototype.hasOwnProperty.call(qtyByScope, key);
+					const existing = findScopeLine(tasks, scope, category, sameLine);
+					const have = existing ? num2(existing.qty) : 0;
+					const adding = on ? num2(qtyByScope[key]) : 0;
+					return /* @__PURE__ */ jsxs("label", { className: "ce-sum-scope", children: [/* @__PURE__ */ jsx("input", {
+						type: "checkbox",
+						checked: on,
+						onChange: () => toggleScope(scope)
+					}), /* @__PURE__ */ jsxs("span", { className: "ce-sum-scope-name", children: [/* @__PURE__ */ jsx("b", { children: `${workTypeMeta(scope.workType).label} · ${scope.taskTitle}` }), /* @__PURE__ */ jsx("small", { children: scope.subtaskTitle !== scope.taskTitle ? scope.subtaskTitle : "" })] }), /* @__PURE__ */ jsx("span", { className: "ce-sum-scope-have", children: have > 0 ? on && adding > 0 ? `has ${have} → ${have + adding}` : `has ${have}` : on ? "new" : "" }), /* @__PURE__ */ jsx("input", {
+						className: "ce-input",
+						type: "number",
+						min: "0",
+						disabled: !on,
+						value: on ? qtyByScope[key] : "",
+						onChange: (e) => setQtyByScope((prev) => ({
+							...prev,
+							[key]: e.target.value
+						})),
+						"aria-label": "Quantity for this scope"
+					})] }, key);
+				}) : /* @__PURE__ */ jsx("p", { className: "ce-sum-add-note", children: "No scopes yet." }) }),
+				/* @__PURE__ */ jsx("p", { className: "ce-sum-add-note", children: dbRate > 0 ? "Days follow each scope schedule. Rate comes from the database. A scope that already has this item gets the quantity added on." : "Days follow each scope schedule. This name is not in the database, so a new line starts at rate 0." }),
+				/* @__PURE__ */ jsxs("div", { className: "ce-confirm-actions", children: [/* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: onClose,
+					children: "Cancel"
+				}), /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-primary",
+					disabled: !label || !chosen.length,
+					onClick: commit,
+					children: chosen.length > 1 ? `Add to ${chosen.length} scopes` : "Add"
+				})] })
+			]
+		})
+	});
+}
+function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sourcesFor, onAdd, onCreate }) {
 	const qtyTotal = rows.reduce((s, r) => s + num2(r.qty), 0);
 	const amount = rows.reduce((s, r) => s + num2(r.subtotal), 0);
 	return /* @__PURE__ */ jsxs("div", {
@@ -13504,7 +15016,8 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.days}px` } }),
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.rate}px` } }),
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.otHrs}px` } }),
-							/* @__PURE__ */ jsx("col", { style: { width: `${widths.subtotal}px` } })
+							/* @__PURE__ */ jsx("col", { style: { width: `${widths.subtotal}px` } }),
+							/* @__PURE__ */ jsx("col", { className: "ce-sum-freeze-col", style: { width: "58px" } })
 						] }),
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "itemNo", width: widths.itemNo, onResize: updateWidth, children: "Item No." }),
@@ -13513,11 +15026,12 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "days", width: widths.days, onResize: updateWidth, children: "Days" }),
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "rate", width: widths.rate, onResize: updateWidth, children: "Rate/Day" }),
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "otHrs", width: widths.otHrs, onResize: updateWidth, children: "OT Hrs" }),
-							/* @__PURE__ */ jsx(ResizableTh, { colKey: "subtotal", width: widths.subtotal, onResize: updateWidth, children: "Subtotal" })
+							/* @__PURE__ */ jsx(ResizableTh, { colKey: "subtotal", width: widths.subtotal, onResize: updateWidth, children: "Subtotal" }),
+							/* @__PURE__ */ jsx("th", { className: "ce-sum-freeze", "aria-label": "Add or remove", children: onCreate ? /* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: onCreate }) : null })
 						] }) }),
 						/* @__PURE__ */ jsx("tbody", { children: rows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center ce-sum-item", children: idx + 1 }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: r.role }),
+							/* @__PURE__ */ jsxs("td", { className: "ce-sum-left ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: r.role }), /* @__PURE__ */ jsx(SummarySourceBtn, { load: () => sourcesFor?.(r.role) || [], bol: true }), onAdd ? /* @__PURE__ */ jsx(SummaryRowAddBtn, { onClick: () => onAdd(r.role) }) : null] }),
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center", children: /* @__PURE__ */ jsx("input", {
 								type: "number",
 								min: "0",
@@ -13540,7 +15054,11 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 								value: r.otHrs,
 								onChange: (e) => onEdit?.(r.role, { otHrs: e.target.value })
 							}) }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: fmt(r.subtotal) })
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: fmt(r.subtotal) }),
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze", children: /* @__PURE__ */ jsxs("span", { className: "ce-sum-freeze-acts", children: [onCreate ? /* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: onCreate }) : null, /* @__PURE__ */ jsx(SummaryDeleteBtn, {
+								label: r.role,
+								onDelete: () => onDelete?.(r.role)
+							})] }) })
 						] }, `${label}-${idx}`)) }),
 						/* @__PURE__ */ jsx("tfoot", { children: /* @__PURE__ */ jsxs("tr", {
 							className: "ce-sum-sub",
@@ -13551,7 +15069,8 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 								/* @__PURE__ */ jsx("td", {}),
 								/* @__PURE__ */ jsx("td", {}),
 								/* @__PURE__ */ jsx("td", {}),
-								/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono ce-sum-strong", children: fmt(amount) })
+								/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono ce-sum-strong", children: fmt(amount) }),
+								/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
 							]
 						}) })
 					]
@@ -13560,7 +15079,53 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 		]
 	});
 }
-function BOLMasterSummary({ tasks, editsRef }) {
+function BenefitExplain({ lines, children }) {
+	const [open, setOpen] = useState(false);
+	const [box, setBox] = useState(null);
+	const popRef = useRef(null);
+	const holdRef = useRef(null);
+	useEffect(() => {
+		if (!open) return;
+		const close = (e) => {
+			if (popRef.current?.contains(e.target) || holdRef.current?.contains(e.target)) return;
+			setOpen(false);
+		};
+		document.addEventListener("mousedown", close);
+		return () => document.removeEventListener("mousedown", close);
+	}, [open]);
+	function show(el) {
+		const r = el.getBoundingClientRect();
+		setBox({
+			top: r.bottom + 4,
+			left: Math.max(8, Math.min(r.left, window.innerWidth - 360))
+		});
+		setOpen(true);
+	}
+	return /* @__PURE__ */ jsxs("span", {
+		ref: holdRef,
+		className: "ce-ben-explain",
+		onFocus: (e) => show(e.currentTarget),
+		onClick: (e) => show(e.currentTarget),
+		children: [children, open ? /* @__PURE__ */ jsx("div", {
+			ref: popRef,
+			className: "ce-ben-formula",
+			style: box || void 0,
+			children: (lines || []).map((line, i) => /* @__PURE__ */ jsx("p", { children: line }, i))
+		}) : null]
+	});
+}
+function benefitExplainLines(kind, row) {
+	const f = formulaNow();
+	const monthly = fmt(row.monthlyRate);
+	const daily = fmt(row.rate);
+	const days = f.daysPerMonth || 26;
+	const base = `Monthly rate = daily ${daily} × ${days} days = ${monthly}`;
+	const how = kind === "thirteenth" ? `13th month = ${monthly} ÷ ${f.thirteenthDivisor || 12} = ${fmt(row.computedThirteenth)}` : kind === "sss" ? `SSS = ${f.sssPct}% × ${monthly} = ${fmt(row.computedSss)}` : kind === "hdmf" ? `HDMF = ${f.hdmfPct}% × ${monthly} = ${fmt(row.computedHdmf)}` : `PHIC = ${f.phicPct}% × ${monthly} = ${fmt(row.computedPhic)}`;
+	const lines = [base, how];
+	if (row.edited && Object.prototype.hasOwnProperty.call(row.edited, kind)) lines.push(`Edited to ${fmt(row.edited[kind])}. Clear the field to use the formula again.`);
+	return lines;
+}
+function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 	const { widths, updateWidth } = useResizableColumns("bol-sum-col-widths", {
 		itemNo: 60,
 		role: 220,
@@ -13570,60 +15135,97 @@ function BOLMasterSummary({ tasks, editsRef }) {
 		otHrs: 80,
 		subtotal: 130
 	});
-	const { widths: benWidths, updateWidth: updateBenWidth } = useResizableColumns("bol-sum-benefits-col-widths", {
-		itemNo: 60,
+	const { widths: benWidths, updateWidth: updateBenWidth } = useResizableColumns("bol-sum-benefits-col-widths-2", {
+		itemNo: 52,
 		role: 180,
-		qty: 70,
-		uom: 70,
-		days: 90,
-		monthly: 110,
-		thirteenth: 90,
-		sss: 80,
-		hdmf: 80,
-		phic: 80,
-		perDiem: 90,
-		allowance: 100,
+		qty: 56,
+		uom: 52,
+		days: 54,
+		thirteenth: 108,
+		sss: 100,
+		hdmf: 100,
+		phic: 100,
+		perDiem: 148,
+		allowance: 110,
 		total: 120
 	});
-	const [wtFilter, setWtFilter] = useState("all");
 	const [bolEdits, setBolEdits] = usePersistentEdits(editsRef, "bol");
 	const [benefitEdits, setBenefitEdits] = usePersistentEdits(editsRef, "bol-benefits");
-	const full = buildBolGroups(tasks);
+	const [wtFilter, setWtFilter] = useState("all");
+	const [sheetQuery, setSheetQuery] = useState("");
+	const [addItem, setAddItem] = useState(null);
+	const full = useMemo(() => buildBolGroups(tasks), [tasks]);
 	const allBOL = full.allBOL;
-	const scheduleMap = getScheduledItemMap(tasks, "BOL");
-	const grandTotal = WORK_TYPES.reduce((sum, w) => {
-		const model = buildBolGroups(tasksOfType(tasks, w.id));
+	const byType = useMemo(() => {
+		const map = {};
+		WORK_TYPES.forEach((w) => {
+			const subset = tasksOfType(tasks, w.id);
+			map[w.id] = {
+				subset,
+				model: buildBolGroups(subset)
+			};
+		});
+		return map;
+	}, [tasks]);
+	const scheduleMap = useMemo(() => getScheduledItemMap(tasks, "BOL"), [tasks]);
+	const grandTotal = useMemo(() => WORK_TYPES.reduce((sum, w) => {
+		const model = byType[w.id]?.model;
+		if (!model) return sum;
 		return sum + BOL_SHIFT_GROUPS.reduce((block, g) => {
 			return block + Object.values(model.groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => {
 				return rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal);
 			}, 0);
 		}, 0);
-	}, 0);
+	}, 0), [byType, bolEdits]);
+	const benefitSchedule = useMemo(() => {
+		const byRole = {};
+		Object.keys(scheduleMap).forEach((key) => {
+			const role = key.split("~")[0];
+			const sched = scheduleMap[key];
+			if (!byRole[role]) byRole[role] = {
+				maxDailyQty: 0,
+				activeDays: 0
+			};
+			byRole[role].maxDailyQty = Math.max(byRole[role].maxDailyQty, sched.maxDailyQty);
+			byRole[role].activeDays = Math.max(byRole[role].activeDays, sched.activeDays);
+		});
+		return byRole;
+	}, [scheduleMap]);
 	const benefitsMap = {};
 	allBOL.forEach((it) => {
 		const role = it.role || "Unnamed";
-		if (!benefitsMap[role]) benefitsMap[role] = {
-			role,
-			maxDailyQty: 0,
-			activeDays: 0,
-			rate: num2(it.rate)
-		};
+		if (!benefitsMap[role]) {
+			const sched = benefitSchedule[role] || { maxDailyQty: 0, activeDays: 0 };
+			benefitsMap[role] = {
+				role,
+				maxDailyQty: sched.maxDailyQty,
+				activeDays: sched.activeDays,
+				rate: num2(it.rate)
+			};
+		}
 		if (benefitsMap[role].rate === 0) benefitsMap[role].rate = num2(it.rate);
-		Object.keys(scheduleMap).forEach((key) => {
-			if (key.startsWith(`${role}~`)) {
-				const sched = scheduleMap[key];
-				benefitsMap[role].maxDailyQty = Math.max(benefitsMap[role].maxDailyQty, sched.maxDailyQty);
-				benefitsMap[role].activeDays = Math.max(benefitsMap[role].activeDays, sched.activeDays);
-			}
-		});
 	});
 	const benefitsData = summarySort(Object.values(benefitsMap).map((b) => {
 		const f = formulaNow();
 		const monthlyRate = b.rate * f.daysPerMonth;
-		const thirteenth = monthlyRate / (f.thirteenthDivisor || 12);
-		const sss = monthlyRate * f.sssPct / 100;
-		const hdmf = monthlyRate * f.hdmfPct / 100;
-		const phic = monthlyRate * f.phicPct / 100;
+		const computedThirteenth = monthlyRate / (f.thirteenthDivisor || 12);
+		const computedSss = monthlyRate * f.sssPct / 100;
+		const computedHdmf = monthlyRate * f.hdmfPct / 100;
+		const computedPhic = monthlyRate * f.phicPct / 100;
+		const draftOf = (key) => {
+			const row = benefitEdits[b.role];
+			if (!row || !Object.prototype.hasOwnProperty.call(row, key)) return null;
+			return row[key];
+		};
+		const amountOf = (key, computed) => {
+			const draft = draftOf(key);
+			if (draft == null || draft === "") return computed;
+			return num2(draft);
+		};
+		const thirteenth = computedThirteenth;
+		const sss = amountOf("sss", computedSss);
+		const hdmf = amountOf("hdmf", computedHdmf);
+		const phic = amountOf("phic", computedPhic);
 		const perDiemBase = (() => {
 			let p = 0;
 			allBOL.forEach((it) => {
@@ -13640,19 +15242,33 @@ function BOLMasterSummary({ tasks, editsRef }) {
 			return p;
 		})() * b.activeDays;
 		const totalBenefits = thirteenth + sss + hdmf + phic + perDiem + allowance;
+		const edited = {};
+		if (Math.abs(sss - computedSss) > .004) edited.sss = sss;
+		if (Math.abs(hdmf - computedHdmf) > .004) edited.hdmf = hdmf;
+		if (Math.abs(phic - computedPhic) > .004) edited.phic = phic;
 		return {
 			...b,
 			monthlyRate,
+			computedThirteenth,
+			computedSss,
+			computedHdmf,
+			computedPhic,
 			thirteenth,
 			sss,
 			hdmf,
 			phic,
+			sssInput: draftOf("sss") == null ? computedSss : draftOf("sss"),
+			hdmfInput: draftOf("hdmf") == null ? computedHdmf : draftOf("hdmf"),
+			phicInput: draftOf("phic") == null ? computedPhic : draftOf("phic"),
+			edited,
 			perDiem,
 			allowance,
 			totalBenefits
 		};
 	}), "BOL", (b) => b.role);
-	const displayBenefitsData = benefitsData.length > 0 ? benefitsData : [{
+	const benefitQuery = String(sheetQuery || "").trim();
+	const visibleBenefits = benefitsData.filter((row) => summaryQueryMatch(row.role, sheetQuery));
+	const displayBenefitsData = visibleBenefits.length > 0 ? visibleBenefits : benefitQuery ? [] : [{
 		role: "No manpower data",
 		maxDailyQty: 0,
 		activeDays: 0,
@@ -13688,11 +15304,18 @@ function BOLMasterSummary({ tasks, editsRef }) {
 				value: wtFilter,
 				onChange: setWtFilter
 			}),
+			/* @__PURE__ */ jsx(SummarySheetTools, { onQuery: setSheetQuery }),
 			WORK_TYPES.filter((w) => wtFilter === "all" || wtFilter === w.id).map((w) => {
-				const subset = tasksOfType(tasks, w.id);
-				const model = buildBolGroups(subset);
-				if (wtFilter === "all" && model.allBOL.length === 0) return null;
-				const groups = model.groups;
+				const cached = byType[w.id];
+				const subset = cached?.subset || [];
+				const groups = cached?.model?.groups || {};
+				const shifts = BOL_SHIFT_GROUPS.map((g) => {
+					const source = summarySort(Object.values(groups[g.dt]?.[g.shift] || {}), "BOL", (row) => row.role).filter((row) => summaryQueryMatch(row.role, sheetQuery));
+					const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift));
+					return { g, rows };
+				}).filter((block) => block.rows.length);
+				if (!shifts.length) return null;
+				const sectionTotal = shifts.reduce((sum, block) => sum + block.rows.reduce((rowSum, row) => rowSum + num2(row.subtotal), 0), 0);
 				return /* @__PURE__ */ jsxs("div", {
 					className: "ce-wt-block",
 					children: [
@@ -13704,18 +15327,33 @@ function BOLMasterSummary({ tasks, editsRef }) {
 								w.full
 							]
 						}),
-						...BOL_SHIFT_GROUPS.map((g) => {
-							const source = summarySort(Object.values(groups[g.dt]?.[g.shift] || {}), "BOL", (row) => row.role);
-							if (!source.length) return null;
-							const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift));
-							return /* @__PURE__ */ jsx(BolShiftBlock, {
-								label: g.label,
-								rows,
-								widths,
-								updateWidth,
-								onEdit: (role, patch) => setBolEdits(`${w.id}|${g.dt}|${g.shift}|${role}`, patch)
-							}, `${w.id}-${g.dt}-${g.shift}`);
-						}),
+						...shifts.map(({ g, rows }) => /* @__PURE__ */ jsx(BolShiftBlock, {
+							label: g.label,
+							rows,
+							widths,
+							updateWidth,
+							sourcesFor: (role) => summaryItemSources(subset, "BOL", (it) => (it.role || "Unnamed") === role && (it.dayType || "Regular") === g.dt && (it.shift || "Day") === g.shift),
+							onAdd: (role) => setAddItem({
+								label: role,
+								dayType: g.dt,
+								shift: g.shift
+							}),
+							onCreate: () => setAddItem({
+								create: true,
+								workType: w.id,
+								dayType: g.dt,
+								shift: g.shift
+							}),
+							onEdit: (role, patch) => setBolEdits(`${w.id}|${g.dt}|${g.shift}|${role}`, patch),
+							onDelete: (role) => {
+								const itemIds = matchingItemIds(subset, "BOL", (it) => (it.role || "Unnamed") === role && (it.dayType || "Regular") === g.dt && (it.shift || "Day") === g.shift);
+								if (itemIds.length) dispatch?.({
+									type: "DELETE_MATCHING_ITEMS",
+									category: "BOL",
+									itemIds
+								});
+							}
+						}, `${w.id}-${g.dt}-${g.shift}`)),
 						/* @__PURE__ */ jsx("div", {
 							className: "ce-table-scroll",
 							children: /* @__PURE__ */ jsxs("table", {
@@ -13724,12 +15362,11 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									className: "ce-subtotal-row",
 									children: [/* @__PURE__ */ jsxs("td", { children: ["Subtotal — ", w.label] }), /* @__PURE__ */ jsx("td", {
 										className: "ce-right ce-mono",
-										children: fmt(BOL_SHIFT_GROUPS.reduce((block, g) => block + Object.values(groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal), 0), 0))
+										children: fmt(sectionTotal)
 									})]
 								}) })
 							})
-						}),
-						collectNotes(subset).length > 0 ? /* @__PURE__ */ jsx(SummaryNotesBlock, { tasks: subset }) : null
+						})
 					]
 				}, w.id);
 			}),
@@ -13750,7 +15387,7 @@ function BOLMasterSummary({ tasks, editsRef }) {
 					}) })
 				})
 			}),
-			/* @__PURE__ */ jsxs("div", {
+			displayBenefitsData.length > 0 && /* @__PURE__ */ jsxs("div", {
 				style: { marginTop: "1.5rem" },
 				children: [/* @__PURE__ */ jsx("div", {
 					className: "ce-sum-shift",
@@ -13766,7 +15403,6 @@ function BOLMasterSummary({ tasks, editsRef }) {
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.qty}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.uom}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.days}px` } }),
-								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.monthly}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.thirteenth}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.sss}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.hdmf}px` } }),
@@ -13806,14 +15442,8 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									colKey: "days",
 									width: benWidths.days,
 									onResize: updateBenWidth,
+									className: "ce-ben-wrap",
 									children: "Total Days"
-								}),
-								/* @__PURE__ */ jsx(ResizableTh, {
-									colKey: "monthly",
-									width: benWidths.monthly,
-									onResize: updateBenWidth,
-									className: "ce-sum-left",
-									children: "Monthly Rate"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
 									colKey: "thirteenth",
@@ -13863,7 +15493,7 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									className: "ce-sum-center ce-sum-item",
 									children: idx + 1
 								}),
-								/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: row.role || "—" }),
+								/* @__PURE__ */ jsxs("td", { className: "ce-sum-left ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: row.role || "—" }), row.role && row.role !== "No manpower data" ? /* @__PURE__ */ jsx(SummarySourceBtn, { load: () => summaryItemSources(tasks, "BOL", (it) => (it.role || "Unnamed") === row.role), bol: true }) : null] }),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-sum-center",
 									children: row.maxDailyQty
@@ -13873,30 +15503,60 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									className: "ce-sum-center",
 									children: row.activeDays
 								}),
+								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.thirteenth) : /* @__PURE__ */ jsx(BenefitExplain, {
+									lines: benefitExplainLines("thirteenth", row),
+									children: /* @__PURE__ */ jsx("input", {
+										className: "ce-input ce-ben-input",
+										readOnly: true,
+										value: fmt(row.thirteenth),
+										"aria-label": "13th month pay"
+									})
+								}) }),
+								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.sss) : /* @__PURE__ */ jsx(BenefitExplain, {
+									lines: benefitExplainLines("sss", row),
+									children: /* @__PURE__ */ jsx(CommaMoneyInput, {
+										signed: true,
+										className: "ce-ben-input",
+										label: "SSS",
+										value: row.sssInput,
+										onChange: (next) => setBenefitEdits(row.role, { sss: next }),
+										onBlur: (next) => {
+											if (next === "") setBenefitEdits(row.role, { sss: void 0 });
+										}
+									})
+								}) }),
+								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.hdmf) : /* @__PURE__ */ jsx(BenefitExplain, {
+									lines: benefitExplainLines("hdmf", row),
+									children: /* @__PURE__ */ jsx(CommaMoneyInput, {
+										signed: true,
+										className: "ce-ben-input",
+										label: "HDMF",
+										value: row.hdmfInput,
+										onChange: (next) => setBenefitEdits(row.role, { hdmf: next }),
+										onBlur: (next) => {
+											if (next === "") setBenefitEdits(row.role, { hdmf: void 0 });
+										}
+									})
+								}) }),
+								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.phic) : /* @__PURE__ */ jsx(BenefitExplain, {
+									lines: benefitExplainLines("phic", row),
+									children: /* @__PURE__ */ jsx(CommaMoneyInput, {
+										signed: true,
+										className: "ce-ben-input",
+										label: "PHIC",
+										value: row.phicInput,
+										onChange: (next) => setBenefitEdits(row.role, { phic: next }),
+										onBlur: (next) => {
+											if (next === "") setBenefitEdits(row.role, { phic: void 0 });
+										}
+									})
+								}) }),
 								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.monthlyRate)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.thirteenth)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.sss)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.hdmf)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.phic)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
+									className: "ce-ben-perdiem",
 									children: row.role === "No manpower data" ? fmt(row.perDiem) : /* @__PURE__ */ jsx(CommaMoneyInput, {
 										signed: true,
+										className: "ce-ben-input",
+										label: "Per diem",
 										value: row.perDiem,
 										onChange: (next) => setBenefitEdits(row.role, { perDiem: next })
 									})
@@ -13927,7 +15587,6 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
-									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-money ce-mono ce-sum-strong",
 										children: fmt(displayBenefitsData.reduce((s, r) => s + num2(r.totalBenefits), 0))
@@ -13937,6 +15596,18 @@ function BOLMasterSummary({ tasks, editsRef }) {
 													]
 					})
 				})]
+			}),
+			/* @__PURE__ */ jsx(SummaryNotesBlock, { groups: WORK_TYPES.filter((w) => wtFilter === "all" || wtFilter === w.id).map((w) => ({
+				id: w.id,
+				label: `${w.letter}. ${w.full}`,
+				tasks: tasksOfType(tasks, w.id)
+			})) }),
+			addItem && /* @__PURE__ */ jsx(SummaryAddDialog, {
+				category: "BOL",
+				tasks,
+				item: addItem,
+				dispatch,
+				onClose: () => setAddItem(null)
 			})
 		]
 	});
@@ -13989,10 +15660,12 @@ function categoryEditedRow(category, row, edit, workType) {
 		subtotal
 	};
 }
-function AggregatedCategoryTab({ tasks, category, editsRef }) {
+function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 	const [manualRows, setManualRows] = useState([]);
 	const [autoEdits, setAutoEdits] = usePersistentEdits(editsRef, `cat-${category}`);
 	const [wtFilter, setWtFilter] = useState("all");
+	const [sheetQuery, setSheetQuery] = useState("");
+	const [addItem, setAddItem] = useState(null);
 	const { widths, updateWidth } = useResizableColumns(`sum-col-widths-${category}`, {
 		itemNo: 60,
 		description: 260,
@@ -14001,7 +15674,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 		rate: 130,
 		electricity: 120,
 		subtotal: 130,
-		action: 50
+		action: 58
 	});
 	const meta = CATEGORY_META[category];
 	const summaryHeaders = {
@@ -14009,7 +15682,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 		BOTE: "BILL OF TOOLS & EQUIPMENT",
 		PPE: "SAFETY & PERSONAL PROTECTIVE EQUIPMENT"
 	};
-	const typeBlocks = WORK_TYPES.map((w) => {
+	const typeBlocks = useMemo(() => WORK_TYPES.map((w) => {
 		const subset = tasksOfType(tasks, w.id);
 		const rows = buildCategoryAutoRows(subset, category, w.id).map((row) => categoryEditedRow(category, row, autoEdits[`${w.id}|${row.description}`], w.id));
 		return {
@@ -14018,31 +15691,10 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 			rows,
 			total: rows.reduce((s, r) => s + r.subtotal, 0)
 		};
-	});
+	}), [tasks, category, autoEdits]);
 	const autoTotal = typeBlocks.reduce((s, b) => s + b.total, 0);
 	const manualTotal = manualRows.reduce((s, r) => s + manualSubtotal(r), 0);
 	const grandTotal = autoTotal + manualTotal;
-	function addManualRow() {
-		if (category === "BOTE") setManualRows([...manualRows, {
-			id: uid3("manual-bote"),
-			description: "",
-			qty: 0,
-			days: 0,
-			rate: 0
-		}]);
-		else if (category === "BOCM") setManualRows([...manualRows, {
-			id: uid3("manual-bocm"),
-			description: "",
-			qty: 0,
-			unitCost: 0
-		}]);
-		else if (category === "PPE") setManualRows([...manualRows, {
-			id: uid3("manual-ppe"),
-			item: "",
-			qty: 0,
-			unitCost: 0
-		}]);
-	}
 	function updateManualRow(id, patch) {
 		setManualRows((rows) => rows.map((r) => r.id === id ? {
 			...r,
@@ -14056,6 +15708,8 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 		if (category === "BOTE") return num2(r.qty) * num2(r.days) * num2(r.rate) + num2(r.qty) * num2(r.days) * num2(r.hoursPerDay) * num2(r.powerKw) * num2(r.kwhRate);
 		return num2(r.qty) * (category === "BOCM" || category === "PPE" ? num2(r.unitCost) : 1);
 	}
+	const shownManual = manualRows.filter((r) => summaryQueryMatch(category === "PPE" ? r.item : r.description, sheetQuery));
+	const shownManualTotal = shownManual.reduce((s, r) => s + manualSubtotal(r), 0);
 	const showElec = category === "BOTE" && wtFilter !== "onsite";
 	const colCount = category === "BOTE" ? showElec ? 11 : 7 : 6;
 	const labelSpan = colCount - 2;
@@ -14082,13 +15736,13 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 				value: wtFilter,
 				onChange: setWtFilter
 			}),
+			/* @__PURE__ */ jsx(SummarySheetTools, { onQuery: setSheetQuery }),
 			/* @__PURE__ */ jsxs("p", {
 				className: "ce-qty-legend",
 				children: [
-					"Auto rows are read-only from Breakdown.",
+					"Auto rows come from Breakdown.",
 					category === "BOTE" ? " Qty = peak concurrent tools. Days = schedule window." : " Qty = total units from the breakdown.",
-					" ",
-					"Manual extras are labelled and need a note. Filter is for working; export uses All."
+					" Filter is for working; export uses All."
 				]
 			}),
 			/* @__PURE__ */ jsx("div", {
@@ -14175,14 +15829,13 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 								onResize: updateWidth,
 								children: "Subtotal"
 							}),
-							/* @__PURE__ */ jsx(ResizableTh, {
-								colKey: "action",
-								width: widths.action,
-								onResize: updateWidth
-							})
+							/* @__PURE__ */ jsx("th", { className: "ce-sum-freeze", "aria-label": "Add or remove", children: /* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: () => setAddItem({ create: true, workType: wtFilter === "all" ? "" : wtFilter }) }) })
 						] }) }),
 						/* @__PURE__ */ jsxs("tbody", { children: [typeBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && (wtFilter !== "all" || b.rows.length > 0)).map((b) => {
-							const blockElec = category === "BOTE" && chargesPower(b.id) ? b.rows.reduce((s, r) => s + num2(r.electricity), 0) : 0;
+							const shownRows = b.rows.filter((r) => summaryQueryMatch(r.description, sheetQuery));
+							if (String(sheetQuery || "").trim() && !shownRows.length) return null;
+							const shownTotal = shownRows.reduce((s, r) => s + num2(r.subtotal), 0);
+							const blockElec = category === "BOTE" && chargesPower(b.id) ? shownRows.reduce((s, r) => s + num2(r.electricity), 0) : 0;
 							return /* @__PURE__ */ jsxs(React.Fragment, { children: [
 								/* @__PURE__ */ jsx("tr", {
 									className: "ce-daytype-header",
@@ -14195,12 +15848,12 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 										]
 									})
 								}),
-								b.rows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+								shownRows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center ce-sum-item",
 										children: idx + 1
 									}),
-									/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: r.description }),
+									/* @__PURE__ */ jsxs("td", { className: "ce-sum-left ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: r.description }), /* @__PURE__ */ jsx(SummarySourceBtn, { load: () => summaryItemSources(b.subset, category, (it) => (category === "PPE" ? it.item : it.description) === r.description) }), /* @__PURE__ */ jsx(SummaryRowAddBtn, { onClick: () => setAddItem({ label: r.description }) })] }),
 									category === "BOTE" ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center",
 										children: /* @__PURE__ */ jsx("input", {
@@ -14262,7 +15915,17 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 										className: "ce-sum-money ce-mono",
 										children: fmt(r.subtotal)
 									}),
-									/* @__PURE__ */ jsx("td", {})
+									/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze", children: /* @__PURE__ */ jsxs("span", { className: "ce-sum-freeze-acts", children: [/* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: () => setAddItem({ create: true, workType: b.id }) }), /* @__PURE__ */ jsx(SummaryDeleteBtn, {
+										label: r.description,
+										onDelete: () => {
+											const itemIds = matchingItemIds(b.subset, category, (it) => (category === "PPE" ? it.item : it.description) === r.description);
+											if (itemIds.length) dispatch?.({
+												type: "DELETE_MATCHING_ITEMS",
+												category,
+												itemIds
+											});
+										}
+									})] }) })
 								] }, `${b.id}-auto-${idx}`)),
 								blockElec > 0 && /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
@@ -14273,7 +15936,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 										className: "ce-sum-money ce-mono",
 										children: fmt(blockElec)
 									}),
-									/* @__PURE__ */ jsx("td", {})
+									/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
 								] }),
 								/* @__PURE__ */ jsxs("tr", {
 									className: "ce-subtotal-row",
@@ -14284,13 +15947,13 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 										}),
 										/* @__PURE__ */ jsx("td", {
 											className: "ce-sum-money ce-mono",
-											children: fmt(b.total)
+											children: fmt(shownTotal)
 										}),
-										/* @__PURE__ */ jsx("td", {})
+										/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
 									]
 								})
 							] }, b.id);
-						}), manualRows.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+						}), shownManual.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
 							/* @__PURE__ */ jsx("tr", {
 								className: "ce-subtotal-row",
 								children: /* @__PURE__ */ jsx("td", {
@@ -14298,7 +15961,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 									children: "Manual Entries"
 								})
 							}),
-							manualRows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+							shownManual.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-sum-center ce-sum-item",
 									children: typeBlocks.reduce((s, b) => s + b.rows.length, 0) + idx + 1
@@ -14360,9 +16023,10 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 									className: "ce-sum-money ce-mono",
 									children: fmt(manualSubtotal(r))
 								}),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(IconBtn, {
+								/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze", children: /* @__PURE__ */ jsx(IconBtn, {
 									danger: true,
 									title: "Remove",
+									confirm: `Remove "${(category === "PPE" ? r.item : r.description) || "this extra row"}" from this summary? This cannot be undone.`,
 									onClick: () => deleteManualRow(r.id),
 									children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
 								}) })
@@ -14376,9 +16040,9 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 									}),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-money ce-mono",
-										children: fmt(manualTotal)
+										children: fmt(shownManualTotal)
 									}),
-									/* @__PURE__ */ jsx("td", {})
+									/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
 								]
 							})
 						] })] }),
@@ -14391,29 +16055,23 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 								className: "ce-sum-money ce-mono ce-total",
 								children: fmt(grandTotal)
 							}),
-							/* @__PURE__ */ jsx("td", {})
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
 						] }) })
 					]
 				})
 			}),
-			/* @__PURE__ */ jsxs("button", {
-				className: "ce-add-row",
-				onClick: addManualRow,
-				type: "button",
-				children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manual extra row"]
-			}),
-			/* @__PURE__ */ jsx("p", {
-				className: "ce-empty",
-				style: {
-					textAlign: "left",
-					padding: "0 0 0.5rem"
-				},
-				children: "Auto rows come from Breakdown. Manual extra rows are extras only and are flagged on Submit."
-			}),
-			typeBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && collectNotes(b.subset).length > 0).map((b) => /* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsxs("h4", {
-				className: "ce-serif ce-summary-subheading",
-				children: ["Notes — ", b.label]
-			}), /* @__PURE__ */ jsx(SummaryNotesBlock, { tasks: b.subset })] }, `notes-${b.id}`))
+			/* @__PURE__ */ jsx(SummaryNotesBlock, { groups: typeBlocks.filter((b) => wtFilter === "all" || wtFilter === b.id).map((b) => ({
+				id: b.id,
+				label: `${b.letter}. ${b.full}`,
+				tasks: b.subset
+			})) }),
+			addItem && /* @__PURE__ */ jsx(SummaryAddDialog, {
+				category,
+				tasks,
+				item: addItem,
+				dispatch,
+				onClose: () => setAddItem(null)
+			})
 		]
 	});
 }
@@ -14756,7 +16414,7 @@ function formatThousands(value) {
 	const grouped = Number(whole || 0).toLocaleString("en-US");
 	return frac != null ? `${grouped}.${frac}` : grouped;
 }
-function CommaMoneyInput({ value, onChange, disabled, signed }) {
+function CommaMoneyInput({ value, onChange, disabled, signed, className, onFocus: onFocusProp, onBlur: onBlurProp, label }) {
 	const [focus, setFocus] = useState(false);
 	const raw = value ?? "";
 	const shown = focus ? String(raw).replace(/,/g, "").replace(/^₱/, "") : signed && String(raw) !== "" ? `₱${Number(num2(raw)).toLocaleString("en-PH", {
@@ -14764,12 +16422,20 @@ function CommaMoneyInput({ value, onChange, disabled, signed }) {
 		maximumFractionDigits: 2
 	})}` : formatThousands(raw);
 	return /* @__PURE__ */ jsx("input", {
-		className: "ce-input",
+		className: className ? `ce-input ${className}` : "ce-input",
 		inputMode: "decimal",
 		disabled,
+		"aria-label": label,
 		value: shown,
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
+		onFocus: (e) => {
+			setFocus(true);
+			onFocusProp?.(e);
+		},
+		onBlur: (e) => {
+			setFocus(false);
+			const cleaned = String(e.target.value || "").replace(/,/g, "").replace(/^₱/, "").replace(/[^\d.]/g, "");
+			onBlurProp?.(cleaned);
+		},
 		onChange: (e) => onChange(e.target.value.replace(/,/g, "").replace(/[^\d.]/g, ""))
 	});
 }
@@ -15627,7 +17293,7 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 			window.removeEventListener("keydown", resetTimer);
 			window.removeEventListener("click", resetTimer);
 		};
-	}, [autoSave, setIsParked]);
+	}, []);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-header",
 		children: [
@@ -16372,35 +18038,29 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], adminConfig, onBack, onEditingChange }) {
-	const [lastActivity, setLastActivity] = useState(Date.now());
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange }) {
+	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
 		if (isEditorLocked) return;
-		const handleActivity = () => {
-			setLastActivity(Date.now());
-			if (onUserActivity) onUserActivity();
+		let notified = 0;
+		const mark = () => {
+			lastActivityRef.current = Date.now();
+			if (!onUserActivity || Date.now() - notified < 6e4) return;
+			notified = Date.now();
+			onUserActivity();
 		};
-		window.addEventListener("mousemove", handleActivity);
-		window.addEventListener("keydown", handleActivity);
-		return () => {
-			window.removeEventListener("mousemove", handleActivity);
-			window.removeEventListener("keydown", handleActivity);
-		};
-	}, [isEditorLocked, onUserActivity]);
-	useEffect(() => {
-		if (isEditorLocked) return;
+		window.addEventListener("mousemove", mark, { passive: true });
+		window.addEventListener("keydown", mark);
 		const interval = setInterval(() => {
-			if (Date.now() - lastActivity > 9e5) {
-				if (onLock) onLock();
-			}
-		}, 1e3);
-		return () => clearInterval(interval);
-	}, [
-		lastActivity,
-		isEditorLocked,
-		onLock
-	]);
+			if (Date.now() - lastActivityRef.current > 9e5 && onLock) onLock();
+		}, 15e3);
+		return () => {
+			window.removeEventListener("mousemove", mark);
+			window.removeEventListener("keydown", mark);
+			clearInterval(interval);
+		};
+	}, [isEditorLocked, onUserActivity, onLock]);
 	const [state, baseDispatch] = useReducer(reducer, void 0, () => {
 		const base = buildEmptyProject();
 		if (!ceData) return base;
@@ -16519,6 +18179,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [exportPreview, setExportPreview] = useState(null);
 	const fileInputRef = useRef(null);
 	const grand = projectTotal(state.tasks);
+	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat), 0);
+	const contPct = num2(state.commercial?.contingencyPct);
+	const discPct = num2(state.commercial?.discountPct);
+	const netTotal = grand * (1 + contPct / 100) * (1 - discPct / 100);
 	const saveVersion = () => {
 		const snapshot = {
 			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -16797,7 +18461,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			revDate: info.revDate || "",
 			docNo: docNoOut,
 			documentControl,
-			docDate: info.date || state.meta.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+			docDate: info.date || state.meta.date || todayLocal(),
 			ceNumber: docNoOut || ceData?.id || state.meta.title || "—",
 			attachmentFiles,
 			sections
@@ -16871,6 +18535,11 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	};
 	const samplePreviewBypass = ceData?.id === "CE-2026-014";
 	const runIssuePack = async () => {
+		const gaps = listEntryGaps(state.tasks);
+		if (gaps.length) {
+			window.alert(`These rows are missing quantity, days, or rate:\n\n${gaps.join("\n")}`);
+			return;
+		}
 		const { failures, warnings } = buildCePreflight(state.tasks, preflightOpts);
 		if (failures.length && !samplePreviewBypass) {
 			setCheckerOpen(true);
@@ -17041,6 +18710,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		onChange: (notes) => saveSheetNotes(sheet, notes)
 	});
 	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-editor-root",
 		children: [
 			onBack ? /* @__PURE__ */ jsxs("div", {
 				className: "ce-editor-back",
@@ -17262,7 +18932,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										onClick: () => {
 											const instruction = window.prompt("Revision instruction from sales or the approver");
 											if (!instruction || !instruction.trim()) return;
-											const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+											const today = todayLocal();
 											dispatch({
 												type: "PATCH_PROJECT_INFO",
 												patch: {
@@ -17526,6 +19196,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								goToLibrary,
 								goToSearch,
 								taskTemplates,
+								onTaskTemplatesChange,
 								enabledWorkTypes: state.enabledWorkTypes,
 								hiddenWorkTypes: state.hiddenWorkTypes,
 								rateExceptions: state.rateExceptions || []
@@ -17534,21 +19205,24 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								sowText,
 								setSowText
 							}),
-							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef }), noteNode("BOL", "Notes", true)] }),
+							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch }), noteNode("BOL", "Notes", true)] }),
 							tab === "BOTE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOTE",
-								editsRef: summaryEditsRef
+								editsRef: summaryEditsRef,
+								dispatch
 							}), noteNode("BOTE", "Notes", true)] }),
 							tab === "PPE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "PPE",
-								editsRef: summaryEditsRef
+								editsRef: summaryEditsRef,
+								dispatch
 							}), noteNode("PPE", "Notes", true)] }),
 							tab === "BOCM" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOCM",
-								editsRef: summaryEditsRef
+								editsRef: summaryEditsRef,
+								dispatch
 							}), noteNode("BOCM", "Notes", true)] }),
 							tab === "MISC" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(MISCSheet, { tasks: state.tasks }), noteNode("MISC", "Notes", true)] }),
 							tab === "MOB/DEMOB" && (() => {
@@ -17785,8 +19459,24 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						})
 					]
 				})
-			})
+			}),
+			/* @__PURE__ */ jsxs("div", {
+				className: "ce-sticky-totals",
+				children: [
+					/* @__PURE__ */ jsxs("span", { children: ["BOL ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOL")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["BOTE ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOTE")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["BOCM ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOCM")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["PPE ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("PPE")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["MISC ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("MISC")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["Contingency ", contPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * contPct / 100) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["Discount ", discPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * (1 + contPct / 100) * discPct / 100) })] }),
+					/* @__PURE__ */ jsxs("span", {
+						className: "ce-sticky-net",
+						children: ["Net ", /* @__PURE__ */ jsx("b", { children: fmt(netTotal) })]
+					})
 				]
+			})
+		]
 			})
 		]
 	});
@@ -23134,8 +24824,45 @@ var RCE_EVIDENCE_ITEMS = [
 function rceItem2Text(company) {
 	return `IN-LINE WITH COMPANY ${company === "Company 2" ? "2" : "1"} PRODUCTS AND SERVICES`;
 }
-function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = null, rceList = [], documentControl = {} }) {
+function clientContactText(client) {
+	if (!client) return "";
+	return [client.contact, client.contactPerson, client.contactNo, client.phone, client.mobile, client.email].map((v) => String(v || "").trim()).filter(Boolean).join(" · ");
+}
+function clientsRecentFirst(clients, rceList) {
+	const order = [];
+	const seen = /* @__PURE__ */ new Set();
+	const push = (client) => {
+		if (!client) return;
+		const key = String(client.id || client.fullName || client.clientCode || "").toLowerCase();
+		if (!key || seen.has(key)) return;
+		seen.add(key);
+		order.push(client);
+	};
+	[...(rceList || [])].slice().reverse().forEach((rce) => {
+		const name = String(rce.customer || rce.client || "").trim().toLowerCase();
+		if (!name) return;
+		push((clients || []).find((c) => String(c.fullName || "").trim().toLowerCase() === name || String(c.clientCode || "").trim().toLowerCase() === name));
+	});
+	(clients || []).forEach(push);
+	return order;
+}
+function RceDateQuick({ disabled, onPick }) {
+	if (disabled) return null;
+	const opts = [["Today", 0], ["+2 days", 2], ["+1 week", 7]];
+	return /* @__PURE__ */ jsx("span", {
+		className: "rce-date-quick",
+		children: opts.map(([label, days]) => /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			onClick: () => onPick(days ? addDaysLocal(days) : todayLocal()),
+			children: label
+		}, label))
+	});
+}
+function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = null, rceList = [], documentControl = {}, currentUserName = "" }) {
 	const clients = useMasterlist().clients || [];
+	const clientOptions = clientsRecentFirst(clients, rceList);
+	const draftKey = initialData ? `ce-rce-draft:${initialData.id || initialData.rceNo || "edit"}` : "ce-rce-draft:new";
 	const dc = documentControl || {};
 	const c1Name = dc.company1Name || "Company 1";
 	const c2Name = dc.company2Name || "Company 2";
@@ -23147,7 +24874,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			inquiryNumber: "",
 			inquiryDate: "",
 			rceNo: initialData?.rceNo || initialData?.id || nextDocNo("RCE", rceList),
-			rceDate: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+			rceDate: todayLocal(),
 			customer: "",
 			address: "",
 			projectTitle: "",
@@ -23162,7 +24889,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			estDurationDays: "",
 			otherRemarks: "",
 			declineReason: "",
-			preparedBy: "",
+			preparedBy: initialData ? "" : currentUserName || "",
 			reviewedBy: "",
 			approvedBy: ""
 		};
@@ -23228,6 +24955,23 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			setAttachments((prev) => [...prev, ...fileObjects]);
 		});
 	};
+	function markAllChecklist(value, onlyBlank) {
+		if (readOnly) return;
+		setChecklist((prev) => {
+			const next = { ...prev };
+			RCE_CHECKLIST_ITEMS.forEach((it) => {
+				if (onlyBlank && next[it.key]?.complete) return;
+				next[it.key] = {
+					...next[it.key],
+					complete: value
+				};
+			});
+			return next;
+		});
+	}
+	function rceErr(test) {
+		return fieldErrors.some(test);
+	}
 	function patchForm(partial) {
 		if (readOnly) return;
 		setForm((prev) => ({
@@ -23237,10 +24981,12 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}
 	function onCustomerChange(value) {
 		const needle = value.trim().toLowerCase();
-		const match = clients.find((c) => (c.fullName || "").toLowerCase() === needle || (c.clientCode || "").toLowerCase() === needle);
+		const match = clientOptions.find((c) => (c.fullName || "").toLowerCase() === needle || (c.clientCode || "").toLowerCase() === needle);
+		const contact = clientContactText(match);
 		patchForm({
 			customer: value,
-			address: match && match.address ? match.address : form.address
+			address: match && match.address ? match.address : form.address,
+			customerContact: contact || form.customerContact || ""
 		});
 	}
 	const checklistItemsForExport = RCE_CHECKLIST_ITEMS.map((it) => ({
@@ -23249,11 +24995,61 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		complete: checklist[it.key]?.complete || "",
 		remarks: checklist[it.key]?.remarks || ""
 	}));
+	const [fieldErrors, setFieldErrors] = useState([]);
+	const [draftNote, setDraftNote] = useState("");
+	const draftReady = useRef(false);
+	useEffect(() => {
+		if (readOnly) return;
+		draftReady.current = false;
+		if (initialData) {
+			draftReady.current = true;
+			return;
+		}
+		try {
+			const raw = localStorage.getItem(draftKey);
+			if (raw) {
+				const saved = JSON.parse(raw);
+				if (saved?.form) {
+					setForm((prev) => ({
+						...prev,
+						...saved.form
+					}));
+					if (saved.checklist) setChecklist(saved.checklist);
+					if (saved.company) setCompany(saved.company);
+					if (Array.isArray(saved.attachments)) setAttachments(saved.attachments);
+					setDraftNote("Draft restored");
+				}
+			}
+		} catch {}
+		draftReady.current = true;
+	}, []);
+	useEffect(() => {
+		if (readOnly || !draftReady.current) return;
+		const timer = setTimeout(() => {
+			try {
+				localStorage.setItem(draftKey, JSON.stringify({
+					form,
+					checklist,
+					attachments,
+					company,
+					at: Date.now()
+				}));
+				setDraftNote("Saved");
+			} catch {}
+		}, 700);
+		return () => clearTimeout(timer);
+	}, [form, checklist, attachments, company, readOnly, draftKey]);
 	const handleSubmit = () => {
 		if (readOnly) return;
 		const hard = rceHardBlocks(form, company);
+		setFieldErrors(hard);
 		if (hard.length) {
-			window.alert(hard.join("\n"));
+			requestAnimationFrame(() => {
+				document.querySelector(".rce-field-error, .rce-invalid")?.scrollIntoView({
+					behavior: "smooth",
+					block: "center"
+				});
+			});
 			return;
 		}
 		const soft = rceSoftWarns(form, checklist, attachments);
@@ -23268,6 +25064,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				return;
 			}
 		}
+		try {
+			localStorage.removeItem(draftKey);
+			localStorage.removeItem("ce-rce-draft:new");
+		} catch {}
 		const rceData = {
 			...form,
 			company,
@@ -23467,16 +25267,17 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 										children: "Customer"
 									}),
 									/* @__PURE__ */ jsx("input", {
-										className: "ce-input",
+										className: "ce-input" + (rceErr((m) => m.startsWith("Customer")) ? " rce-invalid" : ""),
 										list: "rce-client-list",
 										value: form.customer,
 										disabled: readOnly,
 										placeholder: "Select a client or type a new name",
 										onChange: (e) => onCustomerChange(e.target.value)
 									}),
+									rceErr((m) => m.startsWith("Customer")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Customer is required." }) : null,
 									/* @__PURE__ */ jsx("datalist", {
 										id: "rce-client-list",
-										children: clients.map((c) => /* @__PURE__ */ jsx("option", {
+										children: clientOptions.map((c) => /* @__PURE__ */ jsx("option", {
 											value: c.fullName || c.clientCode || "",
 											children: [c.clientCode, c.fullName].filter(Boolean).join(" — ")
 										}, c.id))
@@ -23522,9 +25323,22 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								className: "ce-field rce-fl",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
+									children: "Contact"
+								}), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									value: form.customerContact || "",
+									disabled: readOnly,
+									placeholder: "Filled when the client record has contact details",
+									onChange: (e) => patchForm({ customerContact: e.target.value })
+								})]
+							}),
+							/* @__PURE__ */ jsxs("label", {
+								className: "ce-field rce-fl",
+								children: [/* @__PURE__ */ jsx("span", {
+									className: "ce-field-label",
 									children: "Priority"
 								}), /* @__PURE__ */ jsxs("select", {
-									className: "ce-input",
+									className: "ce-input" + (rceErr((m) => m.startsWith("Priority")) ? " rce-invalid" : ""),
 									value: form.priorityLevel,
 									disabled: readOnly,
 									onChange: (e) => patchForm({ priorityLevel: e.target.value }),
@@ -23535,7 +25349,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 										/* @__PURE__ */ jsx("option", { children: "Urgent" }),
 										/* @__PURE__ */ jsx("option", { children: "Emergency" })
 									]
-								})]
+								}), rceErr((m) => m.startsWith("Priority")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Priority is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("label", {
 								className: "ce-field rce-fl rce-fl-span",
@@ -23543,12 +25357,12 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									className: "ce-field-label",
 									children: "Project title"
 								}), /* @__PURE__ */ jsx("input", {
-									className: "ce-input",
+									className: "ce-input" + (rceErr((m) => m.startsWith("Project title")) ? " rce-invalid" : ""),
 									value: form.projectTitle,
 									disabled: readOnly,
 									placeholder: "Short job title",
 									onChange: (e) => patchForm({ projectTitle: e.target.value })
-								})]
+								}), rceErr((m) => m.startsWith("Project title")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Project title is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
 								className: "ce-field rce-fl",
@@ -23592,13 +25406,13 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 												className: "ce-field-label",
 												children: "Est. days"
 											}), /* @__PURE__ */ jsx("input", {
-												className: "ce-input",
+												className: "ce-input" + (rceErr((m) => /duration/i.test(m)) ? " rce-invalid" : ""),
 												type: "number",
 												min: "1",
 												value: form.estDurationDays,
 												disabled: readOnly,
 												onChange: (e) => patchForm({ estDurationDays: e.target.value })
-											})]
+											}), rceErr((m) => /duration/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Onsite is ticked — enter estimated duration in days." }) : null]
 										}) : null
 									]
 								})]
@@ -23609,12 +25423,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									className: "ce-field-label",
 									children: "CE deadline"
 								}), /* @__PURE__ */ jsx("input", {
-									className: "ce-input",
+									className: "ce-input" + (rceErr((m) => m.startsWith("CE deadline")) ? " rce-invalid" : ""),
 									type: "date",
 									value: form.ceDeadline,
 									disabled: readOnly,
 									onChange: (e) => patchForm({ ceDeadline: e.target.value })
-								})]
+								}), /* @__PURE__ */ jsx(RceDateQuick, {
+									disabled: readOnly,
+									onPick: (value) => patchForm({ ceDeadline: value })
+								}), rceErr((m) => m.startsWith("CE deadline")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "CE deadline is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
 								className: "ce-field rce-fl",
@@ -23659,6 +25476,9 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									value: form.submissionDeadline,
 									disabled: readOnly,
 									onChange: (e) => patchForm({ submissionDeadline: e.target.value })
+								}), /* @__PURE__ */ jsx(RceDateQuick, {
+									disabled: readOnly,
+									onPick: (value) => patchForm({ submissionDeadline: value })
 								})]
 							})
 						]
@@ -23695,6 +25515,22 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							}) }, `${name}-${idx}`);
 						})
 					}),
+					/* @__PURE__ */ jsxs("div", {
+						className: "rce-toolbar",
+						children: [/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly,
+							onClick: () => markAllChecklist("YES", false),
+							children: "Mark all Yes"
+						}), /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly,
+							onClick: () => markAllChecklist("N/A", true),
+							children: "Set remaining to N/A"
+						}), rceErr((m) => /work type/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Tick at least one work type (Onsite, Shopwork, or Trading)." }) : null]
+					}),
 					/* @__PURE__ */ jsx("p", {
 						className: "rce-section-label",
 						children: "Scope checklist"
@@ -23707,9 +25543,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								/* @__PURE__ */ jsxs("colgroup", { children: [
 									/* @__PURE__ */ jsx("col", { style: { width: `${widths.itemNo}px` } }),
 									/* @__PURE__ */ jsx("col", { style: { width: `${widths.description}px` } }),
-									/* @__PURE__ */ jsx("col", { style: { width: `${widths.yes}px` } }),
-									/* @__PURE__ */ jsx("col", { style: { width: `${widths.no}px` } }),
-									/* @__PURE__ */ jsx("col", { style: { width: `${widths.na}px` } }),
+									/* @__PURE__ */ jsx("col", { style: { width: `${widths.yes + widths.no + widths.na}px` } }),
 									/* @__PURE__ */ jsx("col", { style: { width: `${widths.remarks}px` } })
 								] }),
 								/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
@@ -23727,21 +25561,9 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									}),
 									/* @__PURE__ */ jsx(ResizableTh, {
 										colKey: "yes",
-										width: widths.yes,
+										width: widths.yes + widths.no + widths.na,
 										onResize: updateWidth,
-										children: "Yes"
-									}),
-									/* @__PURE__ */ jsx(ResizableTh, {
-										colKey: "no",
-										width: widths.no,
-										onResize: updateWidth,
-										children: "No"
-									}),
-									/* @__PURE__ */ jsx(ResizableTh, {
-										colKey: "na",
-										width: widths.na,
-										onResize: updateWidth,
-										children: "N/A"
+										children: "Answer"
 									}),
 									/* @__PURE__ */ jsx(ResizableTh, {
 										colKey: "remarks",
@@ -23911,6 +25733,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						onClick: handleSubmit,
 						children: "Submit"
 					}),
+					draftNote ? /* @__PURE__ */ jsx("span", {
+						className: "ce-save-note",
+						children: draftNote
+					}) : null,
 					/* @__PURE__ */ jsx("button", {
 						className: "ce-btn-ghost",
 						type: "button",
@@ -23923,7 +25749,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	});
 }
 function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, onRemarksChange, readOnly = false, indent = false }) {
-	const mark = (val) => {
+	const setMark = (val) => {
 		if (readOnly) return;
 		onCompleteChange(complete === val ? "" : val);
 	};
@@ -23936,20 +25762,22 @@ function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, on
 			className: indent ? "rce-indent-desc" : "",
 			children: desc
 		}),
-		[
-			"YES",
-			"NO",
-			"N/A"
-		].map((val) => /* @__PURE__ */ jsx("td", {
+		/* @__PURE__ */ jsx("td", {
 			className: "rce-check-cell",
-			children: /* @__PURE__ */ jsx("input", {
-				type: "checkbox",
-				checked: complete === val,
-				disabled: readOnly,
-				"aria-label": `${val} for item ${num3}`,
-				onChange: () => mark(val)
+			colSpan: 1,
+			children: /* @__PURE__ */ jsx("span", {
+				className: "rce-tri",
+				role: "group",
+				"aria-label": `Answer for item ${num3}`,
+				children: ["YES", "NO", "N/A"].map((val) => /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "rce-tri-btn" + (complete === val ? " is-on" : ""),
+					disabled: readOnly,
+					onClick: () => setMark(val),
+					children: val === "N/A" ? "N/A" : val === "YES" ? "Yes" : "No"
+				}, val))
 			})
-		}, val)),
+		}),
 		/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
 			className: "rce-cell-input",
 			type: "text",
@@ -24083,7 +25911,7 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 		}) : null
 	] });
 }
-function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAccept, onReject, onWithdraw, onRevise, onCancelRequest, onReplyInfo, onSubmitRevision, actingUser, actingLevel, liveCe, canPreviewGenerate }) {
+function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAccept, onReject, onWithdraw, onRevise, onCancelRequest, onReplyInfo, onSubmitRevision, onDuplicate, actingUser, actingLevel, liveCe, canPreviewGenerate }) {
 	const [remarks, setRemarks] = useState("");
 	const step = currentApprovalStep(rce?.approval);
 	const canAct = canActOnStep(step, actingLevel);
@@ -24106,6 +25934,12 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 				className: "ce-btn-ghost ce-btn-sm",
 				onClick: onBack,
 				children: "← Back to RCE Inbox"
+			}),
+			/* @__PURE__ */ jsx("button", {
+				className: "ce-btn-ghost ce-btn-sm",
+				type: "button",
+				onClick: () => onDuplicate?.(rce),
+				children: "Duplicate"
 			}),
 			/* @__PURE__ */ jsx(SalesRCEForm, {
 				readOnly: !editable,
@@ -24902,6 +26736,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		persistTick
 	]);
 	const [selectedRCE, setSelectedRCE] = useState(null);
+	const [rceSeed, setRceSeed] = useState(null);
 	const [editingUser, setEditingUser] = useState(currentUserName || null);
 	const activeUsers = (adminConfig.users || []).filter((u) => u.status !== "inactive");
 	useEffect(() => {
@@ -25267,6 +27102,21 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		setSelectedRCE(rce);
 		setCurrentView("rce-detail");
 	};
+	const duplicateRce = (rce) => {
+		const seed = { ...rce || {} };
+		["id", "rceNo", "revNo", "approval", "timeline", "status", "submittedBy", "reviewedBy", "approvedBy", "attachments", "attachmentFiles", "remarksHistory", "infoRev", "cancelPending", "overrideReason", "isNew", "assignedTo", "ceId", "dateReceived"].forEach((key) => {
+			delete seed[key];
+		});
+		seed.rceDate = todayLocal();
+		seed.inquiryDate = "";
+		seed.ceDeadline = "";
+		seed.submissionDeadline = "";
+		seed.preparedBy = editorName;
+		seed.checklist = rce?.checklist ? JSON.parse(JSON.stringify(rce.checklist)) : void 0;
+		setSelectedRCE(null);
+		setRceSeed(seed);
+		setCurrentView("rce-form");
+	};
 	const openEditorForCE = (ce) => {
 		setEditorReturn(currentView === "dashboard" ? "dashboard" : "monitoring");
 		if (ce?.isNew) {
@@ -25314,7 +27164,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			return;
 		}
 		const id = nextCeNoForCompany(rce?.company || "", ceList, documents, rceList, adminConfig.documentControl);
-		const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+		const today = todayLocal();
 		const newCE = {
 			id,
 			client: payload.client,
@@ -25475,6 +27325,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						OIF: oifFiles
 					},
 					ceStatus: "Ongoing",
+					commercial: {
+						contingencyPct: defaultContingencyPct(adminConfig?.documentControl),
+						discountPct: 0,
+						validityDays: 30
+					},
 					projectInfo: {
 						docNo: id,
 						revNo: "",
@@ -25483,6 +27338,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						client: payload.client || rce?.customer || rce?.client || "",
 						location: payload.location || rce?.address || "",
 						date: today,
+						preparedBy: editorName,
 						electrical: !!rce?.electrical,
 						mechanical: !!rce?.mechanical,
 						days: rce?.estDurationDays || ""
@@ -25540,9 +27396,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			stayOnBoard: true
 		});
 	};
-	const handleSaveInspection = (form) => {
+	const handleSaveInspection = (form, opts = {}) => {
 		const id = form.id || nextDocNo("OIF", inspectionReports);
-		const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+		const today = todayLocal();
 		setInspectionReports((prev) => {
 			const idx = prev.findIndex((r) => r.id === id);
 			const prevRow = idx >= 0 ? prev[idx] : null;
@@ -25623,7 +27479,123 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			id,
 			oifNo: form.oifNo || id
 		}));
+		if (opts.andNew) {
+			setActiveOif({
+				oifNo: nextDocNo("OIF", [...inspectionReports, { id, oifNo: form.oifNo || id }]),
+				customerName: form.customerName || "",
+				customerAddress: form.customerAddress || "",
+				customerRep: form.customerRep || "",
+				contactNo: form.contactNo || ""
+			});
+			setCurrentView("inspection-form");
+			return;
+		}
 		setCurrentView(inspectionReturn || "dashboard");
+	};
+	const handleSendInspectionToCe = (form) => {
+		const ml = masterlistRef.current || {};
+		const bolList = ml.manpower || ml.BOL || [];
+		const matList = ml.consumables || ml.BOCM || [];
+		const days = num2(String(form.duration || "").replace(/[^0-9.]/g, "")) || 1;
+		const bolLines = (form.manpower || []).filter((row) => String(row.designation || "").trim()).map((row) => {
+			const filled = fillFromMasterlist("BOL", bolList, row.designation);
+			return bolItem({
+				role: String(row.designation).trim(),
+				qty: num2(row.pax) || 1,
+				days,
+				rate: filled.masterlistId ? num2(filled.rate) : 0,
+				masterlistId: filled.masterlistId || null,
+				perDiem: num2(filled.perDiem),
+				allowance: num2(filled.allowance),
+				otHrs: 0
+			});
+		});
+		const matLines = (form.materialRows || []).filter((row) => String(row.description || "").trim()).map((row) => {
+			const filled = fillFromMasterlist("BOCM", matList, row.description);
+			return bocmItem({
+				description: String(row.description).trim(),
+				qty: num2(row.qty) || 1,
+				unit: filled.unit || "pc",
+				unitCost: filled.masterlistId ? num2(filled.unitCost) : 0,
+				masterlistId: filled.masterlistId || null
+			});
+		});
+		const existing = form.ceId ? (ceList || []).find((ce) => ce.id === form.ceId) : null;
+		const editable = existing && !["Done", "Cancelled", "No quote", "Close bid"].includes(existing.status);
+		if (editable && documents[existing.id]) {
+			setDocuments((prev) => {
+				const doc = prev[existing.id] || {};
+				const tasks = JSON.parse(JSON.stringify(doc.tasks || []));
+				let host = tasks[0];
+				if (!host) {
+					host = task(form.projectDescription || "From inspection", [subtask("From inspection", emptyItems())], "onsite");
+					tasks.push(host);
+				}
+				if (!host.subtasks?.length) host.subtasks = [subtask("From inspection", emptyItems())];
+				const sub = host.subtasks[0];
+				sub.items = { ...emptyItems(), ...sub.items || {} };
+				const exceptions = doc.rateExceptions || [];
+				sub.items.BOL = [...sub.items.BOL || [], ...bolLines.map((line) => priceFromException("BOL", line, exceptions))];
+				sub.items.BOCM = [...sub.items.BOCM || [], ...matLines.map((line) => priceFromException("BOCM", line, exceptions))];
+				return { ...prev, [existing.id]: { ...doc, tasks } };
+			});
+			return existing.id;
+		}
+		const id = nextDocNo("CE", ceNumberSources(ceList, documents));
+		const today = todayLocal();
+		const items = emptyItems();
+		items.BOL = bolLines;
+		items.BOCM = matLines;
+		const draftTask = task(form.projectDescription || "From inspection", [subtask("From inspection", items)], "onsite");
+		if (num2(days)) draftTask.duration = days;
+		const newCE = {
+			id,
+			client: form.customerName || "",
+			project: form.projectDescription || "Inspection draft",
+			location: form.customerAddress || "",
+			lastEdited: today,
+			lastEditedBy: editorName,
+			assignedTo: editorName,
+			status: "Ongoing",
+			isNew: true
+		};
+		setCeList((prev) => [...prev, newCE]);
+		setDocuments((prev) => ({
+			...prev,
+			[id]: {
+				...buildEmptyProject(),
+				meta: {
+					client: form.customerName || "",
+					title: form.projectDescription || "From inspection",
+					location: form.customerAddress || "",
+					date: today
+				},
+				tasks: [draftTask],
+				enabledWorkTypes: ["onsite"],
+				ceStatus: "Ongoing",
+				commercial: {
+					contingencyPct: defaultContingencyPct(adminConfig?.documentControl),
+					discountPct: 0,
+					validityDays: 30
+				},
+				projectInfo: {
+					docNo: id,
+					revNo: "",
+					revDate: "",
+					preparedBy: editorName,
+					date: today,
+					client: form.customerName || "",
+					description: form.projectDescription || ""
+				}
+			}
+		}));
+		if (form.id) handleUpdateInspection(form.id, { ceId: id });
+		setActiveOif((current) => ({
+			...current || {},
+			...form,
+			ceId: id
+		}));
+		return id;
 	};
 	const handleUpdateInspection = (id, patch) => {
 		setInspectionReports((prev) => prev.map((r) => r.id === id || r.oifNo === id ? {
@@ -25884,7 +27856,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		if (!source || !srcDoc || !(source.status === "Done" || ceFullySigned(srcDoc))) return;
 		if (source.status === "For revision") return;
 		const revNo = nextCeRevision(srcDoc.projectInfo?.revNo);
-		const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+		const today = todayLocal();
 		const info = {
 			...srcDoc.projectInfo || {},
 			revNo,
@@ -26115,6 +28087,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						},
 						onNewRCE: () => {
 							setSelectedRCE(null);
+							setRceSeed(null);
 							setCurrentView("rce-form");
 						},
 						onOpenCE: openEditorForCE,
@@ -26160,6 +28133,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						documentControl: adminConfig.documentControl,
 						rceList,
 						taskTemplates,
+						onTaskTemplatesChange: setTaskTemplates,
 						adminConfig,
 						onBack: () => setPendingLeave(editorReturn),
 						onEditingChange: setHeaderEditing
@@ -26212,6 +28186,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 							documentControl: adminConfig.documentControl,
 							rceList,
 							taskTemplates,
+							onTaskTemplatesChange: setTaskTemplates,
 							adminConfig
 						}, tpl.id);
 					})(),
@@ -26319,7 +28294,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						},
 						onStartRevision: handleReviseArchivedCE,
 						onViewRCE: handleViewRCE,
-						onNewRCE: () => setCurrentView("rce-form"),
+						onNewRCE: () => {
+							setSelectedRCE(null);
+							setRceSeed(null);
+							setCurrentView("rce-form");
+						},
 						onOpenArchivedCE: openArchived,
 						onReviseArchivedCE: handleReviseArchivedCE,
 						inspectionReports,
@@ -26336,6 +28315,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 					}),
 					currentView === "inspection-form" && /* @__PURE__ */ jsx(InspectionFormView, {
 						initial: activeOif,
+						currentUserName: editorName,
+						priorReports: inspectionReports,
+						actingLevel,
+						onSendToCe: handleSendInspectionToCe,
 						onBack: () => setCurrentView(inspectionReturn || "dashboard"),
 						onSave: handleSaveInspection
 					}),
@@ -26374,11 +28357,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						}
 					}),
 					currentView === "rce-form" && /* @__PURE__ */ jsx(SalesRCEForm, {
-						onSubmitRCE: handleSubmitRCE,
+						onSubmitRCE: (data) => {
+							setRceSeed(null);
+							handleSubmitRCE(data);
+						},
 						rceList,
 						documentControl: adminConfig.documentControl,
-						initialData: selectedRCE && (selectedRCE.status === "For revision" || selectedRCE.status === "Rejected") ? selectedRCE : null,
+						currentUserName: editorName,
+						initialData: rceSeed || (selectedRCE && (selectedRCE.status === "For revision" || selectedRCE.status === "Rejected") ? selectedRCE : null),
 						onBack: () => {
+							setRceSeed(null);
 							setMonitoringTab("rce");
 							setCurrentView("monitoring");
 						}
@@ -26394,6 +28382,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						onCancelRequest: handleCancelRequest,
 						onReplyInfo: handleReplyInfo,
 						onSubmitRevision: handleSubmitRCE,
+						onDuplicate: duplicateRce,
 						actingUser: editorName,
 						actingLevel,
 						liveCe: liveCeForRce(ceList, selectedRCE?.id || selectedRCE?.rceNo),

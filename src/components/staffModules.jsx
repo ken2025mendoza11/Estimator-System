@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useMemo, useRef, useState } from 'react';
+import { todayLocal } from "../lib/estimator/workflow";
 import {
   Plus,
   Trash2,
@@ -667,7 +668,7 @@ function emptyOif() {
   return {
     id: '',
     oifNo: '',
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocal(),
     projectDescription: '',
     rfqNo: '',
     customerName: '',

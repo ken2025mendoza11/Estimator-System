@@ -38,6 +38,26 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Calendar date in Asia/Taipei (YYYY-MM-DD). No DST; UTC+8 all year. */
+export function todayLocal(timeZone = "Asia/Taipei") {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+/** Add calendar days to the Taipei local date. Does not change stored date format. */
+export function addDaysLocal(days, timeZone = "Asia/Taipei") {
+  const [y, m, d] = todayLocal(timeZone).split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + Number(days || 0)));
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 export function uid(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random()
     .toString(36)
