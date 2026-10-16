@@ -95,30 +95,24 @@ function keepUploaded(primary: WorkspacePayload, secondary: WorkspacePayload | n
 
 export function EstimatorShell() {
   const currentUser = useCurrentUser();
-  const cached = useRef(readBackup());
   const [workspace, setWorkspace] = useState<WorkspacePayload>(
-    () => cached.current?.payload || defaultWorkspace(),
+    () => readBackup()?.payload || defaultWorkspace(),
   );
   const [bootKey, setBootKey] = useState(0);
-  const [ready, setReady] = useState(() => !!cached.current?.payload);
+  const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const latest = useRef<WorkspacePayload>(workspace);
   const hydrated = useRef(false);
   const dirty = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const indicator = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const write = useCallback((payload: WorkspacePayload) => {
     latest.current = payload;
     if (timer.current) clearTimeout(timer.current);
-    if (indicator.current) clearTimeout(indicator.current);
     timer.current = setTimeout(() => {
       const body = latest.current;
-      indicator.current = setTimeout(() => {
-        if (latest.current === body) setSaveState("saving");
-      }, 400);
+      setSaveState("saving");
       const mark = (ok: boolean) => {
-        if (indicator.current) clearTimeout(indicator.current);
         if (latest.current !== body) return;
         dirty.current = !ok;
         setSaveState(ok ? "saved" : "error");
@@ -138,7 +132,7 @@ export function EstimatorShell() {
               .catch(() => mark(false));
           }, 700);
         });
-    }, 700);
+    }, 80);
   }, []);
 
   useEffect(() => {
@@ -146,12 +140,6 @@ export function EstimatorShell() {
     loadWorkspaceFromSupabase()
       .then((data) => {
         if (cancelled) return;
-        if (dirty.current) {
-          hydrated.current = true;
-          write(latest.current);
-          setReady(true);
-          return;
-        }
         const local = readBackup();
         const remoteAt = Date.parse(
           String(
@@ -164,8 +152,6 @@ export function EstimatorShell() {
         const newer = localNewer ? local.payload : data;
         const older = localNewer ? data : local?.payload || null;
         const chosen = stamp(jsonSafe(keepUploaded(newer, older)));
-        const hadCache = !!cached.current?.payload;
-        const remoteNewer = remoteAt > localAt + 1500;
         latest.current = chosen;
         writeBackup(chosen);
         hydrated.current = true;
@@ -173,10 +159,8 @@ export function EstimatorShell() {
           dirty.current = true;
           write(chosen);
         }
-        if (!hadCache || remoteNewer || localNewer) {
-          setWorkspace(chosen);
-          if (hadCache) setBootKey((n) => n + 1);
-        }
+        setWorkspace(chosen);
+        setBootKey((n) => n + 1);
         setReady(true);
       })
       .catch(() => {
@@ -195,7 +179,6 @@ export function EstimatorShell() {
       latest.current = safe;
       if (!hydrated.current) {
         writeBackup(safe);
-        dirty.current = true;
         return;
       }
       dirty.current = true;
@@ -222,7 +205,6 @@ export function EstimatorShell() {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHide);
       if (timer.current) clearTimeout(timer.current);
-      if (indicator.current) clearTimeout(indicator.current);
     };
   }, []);
 

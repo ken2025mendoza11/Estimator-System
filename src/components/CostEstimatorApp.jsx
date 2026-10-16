@@ -2047,20 +2047,6 @@ function emptyOif() {
 		materialsRight: ""
 	};
 }
-const OIF_TPL_KEY = "oif-check-templates";
-function readOifTemplates() {
-	try {
-		const list = JSON.parse(localStorage.getItem(OIF_TPL_KEY) || "[]");
-		return Array.isArray(list) ? list : [];
-	} catch {
-		return [];
-	}
-}
-function writeOifTemplates(list) {
-	try {
-		localStorage.setItem(OIF_TPL_KEY, JSON.stringify(list || []));
-	} catch {}
-}
 function oifDraftKey(initial) {
 	return `oif-draft:${initial?.id || initial?.oifNo || "new"}`;
 }
@@ -2130,7 +2116,7 @@ function SignaturePad({ value, onChange }) {
 		})]
 	});
 }
-function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "" }) {
+function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "", checkTemplates = [], onCheckTemplatesChange }) {
 	const clients = useMasterlist().clients || [];
 	const roles = useMasterlist().BOL || [];
 	const materialsList = useMasterlist().BOCM || [];
@@ -2140,7 +2126,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		...initial || {}
 	}));
 	const [oifErrors, setOifErrors] = useState([]);
-	const [templates, setTemplates] = useState(() => readOifTemplates());
+	const templates = Array.isArray(checkTemplates) ? checkTemplates : [];
 	const [tplOpen, setTplOpen] = useState(false);
 	const [tplType, setTplType] = useState("");
 	const [tplItem, setTplItem] = useState("");
@@ -2288,16 +2274,15 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 	function saveTemplateItem() {
 		const type = tplType.trim();
 		const text = tplItem.trim();
-		if (!type || !text) return;
-		const next = templates.slice();
+		if (!type || !text || !onCheckTemplatesChange) return;
+		const next = templates.map((row) => ({ ...row, items: [...row.items || []] }));
 		let tpl = next.find((row) => String(row.equipmentType || "").toLowerCase() === type.toLowerCase());
 		if (!tpl) {
 			tpl = { id: `otpl-${Date.now()}`, equipmentType: type, items: [] };
 			next.push(tpl);
 		}
-		tpl.items = [...tpl.items || [], { id: `oti-${Date.now()}`, text }];
-		setTemplates(next);
-		writeOifTemplates(next);
+		tpl.items.push({ id: `oti-${Date.now()}`, text });
+		onCheckTemplatesChange(next);
 		setTplItem("");
 	}
 	useEffect(() => {
@@ -2308,12 +2293,13 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 			if (!saved?.form) return;
 			const fresh = !initial?.customerName && !initial?.projectDescription && !(initial?.checklist || []).length;
 			if (!fresh) return;
+			const { photos, inspectorSignature, ...textFields } = saved.form || {};
 			setForm((prev) => ({
 				...prev,
-				...saved.form,
-				oifNo: prev.oifNo || saved.form.oifNo,
-				date: saved.form.date || prev.date,
-				onsiteInspector: saved.form.onsiteInspector || prev.onsiteInspector
+				...textFields,
+				oifNo: prev.oifNo || textFields.oifNo,
+				date: textFields.date || prev.date,
+				onsiteInspector: textFields.onsiteInspector || prev.onsiteInspector
 			}));
 			setDraftNote("Draft restored");
 		} catch {}
@@ -2322,15 +2308,10 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		const timer = setInterval(() => {
 			const key = oifDraftKey(initial);
 			try {
-				localStorage.setItem(key, JSON.stringify({ form, at: Date.now() }));
+				const { photos, inspectorSignature, ...textFields } = form || {};
+				localStorage.setItem(key, JSON.stringify({ form: textFields, at: Date.now() }));
 				setDraftNote("Saved");
-			} catch {
-				try {
-					const photos = (form.photos || []).map((p) => ({ ...p, dataUrl: "" }));
-					localStorage.setItem(key, JSON.stringify({ form: { ...form, photos, inspectorSignature: "" }, at: Date.now() }));
-					setDraftNote("Saved");
-				} catch {}
-			}
+			} catch {}
 		}, 4000);
 		return () => clearInterval(timer);
 	}, [form]);
@@ -4556,7 +4537,8 @@ function normalizeAdminConfig(raw) {
 		},
 		masterlistRules: normalizeMasterlistRules(src.masterlistRules),
 		templateFormula: normalizeTemplateFormula(src.templateFormula),
-		boardColors: normalizeBoardColors(src.boardColors)
+		boardColors: normalizeBoardColors(src.boardColors),
+		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : []
 	};
 }
 function uid(prefix) {
@@ -7941,32 +7923,6 @@ function reducer(state, action) {
 				[action.category]: [...s.items[action.category], ...(action.items || []).map((it) => priceFromException(action.category, it, state.rateExceptions))]
 			}
 		})));
-		case "APPLY_SCOPE_ADDS": {
-			const category = action.category;
-			const ops = Array.isArray(action.ops) ? action.ops : [];
-			if (!category || !ops.length) return state;
-			return ops.reduce((next, op) => mapTask(next, op.taskId, (t) => mapSubtask(t, op.subtaskId, (s) => {
-				const list = s.items?.[category] || [];
-				if (op.itemId) return {
-					...s,
-					items: {
-						...s.items,
-						[category]: list.map((i) => i.id === op.itemId ? {
-							...i,
-							qty: num2(i.qty) + num2(op.qty)
-						} : i)
-					}
-				};
-				if (!op.item) return s;
-				return {
-					...s,
-					items: {
-						...s.items,
-						[category]: [...list, priceFromException(category, op.item, state.rateExceptions)]
-					}
-				};
-			})), state);
-		}
 		case "COPY_SUBTASK_PACK": {
 			const pack = action.pack || {};
 			const incoming = pack.items || {};
@@ -8010,26 +7966,6 @@ function reducer(state, action) {
 				[action.category]: s.items[action.category].filter((i) => i.id !== action.itemId)
 			}
 		})));
-		case "DELETE_MATCHING_ITEMS": {
-			const ids = new Set(action.itemIds || []);
-			const category = action.category;
-			if (!ids.size || !category) return state;
-			const strip = (list) => (list || []).map((s) => ({
-				...s,
-				items: {
-					...s.items,
-					[category]: (s.items?.[category] || []).filter((i) => !ids.has(i.id))
-				},
-				children: strip(s.children)
-			}));
-			return {
-				...state,
-				tasks: state.tasks.map((t) => ({
-					...t,
-					subtasks: strip(t.subtasks)
-				}))
-			};
-		}
 		case "UPDATE_ITEM": return mapTask(state, action.taskId, (t) => mapSubtask(t, action.subtaskId, (s) => ({
 			...s,
 			items: {
@@ -8050,10 +7986,10 @@ function reducer(state, action) {
 							rateOverridden: true
 						};
 					}
-					if (next.entryGap && !lineGapFields(action.category, next).length) next = {
-						...next,
-						entryGap: false
-					};
+					if (next.entryGap && !lineGapFields(action.category, next).length) {
+						next = priceFromException(action.category, next, state.rateExceptions);
+						next = { ...next, entryGap: false };
+					}
 					return next;
 				})
 			}
@@ -8062,7 +7998,11 @@ function reducer(state, action) {
 			...s,
 			items: {
 				...s.items,
-				[action.category]: [...s.items[action.category] || [], ...(action.items || [])]
+				[action.category]: [...s.items[action.category] || [], ...(action.items || []).map((it) => {
+					const field = itemMoneyField(action.category);
+					if (it[field] === "" || it[field] == null) return it;
+					return priceFromException(action.category, it, state.rateExceptions);
+				})]
 			}
 		})));
 		case "SYNC_DATABASE_RATES": {
@@ -8418,30 +8358,23 @@ function organizeSummaryNotes(tasks) {
 		return String(a.who || "").localeCompare(String(b.who || ""), undefined, { sensitivity: "base" }) || String(a.notes || "").localeCompare(String(b.notes || ""), undefined, { sensitivity: "base" });
 	});
 }
-function SummaryNotesBlock({ groups }) {
-	const sections = (groups || []).map((group) => ({
-		...group,
-		notes: organizeSummaryNotes(group.tasks)
-	})).filter((group) => group.notes.length);
-	if (!sections.length) return null;
+function SummaryNotesBlock({ tasks }) {
+	const noteRows = collectNotes(tasks);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-summary-notes-block",
 		children: [/* @__PURE__ */ jsx("h4", {
 			className: "ce-serif ce-summary-subheading",
 			children: "Notes"
-		}), sections.map((group) => /* @__PURE__ */ jsxs("div", {
-			className: "ce-summary-notes-group",
-			children: [/* @__PURE__ */ jsx("h5", {
-				className: "ce-serif ce-summary-subheading",
-				children: group.label
-			}), /* @__PURE__ */ jsxs("table", {
-				className: "ce-table ce-summary-notes-table",
-				children: [/* @__PURE__ */ jsxs("colgroup", { children: [/* @__PURE__ */ jsx("col", { className: "ce-summary-notes-from-col" }), /* @__PURE__ */ jsx("col", {})] }), /* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("th", { children: "From" }), /* @__PURE__ */ jsx("th", { className: "ce-summary-notes-cell", children: "Notes" })] }) }), /* @__PURE__ */ jsx("tbody", { children: group.notes.map((row) => /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("td", { className: "ce-summary-notes-from", children: row.who }), /* @__PURE__ */ jsx("td", {
-					className: "ce-summary-notes-cell",
-					children: row.notes
-				})] }, row.id)) })]
-			})]
-		}, group.id))]
+		}), noteRows.length === 0 ? /* @__PURE__ */ jsx("p", {
+			className: "ce-empty",
+			children: "No notes from breakdown main tasks or subtasks."
+		}) : /* @__PURE__ */ jsxs("table", {
+			className: "ce-table",
+			children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("th", { children: "From" }), /* @__PURE__ */ jsx("th", { children: "Notes" })] }) }), /* @__PURE__ */ jsx("tbody", { children: noteRows.map((row) => /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("td", { children: row.who }), /* @__PURE__ */ jsx("td", {
+				className: "ce-summary-notes-cell",
+				children: row.notes
+			})] }, row.id)) })]
+		})]
 	});
 }
 function collectScopeFiles(tasks) {
@@ -14671,330 +14604,7 @@ function summaryQueryMatch(label, query) {
 	if (!q) return true;
 	return String(label || "").toLowerCase().includes(q);
 }
-function summaryScopes(tasks) {
-	const out = [];
-	(tasks || []).forEach((t) => {
-		const walk = (list) => (list || []).forEach((s) => {
-			out.push({
-				taskId: t.id,
-				taskTitle: t.title || "Untitled",
-				workType: taskWorkType(t),
-				subtaskId: s.id,
-				subtaskTitle: s.title || "Scope",
-				days: defaultDaysForSubtask(t, s)
-			});
-			walk(s.children);
-		});
-		walk(t.subtasks);
-	});
-	return out;
-}
-function summaryItemSources(tasks, category, match) {
-	const out = [];
-	(tasks || []).forEach((t) => {
-		const walk = (list) => (list || []).forEach((s) => {
-			(s.items?.[category] || []).forEach((it) => {
-				if (!match(it)) return;
-				out.push({
-					key: `${t.id}:${s.id}:${it.id}`,
-					workType: taskWorkType(t),
-					taskTitle: t.title || "Untitled",
-					subtaskTitle: s.title || "Scope",
-					qty: num2(it.qty),
-					rate: category === "BOL" || category === "BOTE" ? num2(it.rate) : num2(it.unitCost),
-					dayType: it.dayType || "Regular",
-					shift: it.shift || "Day"
-				});
-			});
-			walk(s.children);
-		});
-		walk(t.subtasks);
-	});
-	return out;
-}
-function findScopeLine(tasks, scope, category, match) {
-	const task2 = (tasks || []).find((t) => t.id === scope?.taskId);
-	if (!task2) return null;
-	const sub = flattenSubs(task2).find((s) => s.id === scope.subtaskId);
-	if (!sub) return null;
-	return (sub.items?.[category] || []).find(match) || null;
-}
-function SummarySourceBtn({ load, bol }) {
-	const [open, setOpen] = useState(false);
-	const [sources, setSources] = useState([]);
-	const [box, setBox] = useState(null);
-	const popRef = useRef(null);
-	const btnRef = useRef(null);
-	useEffect(() => {
-		if (!open) return;
-		const close = (e) => {
-			if (popRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
-			setOpen(false);
-		};
-		document.addEventListener("mousedown", close);
-		return () => document.removeEventListener("mousedown", close);
-	}, [open]);
-	return /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("button", {
-		ref: btnRef,
-		type: "button",
-		className: "ce-iconbtn ce-sum-src-btn",
-		title: "Where this belongs",
-		onClick: (e) => {
-			e.stopPropagation();
-			const r = e.currentTarget.getBoundingClientRect();
-			setBox({
-				top: r.bottom + 4,
-				left: Math.max(8, Math.min(r.left, window.innerWidth - 460))
-			});
-			if (!open) setSources(load?.() || []);
-			setOpen(!open);
-		},
-		children: /* @__PURE__ */ jsx(Pin, { size: 12 })
-	}), open && /* @__PURE__ */ jsx("div", {
-		ref: popRef,
-		className: "ce-sum-src-pop",
-		style: box || void 0,
-		children: !sources.length ? /* @__PURE__ */ jsx("p", { children: "No breakdown lines." }) : /* @__PURE__ */ jsxs("table", { children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
-			/* @__PURE__ */ jsx("th", { children: "Work type" }),
-			/* @__PURE__ */ jsx("th", { children: "Scope" }),
-			/* @__PURE__ */ jsx("th", { children: "Subtask" }),
-			/* @__PURE__ */ jsx("th", { children: "Qty" }),
-			/* @__PURE__ */ jsx("th", { children: "Rate" }),
-			bol ? /* @__PURE__ */ jsx("th", { children: "Day" }) : null,
-			bol ? /* @__PURE__ */ jsx("th", { children: "Shift" }) : null
-		] }) }), /* @__PURE__ */ jsx("tbody", { children: sources.map((row) => /* @__PURE__ */ jsxs("tr", { children: [
-			/* @__PURE__ */ jsx("td", { children: workTypeMeta(row.workType).label }),
-			/* @__PURE__ */ jsx("td", { children: row.taskTitle }),
-			/* @__PURE__ */ jsx("td", { children: row.subtaskTitle }),
-			/* @__PURE__ */ jsx("td", { children: row.qty }),
-			/* @__PURE__ */ jsx("td", { children: fmt(row.rate) }),
-			bol ? /* @__PURE__ */ jsx("td", { children: row.dayType }) : null,
-			bol ? /* @__PURE__ */ jsx("td", { children: row.shift }) : null
-		] }, row.key)) })] })
-	})] });
-}
-function SummarySheetTools({ onQuery }) {
-	const [query, setQuery] = useState("");
-	const wait = useRef(null);
-	useEffect(() => () => {
-		if (wait.current) clearTimeout(wait.current);
-	}, []);
-	return /* @__PURE__ */ jsxs("div", {
-		className: "ce-sum-tools",
-		children: [/* @__PURE__ */ jsx(Search, { size: 13 }), /* @__PURE__ */ jsx("input", {
-			className: "ce-input ce-sum-search",
-			value: query,
-			placeholder: "Search items",
-			onChange: (e) => {
-				const next = e.target.value;
-				setQuery(next);
-				if (wait.current) clearTimeout(wait.current);
-				wait.current = setTimeout(() => onQuery(next), 40);
-			}
-		})]
-	});
-}
-function SummaryRowAddBtn({ onClick }) {
-	return /* @__PURE__ */ jsx("button", {
-		type: "button",
-		className: "ce-iconbtn ce-sum-src-btn",
-		title: "Add to scopes",
-		onClick: (e) => {
-			e.stopPropagation();
-			onClick?.();
-		},
-		children: /* @__PURE__ */ jsx(Plus, { size: 12 })
-	});
-}
-function SummaryNewItemBtn({ onClick }) {
-	return /* @__PURE__ */ jsx("button", {
-		type: "button",
-		className: "ce-iconbtn ce-sum-src-btn ce-sum-new-btn",
-		title: "Add a new item",
-		onClick: (e) => {
-			e.stopPropagation();
-			onClick?.();
-		},
-		children: /* @__PURE__ */ jsx(Plus, { size: 12 })
-	});
-}
-function scopeAddItem(category, name, qty, days, dayType, shift, filled) {
-	if (category === "BOL") return bolItem({
-		...filled,
-		role: name,
-		qty,
-		days,
-		otHrs: 0,
-		dayType,
-		shift
-	});
-	if (category === "BOTE") return boteItem({
-		...filled,
-		description: name,
-		qty,
-		days,
-		rate: num2(filled.rate),
-		powerKw: num2(filled.powerKw),
-		hoursPerDay: num2(filled.hoursPerDay),
-		kwhRate: num2(filled.kwhRate)
-	});
-	if (category === "PPE") return ppeItem({
-		...filled,
-		item: name,
-		qty,
-		unitCost: num2(filled.unitCost)
-	});
-	return bocmItem({
-		...filled,
-		description: name,
-		qty,
-		unitCost: num2(filled.unitCost),
-		unit: filled.unit || "pc"
-	});
-}
-function SummaryAddDialog({ category, tasks, item, onClose, dispatch }) {
-	const lists = useMasterlist();
-	const creating = !!item?.create;
-	const scopes = useMemo(() => {
-		const list = summaryScopes(tasks);
-		if (!item?.workType) return list;
-		return [...list].sort((a, b) => (a.workType === item.workType ? 0 : 1) - (b.workType === item.workType ? 0 : 1));
-	}, [tasks, item?.workType]);
-	const [name, setName] = useState(String(item?.label || ""));
-	const [dayType, setDayType] = useState(item?.dayType || "Regular");
-	const [shift, setShift] = useState(item?.shift || "Day");
-	const label = creating ? String(name || "").trim() : String(item?.label || "").trim();
-	const [qtyByScope, setQtyByScope] = useState({});
-	const sameLine = (it) => lineItemLabel(category, it).toLowerCase() === label.toLowerCase() && (category !== "BOL" || (it.dayType || "Regular") === dayType && (it.shift || "Day") === shift);
-	const filled = fillFromMasterlist(category, lists[category] || [], label);
-	const dbRate = category === "BOL" || category === "BOTE" ? num2(filled.rate) : num2(filled.unitCost);
-	const suggestions = useMemo(() => {
-		if (!creating) return [];
-		const seen = /* @__PURE__ */ new Set();
-		const out = [];
-		(lists[category] || []).filter(masterlistItemActive).forEach((it) => {
-			const text = String(masterlistItemLabel(category, it) || "").trim();
-			const key = text.toLowerCase();
-			if (!text || seen.has(key)) return;
-			seen.add(key);
-			out.push(text);
-		});
-		collectCeItems(tasks, category).forEach((it) => {
-			const key = it.label.toLowerCase();
-			if (!it.label || seen.has(key)) return;
-			seen.add(key);
-			out.push(it.label);
-		});
-		return out.sort((a, b) => a.localeCompare(b));
-	}, [creating, lists, category, tasks]);
-	const listId = `ce-sum-new-${category}`;
-	const chosen = scopes.filter((s) => {
-		const key = `${s.taskId}|${s.subtaskId}`;
-		return Object.prototype.hasOwnProperty.call(qtyByScope, key) && num2(qtyByScope[key]) > 0;
-	});
-	function toggleScope(scope) {
-		const key = `${scope.taskId}|${scope.subtaskId}`;
-		setQtyByScope((prev) => {
-			const next = { ...prev };
-			if (Object.prototype.hasOwnProperty.call(next, key)) delete next[key];
-			else next[key] = "1";
-			return next;
-		});
-	}
-	function commit() {
-		if (!label || !chosen.length) return;
-		const ops = chosen.map((scope) => {
-			const qty = num2(qtyByScope[`${scope.taskId}|${scope.subtaskId}`]);
-			const existing = findScopeLine(tasks, scope, category, sameLine);
-			if (existing) return {
-				taskId: scope.taskId,
-				subtaskId: scope.subtaskId,
-				itemId: existing.id,
-				qty
-			};
-			return {
-				taskId: scope.taskId,
-				subtaskId: scope.subtaskId,
-				qty,
-				item: scopeAddItem(category, label, qty, scope.days, dayType, shift, filled)
-			};
-		});
-		dispatch({
-			type: "APPLY_SCOPE_ADDS",
-			category,
-			ops
-		});
-		onClose();
-	}
-	return /* @__PURE__ */ jsx("div", {
-		className: "ce-confirm-backdrop",
-		onMouseDown: onClose,
-		children: /* @__PURE__ */ jsxs("div", {
-			className: "ce-confirm ce-sum-add",
-			onMouseDown: (e) => e.stopPropagation(),
-			children: [
-				/* @__PURE__ */ jsx("h3", { className: "ce-serif", children: creating ? "New item" : label || "Add to scopes" }),
-				creating ? /* @__PURE__ */ jsxs("label", { className: "ce-field", children: [/* @__PURE__ */ jsx("span", { children: "Item" }), /* @__PURE__ */ jsx("input", {
-					className: "ce-input",
-					list: listId,
-					value: name,
-					autoFocus: true,
-					placeholder: "Name of the new resource",
-					onChange: (e) => setName(e.target.value)
-				}), /* @__PURE__ */ jsx("datalist", { id: listId, children: suggestions.map((text) => /* @__PURE__ */ jsx("option", { value: text }, text)) })] }) : null,
-				creating && category === "BOL" ? /* @__PURE__ */ jsxs("div", { className: "ce-sum-add-row", children: [/* @__PURE__ */ jsxs("label", { className: "ce-field", children: [/* @__PURE__ */ jsx("span", { children: "Day type" }), /* @__PURE__ */ jsx("select", {
-					className: "ce-input",
-					value: dayType,
-					onChange: (e) => setDayType(e.target.value),
-					children: DAY_TYPES.map((d) => /* @__PURE__ */ jsx("option", { value: d, children: d }, d))
-				})] }), /* @__PURE__ */ jsxs("label", { className: "ce-field", children: [/* @__PURE__ */ jsx("span", { children: "Shift" }), /* @__PURE__ */ jsx("select", {
-					className: "ce-input",
-					value: shift,
-					onChange: (e) => setShift(e.target.value),
-					children: ["Day", "Night"].map((d) => /* @__PURE__ */ jsx("option", { value: d, children: d }, d))
-				})] })] }) : null,
-				/* @__PURE__ */ jsx("p", { className: "ce-sum-add-note", children: creating ? category === "BOL" ? "Name the resource, then tick the scopes and set each quantity." : "Name the resource, then tick the scopes and set each quantity." : category === "BOL" ? `${dayType} · ${shift}. Tick the scopes and set each quantity.` : "Tick the scopes and set each quantity." }),
-				/* @__PURE__ */ jsx("div", { className: "ce-sum-scopes", children: scopes.length ? scopes.map((scope) => {
-					const key = `${scope.taskId}|${scope.subtaskId}`;
-					const on = Object.prototype.hasOwnProperty.call(qtyByScope, key);
-					const existing = findScopeLine(tasks, scope, category, sameLine);
-					const have = existing ? num2(existing.qty) : 0;
-					const adding = on ? num2(qtyByScope[key]) : 0;
-					return /* @__PURE__ */ jsxs("label", { className: "ce-sum-scope", children: [/* @__PURE__ */ jsx("input", {
-						type: "checkbox",
-						checked: on,
-						onChange: () => toggleScope(scope)
-					}), /* @__PURE__ */ jsxs("span", { className: "ce-sum-scope-name", children: [/* @__PURE__ */ jsx("b", { children: `${workTypeMeta(scope.workType).label} · ${scope.taskTitle}` }), /* @__PURE__ */ jsx("small", { children: scope.subtaskTitle !== scope.taskTitle ? scope.subtaskTitle : "" })] }), /* @__PURE__ */ jsx("span", { className: "ce-sum-scope-have", children: have > 0 ? on && adding > 0 ? `has ${have} → ${have + adding}` : `has ${have}` : on ? "new" : "" }), /* @__PURE__ */ jsx("input", {
-						className: "ce-input",
-						type: "number",
-						min: "0",
-						disabled: !on,
-						value: on ? qtyByScope[key] : "",
-						onChange: (e) => setQtyByScope((prev) => ({
-							...prev,
-							[key]: e.target.value
-						})),
-						"aria-label": "Quantity for this scope"
-					})] }, key);
-				}) : /* @__PURE__ */ jsx("p", { className: "ce-sum-add-note", children: "No scopes yet." }) }),
-				/* @__PURE__ */ jsx("p", { className: "ce-sum-add-note", children: dbRate > 0 ? "Days follow each scope schedule. Rate comes from the database. A scope that already has this item gets the quantity added on." : "Days follow each scope schedule. This name is not in the database, so a new line starts at rate 0." }),
-				/* @__PURE__ */ jsxs("div", { className: "ce-confirm-actions", children: [/* @__PURE__ */ jsx("button", {
-					type: "button",
-					className: "ce-btn-ghost",
-					onClick: onClose,
-					children: "Cancel"
-				}), /* @__PURE__ */ jsx("button", {
-					type: "button",
-					className: "ce-btn-primary",
-					disabled: !label || !chosen.length,
-					onClick: commit,
-					children: chosen.length > 1 ? `Add to ${chosen.length} scopes` : "Add"
-				})] })
-			]
-		})
-	});
-}
-function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sourcesFor, onAdd, onCreate }) {
+function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 	const qtyTotal = rows.reduce((s, r) => s + num2(r.qty), 0);
 	const amount = rows.reduce((s, r) => s + num2(r.subtotal), 0);
 	return /* @__PURE__ */ jsxs("div", {
@@ -15016,8 +14626,7 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sou
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.days}px` } }),
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.rate}px` } }),
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.otHrs}px` } }),
-							/* @__PURE__ */ jsx("col", { style: { width: `${widths.subtotal}px` } }),
-							/* @__PURE__ */ jsx("col", { className: "ce-sum-freeze-col", style: { width: "58px" } })
+							/* @__PURE__ */ jsx("col", { style: { width: `${widths.subtotal}px` } })
 						] }),
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "itemNo", width: widths.itemNo, onResize: updateWidth, children: "Item No." }),
@@ -15026,12 +14635,11 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sou
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "days", width: widths.days, onResize: updateWidth, children: "Days" }),
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "rate", width: widths.rate, onResize: updateWidth, children: "Rate/Day" }),
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "otHrs", width: widths.otHrs, onResize: updateWidth, children: "OT Hrs" }),
-							/* @__PURE__ */ jsx(ResizableTh, { colKey: "subtotal", width: widths.subtotal, onResize: updateWidth, children: "Subtotal" }),
-							/* @__PURE__ */ jsx("th", { className: "ce-sum-freeze", "aria-label": "Add or remove", children: onCreate ? /* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: onCreate }) : null })
+							/* @__PURE__ */ jsx(ResizableTh, { colKey: "subtotal", width: widths.subtotal, onResize: updateWidth, children: "Subtotal" })
 						] }) }),
 						/* @__PURE__ */ jsx("tbody", { children: rows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center ce-sum-item", children: idx + 1 }),
-							/* @__PURE__ */ jsxs("td", { className: "ce-sum-left ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: r.role }), /* @__PURE__ */ jsx(SummarySourceBtn, { load: () => sourcesFor?.(r.role) || [], bol: true }), onAdd ? /* @__PURE__ */ jsx(SummaryRowAddBtn, { onClick: () => onAdd(r.role) }) : null] }),
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: r.role }),
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center", children: /* @__PURE__ */ jsx("input", {
 								type: "number",
 								min: "0",
@@ -15054,11 +14662,7 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sou
 								value: r.otHrs,
 								onChange: (e) => onEdit?.(r.role, { otHrs: e.target.value })
 							}) }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: fmt(r.subtotal) }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze", children: /* @__PURE__ */ jsxs("span", { className: "ce-sum-freeze-acts", children: [onCreate ? /* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: onCreate }) : null, /* @__PURE__ */ jsx(SummaryDeleteBtn, {
-								label: r.role,
-								onDelete: () => onDelete?.(r.role)
-							})] }) })
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: fmt(r.subtotal) })
 						] }, `${label}-${idx}`)) }),
 						/* @__PURE__ */ jsx("tfoot", { children: /* @__PURE__ */ jsxs("tr", {
 							className: "ce-sum-sub",
@@ -15069,8 +14673,7 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sou
 								/* @__PURE__ */ jsx("td", {}),
 								/* @__PURE__ */ jsx("td", {}),
 								/* @__PURE__ */ jsx("td", {}),
-								/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono ce-sum-strong", children: fmt(amount) }),
-								/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
+								/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono ce-sum-strong", children: fmt(amount) })
 							]
 						}) })
 					]
@@ -15079,53 +14682,7 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, onDelete, sou
 		]
 	});
 }
-function BenefitExplain({ lines, children }) {
-	const [open, setOpen] = useState(false);
-	const [box, setBox] = useState(null);
-	const popRef = useRef(null);
-	const holdRef = useRef(null);
-	useEffect(() => {
-		if (!open) return;
-		const close = (e) => {
-			if (popRef.current?.contains(e.target) || holdRef.current?.contains(e.target)) return;
-			setOpen(false);
-		};
-		document.addEventListener("mousedown", close);
-		return () => document.removeEventListener("mousedown", close);
-	}, [open]);
-	function show(el) {
-		const r = el.getBoundingClientRect();
-		setBox({
-			top: r.bottom + 4,
-			left: Math.max(8, Math.min(r.left, window.innerWidth - 360))
-		});
-		setOpen(true);
-	}
-	return /* @__PURE__ */ jsxs("span", {
-		ref: holdRef,
-		className: "ce-ben-explain",
-		onFocus: (e) => show(e.currentTarget),
-		onClick: (e) => show(e.currentTarget),
-		children: [children, open ? /* @__PURE__ */ jsx("div", {
-			ref: popRef,
-			className: "ce-ben-formula",
-			style: box || void 0,
-			children: (lines || []).map((line, i) => /* @__PURE__ */ jsx("p", { children: line }, i))
-		}) : null]
-	});
-}
-function benefitExplainLines(kind, row) {
-	const f = formulaNow();
-	const monthly = fmt(row.monthlyRate);
-	const daily = fmt(row.rate);
-	const days = f.daysPerMonth || 26;
-	const base = `Monthly rate = daily ${daily} × ${days} days = ${monthly}`;
-	const how = kind === "thirteenth" ? `13th month = ${monthly} ÷ ${f.thirteenthDivisor || 12} = ${fmt(row.computedThirteenth)}` : kind === "sss" ? `SSS = ${f.sssPct}% × ${monthly} = ${fmt(row.computedSss)}` : kind === "hdmf" ? `HDMF = ${f.hdmfPct}% × ${monthly} = ${fmt(row.computedHdmf)}` : `PHIC = ${f.phicPct}% × ${monthly} = ${fmt(row.computedPhic)}`;
-	const lines = [base, how];
-	if (row.edited && Object.prototype.hasOwnProperty.call(row.edited, kind)) lines.push(`Edited to ${fmt(row.edited[kind])}. Clear the field to use the formula again.`);
-	return lines;
-}
-function BOLMasterSummary({ tasks, editsRef, dispatch }) {
+function BOLMasterSummary({ tasks, editsRef }) {
 	const { widths, updateWidth } = useResizableColumns("bol-sum-col-widths", {
 		itemNo: 60,
 		role: 220,
@@ -15135,97 +14692,60 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 		otHrs: 80,
 		subtotal: 130
 	});
-	const { widths: benWidths, updateWidth: updateBenWidth } = useResizableColumns("bol-sum-benefits-col-widths-2", {
-		itemNo: 52,
+	const { widths: benWidths, updateWidth: updateBenWidth } = useResizableColumns("bol-sum-benefits-col-widths", {
+		itemNo: 60,
 		role: 180,
-		qty: 56,
-		uom: 52,
-		days: 54,
-		thirteenth: 108,
-		sss: 100,
-		hdmf: 100,
-		phic: 100,
-		perDiem: 148,
-		allowance: 110,
+		qty: 70,
+		uom: 70,
+		days: 90,
+		monthly: 110,
+		thirteenth: 90,
+		sss: 80,
+		hdmf: 80,
+		phic: 80,
+		perDiem: 90,
+		allowance: 100,
 		total: 120
 	});
+	const [wtFilter, setWtFilter] = useState("all");
 	const [bolEdits, setBolEdits] = usePersistentEdits(editsRef, "bol");
 	const [benefitEdits, setBenefitEdits] = usePersistentEdits(editsRef, "bol-benefits");
-	const [wtFilter, setWtFilter] = useState("all");
-	const [sheetQuery, setSheetQuery] = useState("");
-	const [addItem, setAddItem] = useState(null);
-	const full = useMemo(() => buildBolGroups(tasks), [tasks]);
+	const full = buildBolGroups(tasks);
 	const allBOL = full.allBOL;
-	const byType = useMemo(() => {
-		const map = {};
-		WORK_TYPES.forEach((w) => {
-			const subset = tasksOfType(tasks, w.id);
-			map[w.id] = {
-				subset,
-				model: buildBolGroups(subset)
-			};
-		});
-		return map;
-	}, [tasks]);
-	const scheduleMap = useMemo(() => getScheduledItemMap(tasks, "BOL"), [tasks]);
-	const grandTotal = useMemo(() => WORK_TYPES.reduce((sum, w) => {
-		const model = byType[w.id]?.model;
-		if (!model) return sum;
+	const scheduleMap = getScheduledItemMap(tasks, "BOL");
+	const grandTotal = WORK_TYPES.reduce((sum, w) => {
+		const model = buildBolGroups(tasksOfType(tasks, w.id));
 		return sum + BOL_SHIFT_GROUPS.reduce((block, g) => {
 			return block + Object.values(model.groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => {
 				return rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal);
 			}, 0);
 		}, 0);
-	}, 0), [byType, bolEdits]);
-	const benefitSchedule = useMemo(() => {
-		const byRole = {};
-		Object.keys(scheduleMap).forEach((key) => {
-			const role = key.split("~")[0];
-			const sched = scheduleMap[key];
-			if (!byRole[role]) byRole[role] = {
-				maxDailyQty: 0,
-				activeDays: 0
-			};
-			byRole[role].maxDailyQty = Math.max(byRole[role].maxDailyQty, sched.maxDailyQty);
-			byRole[role].activeDays = Math.max(byRole[role].activeDays, sched.activeDays);
-		});
-		return byRole;
-	}, [scheduleMap]);
+	}, 0);
 	const benefitsMap = {};
 	allBOL.forEach((it) => {
 		const role = it.role || "Unnamed";
-		if (!benefitsMap[role]) {
-			const sched = benefitSchedule[role] || { maxDailyQty: 0, activeDays: 0 };
-			benefitsMap[role] = {
-				role,
-				maxDailyQty: sched.maxDailyQty,
-				activeDays: sched.activeDays,
-				rate: num2(it.rate)
-			};
-		}
+		if (!benefitsMap[role]) benefitsMap[role] = {
+			role,
+			maxDailyQty: 0,
+			activeDays: 0,
+			rate: num2(it.rate)
+		};
 		if (benefitsMap[role].rate === 0) benefitsMap[role].rate = num2(it.rate);
+		Object.keys(scheduleMap).forEach((key) => {
+			if (key.startsWith(`${role}~`)) {
+				const sched = scheduleMap[key];
+				benefitsMap[role].maxDailyQty = Math.max(benefitsMap[role].maxDailyQty, sched.maxDailyQty);
+				benefitsMap[role].activeDays = Math.max(benefitsMap[role].activeDays, sched.activeDays);
+			}
+		});
 	});
 	const benefitsData = summarySort(Object.values(benefitsMap).map((b) => {
 		const f = formulaNow();
 		const monthlyRate = b.rate * f.daysPerMonth;
-		const computedThirteenth = monthlyRate / (f.thirteenthDivisor || 12);
-		const computedSss = monthlyRate * f.sssPct / 100;
-		const computedHdmf = monthlyRate * f.hdmfPct / 100;
-		const computedPhic = monthlyRate * f.phicPct / 100;
-		const draftOf = (key) => {
-			const row = benefitEdits[b.role];
-			if (!row || !Object.prototype.hasOwnProperty.call(row, key)) return null;
-			return row[key];
-		};
-		const amountOf = (key, computed) => {
-			const draft = draftOf(key);
-			if (draft == null || draft === "") return computed;
-			return num2(draft);
-		};
-		const thirteenth = computedThirteenth;
-		const sss = amountOf("sss", computedSss);
-		const hdmf = amountOf("hdmf", computedHdmf);
-		const phic = amountOf("phic", computedPhic);
+		const thirteenth = monthlyRate / (f.thirteenthDivisor || 12);
+		const sss = monthlyRate * f.sssPct / 100;
+		const hdmf = monthlyRate * f.hdmfPct / 100;
+		const phic = monthlyRate * f.phicPct / 100;
 		const perDiemBase = (() => {
 			let p = 0;
 			allBOL.forEach((it) => {
@@ -15242,33 +14762,19 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 			return p;
 		})() * b.activeDays;
 		const totalBenefits = thirteenth + sss + hdmf + phic + perDiem + allowance;
-		const edited = {};
-		if (Math.abs(sss - computedSss) > .004) edited.sss = sss;
-		if (Math.abs(hdmf - computedHdmf) > .004) edited.hdmf = hdmf;
-		if (Math.abs(phic - computedPhic) > .004) edited.phic = phic;
 		return {
 			...b,
 			monthlyRate,
-			computedThirteenth,
-			computedSss,
-			computedHdmf,
-			computedPhic,
 			thirteenth,
 			sss,
 			hdmf,
 			phic,
-			sssInput: draftOf("sss") == null ? computedSss : draftOf("sss"),
-			hdmfInput: draftOf("hdmf") == null ? computedHdmf : draftOf("hdmf"),
-			phicInput: draftOf("phic") == null ? computedPhic : draftOf("phic"),
-			edited,
 			perDiem,
 			allowance,
 			totalBenefits
 		};
 	}), "BOL", (b) => b.role);
-	const benefitQuery = String(sheetQuery || "").trim();
-	const visibleBenefits = benefitsData.filter((row) => summaryQueryMatch(row.role, sheetQuery));
-	const displayBenefitsData = visibleBenefits.length > 0 ? visibleBenefits : benefitQuery ? [] : [{
+	const displayBenefitsData = benefitsData.length > 0 ? benefitsData : [{
 		role: "No manpower data",
 		maxDailyQty: 0,
 		activeDays: 0,
@@ -15304,18 +14810,11 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 				value: wtFilter,
 				onChange: setWtFilter
 			}),
-			/* @__PURE__ */ jsx(SummarySheetTools, { onQuery: setSheetQuery }),
 			WORK_TYPES.filter((w) => wtFilter === "all" || wtFilter === w.id).map((w) => {
-				const cached = byType[w.id];
-				const subset = cached?.subset || [];
-				const groups = cached?.model?.groups || {};
-				const shifts = BOL_SHIFT_GROUPS.map((g) => {
-					const source = summarySort(Object.values(groups[g.dt]?.[g.shift] || {}), "BOL", (row) => row.role).filter((row) => summaryQueryMatch(row.role, sheetQuery));
-					const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift));
-					return { g, rows };
-				}).filter((block) => block.rows.length);
-				if (!shifts.length) return null;
-				const sectionTotal = shifts.reduce((sum, block) => sum + block.rows.reduce((rowSum, row) => rowSum + num2(row.subtotal), 0), 0);
+				const subset = tasksOfType(tasks, w.id);
+				const model = buildBolGroups(subset);
+				if (wtFilter === "all" && model.allBOL.length === 0) return null;
+				const groups = model.groups;
 				return /* @__PURE__ */ jsxs("div", {
 					className: "ce-wt-block",
 					children: [
@@ -15327,33 +14826,18 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 								w.full
 							]
 						}),
-						...shifts.map(({ g, rows }) => /* @__PURE__ */ jsx(BolShiftBlock, {
-							label: g.label,
-							rows,
-							widths,
-							updateWidth,
-							sourcesFor: (role) => summaryItemSources(subset, "BOL", (it) => (it.role || "Unnamed") === role && (it.dayType || "Regular") === g.dt && (it.shift || "Day") === g.shift),
-							onAdd: (role) => setAddItem({
-								label: role,
-								dayType: g.dt,
-								shift: g.shift
-							}),
-							onCreate: () => setAddItem({
-								create: true,
-								workType: w.id,
-								dayType: g.dt,
-								shift: g.shift
-							}),
-							onEdit: (role, patch) => setBolEdits(`${w.id}|${g.dt}|${g.shift}|${role}`, patch),
-							onDelete: (role) => {
-								const itemIds = matchingItemIds(subset, "BOL", (it) => (it.role || "Unnamed") === role && (it.dayType || "Regular") === g.dt && (it.shift || "Day") === g.shift);
-								if (itemIds.length) dispatch?.({
-									type: "DELETE_MATCHING_ITEMS",
-									category: "BOL",
-									itemIds
-								});
-							}
-						}, `${w.id}-${g.dt}-${g.shift}`)),
+						...BOL_SHIFT_GROUPS.map((g) => {
+							const source = summarySort(Object.values(groups[g.dt]?.[g.shift] || {}), "BOL", (row) => row.role);
+							if (!source.length) return null;
+							const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift));
+							return /* @__PURE__ */ jsx(BolShiftBlock, {
+								label: g.label,
+								rows,
+								widths,
+								updateWidth,
+								onEdit: (role, patch) => setBolEdits(`${w.id}|${g.dt}|${g.shift}|${role}`, patch)
+							}, `${w.id}-${g.dt}-${g.shift}`);
+						}),
 						/* @__PURE__ */ jsx("div", {
 							className: "ce-table-scroll",
 							children: /* @__PURE__ */ jsxs("table", {
@@ -15362,11 +14846,12 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 									className: "ce-subtotal-row",
 									children: [/* @__PURE__ */ jsxs("td", { children: ["Subtotal — ", w.label] }), /* @__PURE__ */ jsx("td", {
 										className: "ce-right ce-mono",
-										children: fmt(sectionTotal)
+										children: fmt(BOL_SHIFT_GROUPS.reduce((block, g) => block + Object.values(groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal), 0), 0))
 									})]
 								}) })
 							})
-						})
+						}),
+						collectNotes(subset).length > 0 ? /* @__PURE__ */ jsx(SummaryNotesBlock, { tasks: subset }) : null
 					]
 				}, w.id);
 			}),
@@ -15387,7 +14872,7 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 					}) })
 				})
 			}),
-			displayBenefitsData.length > 0 && /* @__PURE__ */ jsxs("div", {
+			/* @__PURE__ */ jsxs("div", {
 				style: { marginTop: "1.5rem" },
 				children: [/* @__PURE__ */ jsx("div", {
 					className: "ce-sum-shift",
@@ -15403,6 +14888,7 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.qty}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.uom}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.days}px` } }),
+								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.monthly}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.thirteenth}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.sss}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.hdmf}px` } }),
@@ -15442,8 +14928,14 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 									colKey: "days",
 									width: benWidths.days,
 									onResize: updateBenWidth,
-									className: "ce-ben-wrap",
 									children: "Total Days"
+								}),
+								/* @__PURE__ */ jsx(ResizableTh, {
+									colKey: "monthly",
+									width: benWidths.monthly,
+									onResize: updateBenWidth,
+									className: "ce-sum-left",
+									children: "Monthly Rate"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
 									colKey: "thirteenth",
@@ -15493,7 +14985,7 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 									className: "ce-sum-center ce-sum-item",
 									children: idx + 1
 								}),
-								/* @__PURE__ */ jsxs("td", { className: "ce-sum-left ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: row.role || "—" }), row.role && row.role !== "No manpower data" ? /* @__PURE__ */ jsx(SummarySourceBtn, { load: () => summaryItemSources(tasks, "BOL", (it) => (it.role || "Unnamed") === row.role), bol: true }) : null] }),
+								/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: row.role || "—" }),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-sum-center",
 									children: row.maxDailyQty
@@ -15503,60 +14995,30 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 									className: "ce-sum-center",
 									children: row.activeDays
 								}),
-								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.thirteenth) : /* @__PURE__ */ jsx(BenefitExplain, {
-									lines: benefitExplainLines("thirteenth", row),
-									children: /* @__PURE__ */ jsx("input", {
-										className: "ce-input ce-ben-input",
-										readOnly: true,
-										value: fmt(row.thirteenth),
-										"aria-label": "13th month pay"
-									})
-								}) }),
-								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.sss) : /* @__PURE__ */ jsx(BenefitExplain, {
-									lines: benefitExplainLines("sss", row),
-									children: /* @__PURE__ */ jsx(CommaMoneyInput, {
-										signed: true,
-										className: "ce-ben-input",
-										label: "SSS",
-										value: row.sssInput,
-										onChange: (next) => setBenefitEdits(row.role, { sss: next }),
-										onBlur: (next) => {
-											if (next === "") setBenefitEdits(row.role, { sss: void 0 });
-										}
-									})
-								}) }),
-								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.hdmf) : /* @__PURE__ */ jsx(BenefitExplain, {
-									lines: benefitExplainLines("hdmf", row),
-									children: /* @__PURE__ */ jsx(CommaMoneyInput, {
-										signed: true,
-										className: "ce-ben-input",
-										label: "HDMF",
-										value: row.hdmfInput,
-										onChange: (next) => setBenefitEdits(row.role, { hdmf: next }),
-										onBlur: (next) => {
-											if (next === "") setBenefitEdits(row.role, { hdmf: void 0 });
-										}
-									})
-								}) }),
-								/* @__PURE__ */ jsx("td", { className: "ce-ben-left", children: row.role === "No manpower data" ? fmt(row.phic) : /* @__PURE__ */ jsx(BenefitExplain, {
-									lines: benefitExplainLines("phic", row),
-									children: /* @__PURE__ */ jsx(CommaMoneyInput, {
-										signed: true,
-										className: "ce-ben-input",
-										label: "PHIC",
-										value: row.phicInput,
-										onChange: (next) => setBenefitEdits(row.role, { phic: next }),
-										onBlur: (next) => {
-											if (next === "") setBenefitEdits(row.role, { phic: void 0 });
-										}
-									})
-								}) }),
 								/* @__PURE__ */ jsx("td", {
-									className: "ce-ben-perdiem",
+									className: "ce-sum-money ce-mono",
+									children: fmt(row.monthlyRate)
+								}),
+								/* @__PURE__ */ jsx("td", {
+									className: "ce-sum-money ce-mono",
+									children: fmt(row.thirteenth)
+								}),
+								/* @__PURE__ */ jsx("td", {
+									className: "ce-sum-money ce-mono",
+									children: fmt(row.sss)
+								}),
+								/* @__PURE__ */ jsx("td", {
+									className: "ce-sum-money ce-mono",
+									children: fmt(row.hdmf)
+								}),
+								/* @__PURE__ */ jsx("td", {
+									className: "ce-sum-money ce-mono",
+									children: fmt(row.phic)
+								}),
+								/* @__PURE__ */ jsx("td", {
+									className: "ce-sum-money ce-mono",
 									children: row.role === "No manpower data" ? fmt(row.perDiem) : /* @__PURE__ */ jsx(CommaMoneyInput, {
 										signed: true,
-										className: "ce-ben-input",
-										label: "Per diem",
 										value: row.perDiem,
 										onChange: (next) => setBenefitEdits(row.role, { perDiem: next })
 									})
@@ -15587,6 +15049,7 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
+									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-money ce-mono ce-sum-strong",
 										children: fmt(displayBenefitsData.reduce((s, r) => s + num2(r.totalBenefits), 0))
@@ -15596,18 +15059,6 @@ function BOLMasterSummary({ tasks, editsRef, dispatch }) {
 													]
 					})
 				})]
-			}),
-			/* @__PURE__ */ jsx(SummaryNotesBlock, { groups: WORK_TYPES.filter((w) => wtFilter === "all" || wtFilter === w.id).map((w) => ({
-				id: w.id,
-				label: `${w.letter}. ${w.full}`,
-				tasks: tasksOfType(tasks, w.id)
-			})) }),
-			addItem && /* @__PURE__ */ jsx(SummaryAddDialog, {
-				category: "BOL",
-				tasks,
-				item: addItem,
-				dispatch,
-				onClose: () => setAddItem(null)
 			})
 		]
 	});
@@ -15660,12 +15111,10 @@ function categoryEditedRow(category, row, edit, workType) {
 		subtotal
 	};
 }
-function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
+function AggregatedCategoryTab({ tasks, category, editsRef }) {
 	const [manualRows, setManualRows] = useState([]);
 	const [autoEdits, setAutoEdits] = usePersistentEdits(editsRef, `cat-${category}`);
 	const [wtFilter, setWtFilter] = useState("all");
-	const [sheetQuery, setSheetQuery] = useState("");
-	const [addItem, setAddItem] = useState(null);
 	const { widths, updateWidth } = useResizableColumns(`sum-col-widths-${category}`, {
 		itemNo: 60,
 		description: 260,
@@ -15674,7 +15123,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 		rate: 130,
 		electricity: 120,
 		subtotal: 130,
-		action: 58
+		action: 50
 	});
 	const meta = CATEGORY_META[category];
 	const summaryHeaders = {
@@ -15682,7 +15131,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 		BOTE: "BILL OF TOOLS & EQUIPMENT",
 		PPE: "SAFETY & PERSONAL PROTECTIVE EQUIPMENT"
 	};
-	const typeBlocks = useMemo(() => WORK_TYPES.map((w) => {
+	const typeBlocks = WORK_TYPES.map((w) => {
 		const subset = tasksOfType(tasks, w.id);
 		const rows = buildCategoryAutoRows(subset, category, w.id).map((row) => categoryEditedRow(category, row, autoEdits[`${w.id}|${row.description}`], w.id));
 		return {
@@ -15691,10 +15140,31 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 			rows,
 			total: rows.reduce((s, r) => s + r.subtotal, 0)
 		};
-	}), [tasks, category, autoEdits]);
+	});
 	const autoTotal = typeBlocks.reduce((s, b) => s + b.total, 0);
 	const manualTotal = manualRows.reduce((s, r) => s + manualSubtotal(r), 0);
 	const grandTotal = autoTotal + manualTotal;
+	function addManualRow() {
+		if (category === "BOTE") setManualRows([...manualRows, {
+			id: uid3("manual-bote"),
+			description: "",
+			qty: 0,
+			days: 0,
+			rate: 0
+		}]);
+		else if (category === "BOCM") setManualRows([...manualRows, {
+			id: uid3("manual-bocm"),
+			description: "",
+			qty: 0,
+			unitCost: 0
+		}]);
+		else if (category === "PPE") setManualRows([...manualRows, {
+			id: uid3("manual-ppe"),
+			item: "",
+			qty: 0,
+			unitCost: 0
+		}]);
+	}
 	function updateManualRow(id, patch) {
 		setManualRows((rows) => rows.map((r) => r.id === id ? {
 			...r,
@@ -15708,8 +15178,6 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 		if (category === "BOTE") return num2(r.qty) * num2(r.days) * num2(r.rate) + num2(r.qty) * num2(r.days) * num2(r.hoursPerDay) * num2(r.powerKw) * num2(r.kwhRate);
 		return num2(r.qty) * (category === "BOCM" || category === "PPE" ? num2(r.unitCost) : 1);
 	}
-	const shownManual = manualRows.filter((r) => summaryQueryMatch(category === "PPE" ? r.item : r.description, sheetQuery));
-	const shownManualTotal = shownManual.reduce((s, r) => s + manualSubtotal(r), 0);
 	const showElec = category === "BOTE" && wtFilter !== "onsite";
 	const colCount = category === "BOTE" ? showElec ? 11 : 7 : 6;
 	const labelSpan = colCount - 2;
@@ -15736,13 +15204,13 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 				value: wtFilter,
 				onChange: setWtFilter
 			}),
-			/* @__PURE__ */ jsx(SummarySheetTools, { onQuery: setSheetQuery }),
 			/* @__PURE__ */ jsxs("p", {
 				className: "ce-qty-legend",
 				children: [
-					"Auto rows come from Breakdown.",
+					"Auto rows are read-only from Breakdown.",
 					category === "BOTE" ? " Qty = peak concurrent tools. Days = schedule window." : " Qty = total units from the breakdown.",
-					" Filter is for working; export uses All."
+					" ",
+					"Manual extras are labelled and need a note. Filter is for working; export uses All."
 				]
 			}),
 			/* @__PURE__ */ jsx("div", {
@@ -15829,13 +15297,14 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 								onResize: updateWidth,
 								children: "Subtotal"
 							}),
-							/* @__PURE__ */ jsx("th", { className: "ce-sum-freeze", "aria-label": "Add or remove", children: /* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: () => setAddItem({ create: true, workType: wtFilter === "all" ? "" : wtFilter }) }) })
+							/* @__PURE__ */ jsx(ResizableTh, {
+								colKey: "action",
+								width: widths.action,
+								onResize: updateWidth
+							})
 						] }) }),
 						/* @__PURE__ */ jsxs("tbody", { children: [typeBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && (wtFilter !== "all" || b.rows.length > 0)).map((b) => {
-							const shownRows = b.rows.filter((r) => summaryQueryMatch(r.description, sheetQuery));
-							if (String(sheetQuery || "").trim() && !shownRows.length) return null;
-							const shownTotal = shownRows.reduce((s, r) => s + num2(r.subtotal), 0);
-							const blockElec = category === "BOTE" && chargesPower(b.id) ? shownRows.reduce((s, r) => s + num2(r.electricity), 0) : 0;
+							const blockElec = category === "BOTE" && chargesPower(b.id) ? b.rows.reduce((s, r) => s + num2(r.electricity), 0) : 0;
 							return /* @__PURE__ */ jsxs(React.Fragment, { children: [
 								/* @__PURE__ */ jsx("tr", {
 									className: "ce-daytype-header",
@@ -15848,12 +15317,12 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 										]
 									})
 								}),
-								shownRows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+								b.rows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center ce-sum-item",
 										children: idx + 1
 									}),
-									/* @__PURE__ */ jsxs("td", { className: "ce-sum-left ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: r.description }), /* @__PURE__ */ jsx(SummarySourceBtn, { load: () => summaryItemSources(b.subset, category, (it) => (category === "PPE" ? it.item : it.description) === r.description) }), /* @__PURE__ */ jsx(SummaryRowAddBtn, { onClick: () => setAddItem({ label: r.description }) })] }),
+									/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: r.description }),
 									category === "BOTE" ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center",
 										children: /* @__PURE__ */ jsx("input", {
@@ -15915,17 +15384,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 										className: "ce-sum-money ce-mono",
 										children: fmt(r.subtotal)
 									}),
-									/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze", children: /* @__PURE__ */ jsxs("span", { className: "ce-sum-freeze-acts", children: [/* @__PURE__ */ jsx(SummaryNewItemBtn, { onClick: () => setAddItem({ create: true, workType: b.id }) }), /* @__PURE__ */ jsx(SummaryDeleteBtn, {
-										label: r.description,
-										onDelete: () => {
-											const itemIds = matchingItemIds(b.subset, category, (it) => (category === "PPE" ? it.item : it.description) === r.description);
-											if (itemIds.length) dispatch?.({
-												type: "DELETE_MATCHING_ITEMS",
-												category,
-												itemIds
-											});
-										}
-									})] }) })
+									/* @__PURE__ */ jsx("td", {})
 								] }, `${b.id}-auto-${idx}`)),
 								blockElec > 0 && /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
@@ -15936,7 +15395,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 										className: "ce-sum-money ce-mono",
 										children: fmt(blockElec)
 									}),
-									/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
+									/* @__PURE__ */ jsx("td", {})
 								] }),
 								/* @__PURE__ */ jsxs("tr", {
 									className: "ce-subtotal-row",
@@ -15947,13 +15406,13 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 										}),
 										/* @__PURE__ */ jsx("td", {
 											className: "ce-sum-money ce-mono",
-											children: fmt(shownTotal)
+											children: fmt(b.total)
 										}),
-										/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
+										/* @__PURE__ */ jsx("td", {})
 									]
 								})
 							] }, b.id);
-						}), shownManual.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+						}), manualRows.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
 							/* @__PURE__ */ jsx("tr", {
 								className: "ce-subtotal-row",
 								children: /* @__PURE__ */ jsx("td", {
@@ -15961,7 +15420,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 									children: "Manual Entries"
 								})
 							}),
-							shownManual.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+							manualRows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-sum-center ce-sum-item",
 									children: typeBlocks.reduce((s, b) => s + b.rows.length, 0) + idx + 1
@@ -16023,10 +15482,9 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 									className: "ce-sum-money ce-mono",
 									children: fmt(manualSubtotal(r))
 								}),
-								/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze", children: /* @__PURE__ */ jsx(IconBtn, {
+								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(IconBtn, {
 									danger: true,
 									title: "Remove",
-									confirm: `Remove "${(category === "PPE" ? r.item : r.description) || "this extra row"}" from this summary? This cannot be undone.`,
 									onClick: () => deleteManualRow(r.id),
 									children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
 								}) })
@@ -16040,9 +15498,9 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 									}),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-money ce-mono",
-										children: fmt(shownManualTotal)
+										children: fmt(manualTotal)
 									}),
-									/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
+									/* @__PURE__ */ jsx("td", {})
 								]
 							})
 						] })] }),
@@ -16055,23 +15513,29 @@ function AggregatedCategoryTab({ tasks, category, editsRef, dispatch }) {
 								className: "ce-sum-money ce-mono ce-total",
 								children: fmt(grandTotal)
 							}),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-freeze" })
+							/* @__PURE__ */ jsx("td", {})
 						] }) })
 					]
 				})
 			}),
-			/* @__PURE__ */ jsx(SummaryNotesBlock, { groups: typeBlocks.filter((b) => wtFilter === "all" || wtFilter === b.id).map((b) => ({
-				id: b.id,
-				label: `${b.letter}. ${b.full}`,
-				tasks: b.subset
-			})) }),
-			addItem && /* @__PURE__ */ jsx(SummaryAddDialog, {
-				category,
-				tasks,
-				item: addItem,
-				dispatch,
-				onClose: () => setAddItem(null)
-			})
+			/* @__PURE__ */ jsxs("button", {
+				className: "ce-add-row",
+				onClick: addManualRow,
+				type: "button",
+				children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manual extra row"]
+			}),
+			/* @__PURE__ */ jsx("p", {
+				className: "ce-empty",
+				style: {
+					textAlign: "left",
+					padding: "0 0 0.5rem"
+				},
+				children: "Auto rows come from Breakdown. Manual extra rows are extras only and are flagged on Submit."
+			}),
+			typeBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && collectNotes(b.subset).length > 0).map((b) => /* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsxs("h4", {
+				className: "ce-serif ce-summary-subheading",
+				children: ["Notes — ", b.label]
+			}), /* @__PURE__ */ jsx(SummaryNotesBlock, { tasks: b.subset })] }, `notes-${b.id}`))
 		]
 	});
 }
@@ -19205,24 +18669,21 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								sowText,
 								setSowText
 							}),
-							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch }), noteNode("BOL", "Notes", true)] }),
+							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef }), noteNode("BOL", "Notes", true)] }),
 							tab === "BOTE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOTE",
-								editsRef: summaryEditsRef,
-								dispatch
+								editsRef: summaryEditsRef
 							}), noteNode("BOTE", "Notes", true)] }),
 							tab === "PPE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "PPE",
-								editsRef: summaryEditsRef,
-								dispatch
+								editsRef: summaryEditsRef
 							}), noteNode("PPE", "Notes", true)] }),
 							tab === "BOCM" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOCM",
-								editsRef: summaryEditsRef,
-								dispatch
+								editsRef: summaryEditsRef
 							}), noteNode("BOCM", "Notes", true)] }),
 							tab === "MISC" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(MISCSheet, { tasks: state.tasks }), noteNode("MISC", "Notes", true)] }),
 							tab === "MOB/DEMOB" && (() => {
@@ -25001,10 +24462,6 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	useEffect(() => {
 		if (readOnly) return;
 		draftReady.current = false;
-		if (initialData) {
-			draftReady.current = true;
-			return;
-		}
 		try {
 			const raw = localStorage.getItem(draftKey);
 			if (raw) {
@@ -25016,7 +24473,6 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 					}));
 					if (saved.checklist) setChecklist(saved.checklist);
 					if (saved.company) setCompany(saved.company);
-					if (Array.isArray(saved.attachments)) setAttachments(saved.attachments);
 					setDraftNote("Draft restored");
 				}
 			}
@@ -25030,7 +24486,6 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				localStorage.setItem(draftKey, JSON.stringify({
 					form,
 					checklist,
-					attachments,
 					company,
 					at: Date.now()
 				}));
@@ -25038,7 +24493,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			} catch {}
 		}, 700);
 		return () => clearTimeout(timer);
-	}, [form, checklist, attachments, company, readOnly, draftKey]);
+	}, [form, checklist, company, readOnly, draftKey]);
 	const handleSubmit = () => {
 		if (readOnly) return;
 		const hard = rceHardBlocks(form, company);
@@ -27499,29 +26954,34 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		const days = num2(String(form.duration || "").replace(/[^0-9.]/g, "")) || 1;
 		const bolLines = (form.manpower || []).filter((row) => String(row.designation || "").trim()).map((row) => {
 			const filled = fillFromMasterlist("BOL", bolList, row.designation);
+			const hasRate = filled.masterlistId && num2(filled.rate) > 0;
 			return bolItem({
 				role: String(row.designation).trim(),
 				qty: num2(row.pax) || 1,
 				days,
-				rate: filled.masterlistId ? num2(filled.rate) : 0,
+				rate: hasRate ? num2(filled.rate) : "",
 				masterlistId: filled.masterlistId || null,
 				perDiem: num2(filled.perDiem),
 				allowance: num2(filled.allowance),
-				otHrs: 0
+				otHrs: 0,
+				entryGap: !hasRate
 			});
 		});
 		const matLines = (form.materialRows || []).filter((row) => String(row.description || "").trim()).map((row) => {
 			const filled = fillFromMasterlist("BOCM", matList, row.description);
+			const hasRate = filled.masterlistId && num2(filled.unitCost) > 0;
 			return bocmItem({
 				description: String(row.description).trim(),
 				qty: num2(row.qty) || 1,
 				unit: filled.unit || "pc",
-				unitCost: filled.masterlistId ? num2(filled.unitCost) : 0,
-				masterlistId: filled.masterlistId || null
+				unitCost: hasRate ? num2(filled.unitCost) : "",
+				masterlistId: filled.masterlistId || null,
+				entryGap: !hasRate
 			});
 		});
 		const existing = form.ceId ? (ceList || []).find((ce) => ce.id === form.ceId) : null;
-		const editable = existing && !["Done", "Cancelled", "No quote", "Close bid"].includes(existing.status);
+		const DRAFT_STATUSES = ["Draft", "Ongoing", "On Park", "Waiting for information", "Sourcing", ""];
+		const editable = existing && DRAFT_STATUSES.includes(String(existing.status || ""));
 		if (editable && documents[existing.id]) {
 			setDocuments((prev) => {
 				const doc = prev[existing.id] || {};
@@ -28318,6 +27778,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						currentUserName: editorName,
 						priorReports: inspectionReports,
 						actingLevel,
+						checkTemplates: adminConfig.inspectionCheckTemplates || [],
+						onCheckTemplatesChange: (next) => setAdminConfig((prev) => normalizeAdminConfig({ ...prev, inspectionCheckTemplates: next })),
 						onSendToCe: handleSendInspectionToCe,
 						onBack: () => setCurrentView(inspectionReturn || "dashboard"),
 						onSave: handleSaveInspection
