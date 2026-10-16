@@ -2135,7 +2135,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 	const photoRef = useRef(null);
 	const cameraRef = useRef(null);
 	const voiceRef = useRef(null);
-	const canEditTemplates = !actingLevel || actingLevel === "admin" || actingLevel === "head" || actingLevel === "lead";
+	const canEditTemplates = actingLevel === "admin";
 	const speechOk = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 	function patch(partial) {
 		setForm((prev) => ({
@@ -24458,7 +24458,41 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}));
 	const [fieldErrors, setFieldErrors] = useState([]);
 	const [draftNote, setDraftNote] = useState("");
+	const [draftOffer, setDraftOffer] = useState(null);
 	const draftReady = useRef(false);
+	const isExistingRce = !!(initialData && (initialData.id || initialData.rceNo));
+	function rceSavedAt(rce) {
+		const times = [];
+		(Array.isArray(rce?.timeline) ? rce.timeline : []).forEach((ev) => {
+			const t = Date.parse(ev?.at || "");
+			if (Number.isFinite(t)) times.push(t);
+		});
+		[rce?.updatedAt, rce?.rceDate, rce?.dateReceived].forEach((v) => {
+			const t = Date.parse(v || "");
+			if (Number.isFinite(t)) times.push(t);
+		});
+		return times.length ? Math.max(...times) : 0;
+	}
+	function applyRceDraft(saved) {
+		if (!saved?.form) return;
+		setForm((prev) => ({
+			...prev,
+			...saved.form
+		}));
+		if (saved.checklist) setChecklist(saved.checklist);
+		if (saved.company) setCompany(saved.company);
+		setDraftNote("Draft restored");
+	}
+	function discardRceDraft() {
+		try { localStorage.removeItem(draftKey); } catch {}
+		setDraftOffer(null);
+		draftReady.current = true;
+	}
+	function restoreRceDraft() {
+		if (draftOffer?.saved) applyRceDraft(draftOffer.saved);
+		setDraftOffer(null);
+		draftReady.current = true;
+	}
 	useEffect(() => {
 		if (readOnly) return;
 		draftReady.current = false;
@@ -24467,13 +24501,19 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			if (raw) {
 				const saved = JSON.parse(raw);
 				if (saved?.form) {
-					setForm((prev) => ({
-						...prev,
-						...saved.form
-					}));
-					if (saved.checklist) setChecklist(saved.checklist);
-					if (saved.company) setCompany(saved.company);
-					setDraftNote("Draft restored");
+					if (!isExistingRce) {
+						applyRceDraft(saved);
+					} else {
+						const savedAt = Number(saved.at) || 0;
+						const rceAt = rceSavedAt(initialData);
+						const revSame = String(saved.rev ?? "") === String(initialData.revNo || "0");
+						const statusSame = String(saved.status ?? "") === String(initialData.status || "");
+						if (savedAt > rceAt && revSame && statusSame) {
+							setDraftOffer({ saved, at: savedAt });
+							return;
+						}
+						try { localStorage.removeItem(draftKey); } catch {}
+					}
 				}
 			}
 		} catch {}
@@ -24487,7 +24527,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 					form,
 					checklist,
 					company,
-					at: Date.now()
+					at: Date.now(),
+					rev: initialData?.revNo || "0",
+					status: initialData?.status || "",
+					updatedAt: initialData?.updatedAt || ""
 				}));
 				setDraftNote("Saved");
 			} catch {}
@@ -24617,6 +24660,25 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				onClick: onBack,
 				children: "← Back"
 			}),
+			draftOffer ? /* @__PURE__ */ jsxs("div", {
+				className: "ce-save-note",
+				style: { display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.4rem 0" },
+				children: [
+					/* @__PURE__ */ jsx("span", { children: `Unsaved draft from ${new Date(draftOffer.at).toLocaleString()} —` }),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: restoreRceDraft,
+						children: "Restore"
+					}),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: discardRceDraft,
+						children: "Discard"
+					})
+				]
+			}) : null,
 			/* @__PURE__ */ jsxs("div", {
 				className: "rce-toolbar",
 				children: [
