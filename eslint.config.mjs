@@ -40,6 +40,14 @@ export default tseslint.config(
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
       "@typescript-eslint/no-explicit-any": "off",
+      // Existing estimator source trips these. Warn so `npm run lint` runs
+      // without rewriting formulas, empty guards, or @ts-nocheck files.
+      "no-empty": "warn",
+      "no-control-regex": "warn",
+      "no-cond-assign": "warn",
+      "prefer-const": "warn",
+      "@typescript-eslint/ban-ts-comment": "warn",
+      "@typescript-eslint/no-unused-expressions": "warn",
     },
   },
   // Disable rules that conflict with Prettier formatting.

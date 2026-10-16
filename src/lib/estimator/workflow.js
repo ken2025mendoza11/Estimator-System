@@ -58,10 +58,8 @@ export function addDaysLocal(days, timeZone = "Asia/Taipei") {
   return `${yy}-${mm}-${dd}`;
 }
 
-export function uid(prefix) {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 6)}`;
+export function uid(_prefix) {
+  return crypto.randomUUID();
 }
 
 export function timelineEntry({
@@ -98,17 +96,31 @@ export function pushNotice(list, notice) {
   ].slice(0, 80);
 }
 
-export function unreadNotices(list, user) {
-  return (list || []).filter(
-    (n) =>
-      !n.read &&
-      (!n.to || n.to === user || n.to === '*' || (n.toRole && n.toRole))
-  );
+export function noticeVisible(notice, user, level) {
+  if (!notice) return false;
+  const to = notice.to == null || String(notice.to).trim() === '' ? '*' : String(notice.to);
+  const role = String(notice.toRole || '').trim().toLowerCase();
+  if (to !== '*') return to === user;
+  if (role) return noticeRoleMatches(level, role);
+  return true;
 }
 
-export function markNoticesRead(list, user) {
+function noticeRoleMatches(level, role) {
+  const lvl = String(level || '').toLowerCase();
+  if (lvl === 'admin') return true;
+  if (role === 'staff') return true;
+  if (role === 'lead') return lvl === 'lead' || lvl === 'head';
+  if (role === 'head') return lvl === 'head';
+  return lvl === role;
+}
+
+export function unreadNotices(list, user, level) {
+  return (list || []).filter((n) => !n.read && noticeVisible(n, user, level));
+}
+
+export function markNoticesRead(list, user, level) {
   return (list || []).map((n) =>
-    !n.to || n.to === user || n.to === '*' ? { ...n, read: true } : n
+    noticeVisible(n, user, level) ? { ...n, read: true } : n
   );
 }
 
@@ -138,9 +150,10 @@ export function normalizeFlow(steps) {
   return list;
 }
 
-export function startApproval(steps, actor) {
+export function startApproval(steps, actor, userId = '') {
   const flow = normalizeFlow(steps);
   const startIndex = flow.length > 1 ? 1 : 0;
+  const signerId = userId || '';
   return {
     status: 'in-progress',
     currentIndex: startIndex,
@@ -150,9 +163,11 @@ export function startApproval(steps, actor) {
       by: i < startIndex ? actor : '',
       at: i < startIndex ? nowIso() : '',
       remarks: '',
+      ...(i < startIndex && signerId ? { byUserId: signerId } : {}),
     })),
     startedAt: nowIso(),
     startedBy: actor || '',
+    ...(signerId ? { startedByUserId: signerId } : {}),
   };
 }
 
@@ -192,7 +207,47 @@ export function canActOnStep(step, level) {
   return level === step.role;
 }
 
-export function applyApprovalDecision(approval, { actor, level, decision, remarks }) {
+function personKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function samePerson(a, b) {
+  const left = personKey(a);
+  const right = personKey(b);
+  return !!left && left === right;
+}
+
+const SIGN_OFF = new Set(['accept', 'approved', 'reject', 'rejected', 'return', 'returned']);
+
+function approvalSodReason(approval, { actor, decision, createdBy, submittedBy }) {
+  if (!SIGN_OFF.has(String(decision || '').toLowerCase())) return '';
+  const owners = [createdBy, submittedBy, approval?.startedBy, approval?.createdBy, approval?.submittedBy];
+  const first = approval?.steps?.[0];
+  if (first && personKey(first.decision) === 'prepared') owners.push(first.by);
+  if (owners.some((name) => samePerson(name, actor))) {
+    return 'You cannot approve, sign, or return a document you created or submitted.';
+  }
+  const index = approval.currentIndex;
+  const prior = (approval.steps || []).some((step, i) => {
+    if (i === index) return false;
+    if (!step?.decision || !step?.by) return false;
+    return samePerson(step.by, actor);
+  });
+  if (prior) return 'You already signed a step on this document.';
+  return '';
+}
+
+export function applyApprovalDecision(approval, input = {}) {
+  const {
+    actor,
+    level,
+    decision,
+    remarks,
+    createdBy,
+    submittedBy,
+    byUserId,
+    actedByUserId,
+  } = input || {};
   if (!approval || approval.status !== 'in-progress') {
     return { ok: false, reason: 'No in-progress approval.' };
   }
@@ -200,17 +255,21 @@ export function applyApprovalDecision(approval, { actor, level, decision, remark
   if (!canActOnStep(step, level)) {
     return { ok: false, reason: `This step is for ${step?.role || 'an approver'}.` };
   }
-  const steps = approval.steps.map((s, i) =>
-    i === approval.currentIndex
-      ? {
-          ...s,
-          decision,
-          by: actor,
-          at: nowIso(),
-          remarks: remarks || '',
-        }
-      : s
-  );
+  const sod = approvalSodReason(approval, { actor, decision, createdBy, submittedBy });
+  if (sod) return { ok: false, reason: sod };
+  const steps = approval.steps.map((s, i) => {
+    if (i !== approval.currentIndex) return s;
+    const signed = {
+      ...s,
+      decision,
+      by: actor,
+      at: nowIso(),
+      remarks: remarks || '',
+    };
+    if (byUserId) signed.byUserId = byUserId;
+    if (actedByUserId) signed.actedByUserId = actedByUserId;
+    return signed;
+  });
   if (decision === 'reject') {
     return {
       ok: true,
@@ -248,6 +307,38 @@ export function nextRevLabel(current) {
   const m = String(current || '').match(/(\d+)/);
   if (m) return String(Number(m[1]) + 1);
   return '1';
+}
+
+/** Next printed CE revision. Blank, 0, and dotted rates stay at 01. */
+export function nextCeRevision(current) {
+  const s = String(current || "").trim();
+  if (!s || s === "0" || s === "00" || /^\d+\.\d+$/.test(s)) return "01";
+  const m = s.match(/(\d+)\s*$/);
+  const n = m ? parseInt(m[1], 10) : 0;
+  return String((n || 0) + 1).padStart(2, "0");
+}
+
+/** Next revision number already used by a document family, padded to 2 digits. */
+export function nextRevisionNo(baseNo, ceList, documents) {
+  let max = 0;
+  const take = (raw) => {
+    const s = String(raw || "").trim();
+    if (!s || s === "0" || s === "00" || /^\d+\.\d+$/.test(s)) return;
+    const m = s.match(/(\d+)\s*$/);
+    if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
+  };
+  (ceList || []).forEach((ce) => {
+    const doc = documents?.[ce.id] || {};
+    const docNo = doc.projectInfo?.docNo || "";
+    const id = ce.id || "";
+    if (docNo === baseNo || id === baseNo || id.startsWith(`${baseNo}-R`)) {
+      take(doc.projectInfo?.revNo);
+      const tagged = id.match(/-R(\d+)/);
+      if (tagged) take(tagged[1]);
+    }
+  });
+  take(documents?.[baseNo]?.projectInfo?.revNo);
+  return String(max + 1).padStart(2, "0");
 }
 
 export function liveCeForRce(ceList, rceId) {

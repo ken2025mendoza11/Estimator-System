@@ -788,7 +788,7 @@ export function InspectionFormView({ initial, onBack, onSave }) {
             const reader = new FileReader();
             reader.onload = () =>
               resolve({
-                id: `ph-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                id: crypto.randomUUID(),
                 name: file.name,
                 type: file.type,
                 dataUrl: String(reader.result || ''),

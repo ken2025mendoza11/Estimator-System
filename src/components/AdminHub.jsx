@@ -233,8 +233,8 @@ export function interpolateDocTokens(template, vars) {
   });
 }
 
-function uid(prefix) {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 6)}`;
+function uid(_prefix) {
+  return crypto.randomUUID();
 }
 
 export function AdminHub({ config, onChange }) {

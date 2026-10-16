@@ -6,6 +6,9 @@ declare function CostEstimatorApp(props: {
   onPersist?: (workspace: WorkspacePayload) => void;
   saveState?: "idle" | "saving" | "saved" | "error";
   currentUserName?: string;
+  accountUserId?: string;
+  accountRole?: "admin" | "head" | "lead" | "staff";
+  accountName?: string;
 }): JSX.Element;
 
 export default CostEstimatorApp;
