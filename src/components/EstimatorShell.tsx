@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useCurrentUser } from "@/lib/auth/use-current-user";
+import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import type { MasterlistState, SaveState, WorkspacePayload } from "@/lib/estimator/defaults";
 import { defaultWorkspace, jsonSafe } from "@/lib/estimator/defaults";
 import {
@@ -8,7 +8,8 @@ import {
 } from "@/lib/estimator/supabase-workspace";
 import { docKey, WorkspaceSaveError, type RevisionMap } from "@/lib/estimator/workspace-docs";
 import { loadAccountAccess, type AccountAccess } from "@/lib/supabase/account-role";
-import { supabase } from "@/lib/supabase/client";
+import { supabaseConfigError } from "@/lib/supabase/client";
+import { ensureSupabaseAccess } from "@/lib/supabase/session";
 import CostEstimatorApp from "@/components/CostEstimatorApp";
 
 const BACKUP_KEY = "estimator-workspace-backup";
@@ -97,12 +98,14 @@ function keepUploaded(primary: WorkspacePayload, secondary: WorkspacePayload | n
 }
 
 export function EstimatorShell() {
-  const currentUser = useCurrentUser();
+  const { user: currentUser, isPending } = useCurrentUserState();
   const [account, setAccount] = useState<AccountAccess>({
     userId: "",
     role: "staff",
     name: "",
   });
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspacePayload>(
     () => readBackup()?.payload || defaultWorkspace(),
   );
@@ -151,7 +154,7 @@ export function EstimatorShell() {
       if (saveBlocked.current) {
         setSaveState("error");
         setSaveNotice(
-          "The database is missing the document-save update. Run supabase/0003_document_safety.sql in the Supabase SQL editor. Your changes are still here.",
+          "The database is missing the document-save update. Run supabase/apply-v2.sql in the Supabase SQL editor. Your changes are still here.",
         );
         return;
       }
@@ -199,24 +202,35 @@ export function EstimatorShell() {
     }, 80);
   }, [noteFailure]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const pull = () => {
-      loadAccountAccess().then((row) => {
-        if (!cancelled) setAccount(row);
-      });
-    };
-    pull();
-    const { data } = supabase.auth.onAuthStateChange(() => {
-      pull();
-    });
-    return () => {
-      cancelled = true;
-      data.subscription.unsubscribe();
-    };
-  }, []);
+  const signedInId = currentUser?.id ?? "";
+  const signedInName = currentUser?.displayName || currentUser?.primaryEmail || "";
 
   useEffect(() => {
+    if (supabaseConfigError || isPending || !signedInId) return;
+    let cancelled = false;
+    ensureSupabaseAccess()
+      .then(() => loadAccountAccess({ name: signedInName }))
+      .then((row) => {
+        if (cancelled) return;
+        setAccount(row);
+        setSessionError(null);
+        setSessionReady(true);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSessionReady(false);
+        setSessionError(
+          err instanceof Error ? err.message : "Could not open the database session.",
+        );
+        setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedInId, signedInName, isPending]);
+
+  useEffect(() => {
+    if (!sessionReady) return;
     let cancelled = false;
     loadWorkspaceFromSupabase()
       .then((loaded) => {
@@ -269,7 +283,7 @@ export function EstimatorShell() {
     return () => {
       cancelled = true;
     };
-  }, [write]);
+  }, [write, sessionReady]);
 
   const persist = useCallback(
     (next: WorkspacePayload) => {
@@ -362,6 +376,18 @@ export function EstimatorShell() {
       })
       .catch((err) => noteFailure(err, body));
   }, [noteFailure]);
+
+  if (supabaseConfigError || sessionError || (!isPending && !currentUser)) {
+    const message =
+      supabaseConfigError ||
+      sessionError ||
+      "Sign in to open the estimator.";
+    return (
+      <div className="ce-app" style={{ padding: "2rem", maxWidth: "40rem" }}>
+        <p className="wiz-hint">{message}</p>
+      </div>
+    );
+  }
 
   if (!ready) {
     return (

@@ -1,4 +1,6 @@
-import { supabase } from "./client";
+import { readSupabaseIdentity } from "./access-token";
+import { supabase, supabaseConfigError } from "./client";
+import { ensureSupabaseAccess } from "./session";
 
 export type AccountAccess = {
   userId: string;
@@ -6,25 +8,57 @@ export type AccountAccess = {
   name: string;
 };
 
-const LEVELS = new Set(["admin", "head", "lead", "staff"]);
+const LEVELS = ["admin", "head", "lead", "staff"] as const;
 
 const EMPTY: AccountAccess = { userId: "", role: "staff", name: "" };
 
-/** Role comes from profiles (server-side). A missing or unknown role is staff. */
-export async function loadAccountAccess(): Promise<AccountAccess> {
+type RoleRow = { role?: string | null; email?: string | null };
+
+function pickRole(rows: RoleRow[]): AccountAccess["role"] {
+  const found = new Set(rows.map((row) => String(row.role || "").toLowerCase()));
+  for (const level of LEVELS) {
+    if (found.has(level)) return level;
+  }
+  return "staff";
+}
+
+function missingTable(message: string): boolean {
+  return /app_user_roles|schema cache|does not exist|could not find/i.test(message);
+}
+
+/**
+ * Role comes from app_user_roles, keyed by the stable user id or email.
+ * Before that table exists, everyone is staff and the rest of the app still loads.
+ */
+export async function loadAccountAccess(hint?: { name?: string }): Promise<AccountAccess> {
+  if (supabaseConfigError) return EMPTY;
   try {
-    const { data } = await supabase.auth.getSession();
-    const user = data.session?.user;
-    if (!user) return EMPTY;
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role, display_name, email")
-      .eq("id", user.id)
+    await ensureSupabaseAccess();
+    const identity = readSupabaseIdentity();
+    if (!identity) return EMPTY;
+    const name = String(hint?.name || identity.email || "").trim();
+    const byKey = await supabase
+      .from("app_user_roles")
+      .select("role, email")
+      .eq("user_key", identity.userKey)
       .maybeSingle();
-    const raw = String(profile?.role || "").toLowerCase();
-    const role = LEVELS.has(raw) ? (raw as AccountAccess["role"]) : "staff";
-    const name = String(profile?.display_name || user.email || "").trim();
-    return { userId: user.id, role, name };
+    if (byKey.error) {
+      if (missingTable(byKey.error.message)) {
+        return { userId: identity.userKey, role: "staff", name };
+      }
+      return { userId: identity.userKey, role: "staff", name };
+    }
+    const rows: RoleRow[] = byKey.data ? [byKey.data] : [];
+    const email = identity.email?.trim();
+    if (email && !/[,()]/.test(email)) {
+      const byEmail = await supabase
+        .from("app_user_roles")
+        .select("role, email")
+        .ilike("email", email)
+        .limit(5);
+      if (!byEmail.error && byEmail.data) rows.push(...byEmail.data);
+    }
+    return { userId: identity.userKey, role: pickRole(rows), name };
   } catch {
     return EMPTY;
   }

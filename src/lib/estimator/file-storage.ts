@@ -1,5 +1,6 @@
 import type { Json } from "./defaults";
 import { supabase } from "@/lib/supabase/client";
+import { ensureSupabaseAccess } from "@/lib/supabase/session";
 
 export const FILE_BUCKET = "estimator-files";
 
@@ -115,6 +116,7 @@ export async function uploadDataUrl(
   const existing = typeof file.storagePath === "string" ? file.storagePath : "";
   if (existing && !existing.startsWith("data:")) return existing;
   const path = `${kind}/${docId}/${storageId(file)}`;
+  await ensureSupabaseAccess();
   const { blob, mime } = dataUrlToBlob(dataUrl);
   const { error } = await supabase.storage.from(FILE_BUCKET).upload(path, blob, {
     contentType: String(file.type || mime || "application/octet-stream"),
@@ -125,6 +127,7 @@ export async function uploadDataUrl(
 }
 
 export async function downloadDataUrl(path: string): Promise<string> {
+  await ensureSupabaseAccess();
   const { data, error } = await supabase.storage.from(FILE_BUCKET).download(path);
   if (error || !data) {
     throw new Error(error?.message || "Attachment is missing from storage.");

@@ -1,4 +1,5 @@
 import { supabase, COMPANY_WORKSPACE_ID } from "@/lib/supabase/client";
+import { ensureSupabaseAccess } from "@/lib/supabase/session";
 import {
   defaultWorkspace,
   emptyMasterlist,
@@ -194,7 +195,7 @@ function explain(error: { message?: string; code?: string } | null): Error {
   const message = error?.message || "The save failed.";
   if (/workspace_docs|save_workspace_doc|schema cache|estimator-files/i.test(message)) {
     return new Error(
-      "The database is missing the document-save update. Run supabase/0003_document_safety.sql in the Supabase SQL editor. Your changes are still here.",
+      "The database is missing the document-save update. Run supabase/apply-v2.sql in the Supabase SQL editor. Your changes are still here.",
     );
   }
   const text = /your changes are still here/i.test(message)
@@ -648,7 +649,26 @@ async function fillPool(list: unknown, pool: Array<Record<string, unknown>>): Pr
   return next;
 }
 
+async function idsMarkedDeleted(table: "cost_estimates" | "rce_requests"): Promise<Set<string>> {
+  const res = await supabase.from(table).select("id, deleted_at").not("deleted_at", "is", null);
+  if (res.error) return new Set();
+  const ids = new Set<string>();
+  for (const row of res.data || []) {
+    const id = String((row as { id?: unknown }).id || "");
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function withoutDeleted<T>(rows: T[] | undefined, hidden: Set<string>): T[] {
+  return (rows || []).filter((row) => {
+    const id = String((row as { id?: unknown })?.id || "");
+    return !id || !hidden.has(id);
+  });
+}
+
 export async function loadWorkspaceFromSupabase(): Promise<LoadResult> {
+  await ensureSupabaseAccess();
   const warnings: string[] = [];
   const blobResult = await supabase
     .from("estimator_workspace")
@@ -730,14 +750,34 @@ export async function loadWorkspaceFromSupabase(): Promise<LoadResult> {
   }
   const hasRceRevision = Object.keys(revisions).some((key) => key.startsWith("rce:"));
   if (!workspace.rceList.length && !hasRceRevision && !marker.docs) {
-    const { data: rces, error } = await supabase.from("rce_requests").select("id, payload");
+    const first = await supabase.from("rce_requests").select("id, payload, deleted_at");
+    const fallback =
+      first.error && /deleted_at/i.test(first.error.message)
+        ? await supabase.from("rce_requests").select("id, payload")
+        : first;
+    const { data: rces, error } = fallback;
     if (error) warnings.push(error.message);
     else if (rces?.length) {
-      workspace.rceList = rces.map((row) => {
+      workspace.rceList = rces
+        .filter((row) => !(row as { deleted_at?: string | null }).deleted_at)
+        .map((row) => {
         const payload = asRecord(row.payload);
         return { ...payload, id: String(payload.id || row.id) } as WorkspacePayload["rceList"][number];
       });
     }
+  }
+
+  const hiddenCe = await idsMarkedDeleted("cost_estimates");
+  const hiddenRce = await idsMarkedDeleted("rce_requests");
+  if (hiddenCe.size || hiddenRce.size) {
+    workspace = {
+      ...workspace,
+      ceList: withoutDeleted(workspace.ceList, hiddenCe),
+      rceList: withoutDeleted(workspace.rceList, hiddenRce),
+      documents: Object.fromEntries(
+        Object.entries(workspace.documents || {}).filter(([id]) => !hiddenCe.has(id)),
+      ),
+    };
   }
 
   const fileErrors = await rehydrateWorkspace(workspace);
@@ -961,6 +1001,7 @@ export async function saveWorkspaceToSupabase(
   payload: WorkspacePayload,
   options: SaveOptions,
 ): Promise<RevisionMap> {
+  await ensureSupabaseAccess();
   const revisions: RevisionMap = { ...(options?.revisions || {}) };
   const force = new Set(options?.force || []);
   const hold = new Set<string>();
