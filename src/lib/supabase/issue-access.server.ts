@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { SignJWT } from "jose";
 import { getSessionUser } from "@/lib/auth/verify.server";
+import { emailAllowed, NOT_ALLOWED_MESSAGE, parseAllowlist } from "./email-allowlist";
 
 /** Fixed UUID v5 namespace for this app. Do not change it — user keys must stay stable. */
 const USER_NAMESPACE = "c1e0a7e0-7b1a-4e3a-9c2d-5f6a7b8c9d0e";
@@ -41,6 +42,14 @@ export async function issueSupabaseAccess(
   const userId = sessionUser?.id || fallbackUserId;
   const email =
     sessionUser?.email ?? (userId === "dev-user" ? "dev@example.com" : null);
+  const allowlist = parseAllowlist(process.env.ESTIMATOR_ALLOWED_EMAILS);
+  if (allowlist.length === 0) {
+    console.warn(
+      "[supabase] ESTIMATOR_ALLOWED_EMAILS is empty. Every signed-in account can get a Supabase token.",
+    );
+  } else if (!emailAllowed(email, allowlist)) {
+    throw new Error(NOT_ALLOWED_MESSAGE);
+  }
   const userKey = stableUserUuid(userId);
   const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_SECONDS;
   const issuer = process.env.VITE_SUPABASE_URL?.trim() || "supabase";
