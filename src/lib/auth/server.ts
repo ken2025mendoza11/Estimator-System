@@ -40,6 +40,7 @@ import { emailAndPasswordEnabled } from "./email-password";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
+import { resolveAuthMode } from "./auth-mode";
 import {
   GROK_ISSUER_DEFAULT,
   PREVIEW_ALLOWED_HOSTS,
@@ -81,9 +82,23 @@ const grokIssuer = env("GROK_AUTH_ISSUER") ?? GROK_ISSUER_DEFAULT;
 const grokClientId = env("GROK_AUTH_CLIENT_ID") ?? PREVIEW_CLIENT_ID;
 const grokClientSecret = env("GROK_AUTH_CLIENT_SECRET") ?? PREVIEW_CLIENT_SECRET;
 
+// Which provider this server offers: Grok broker (per-app vars, or the sandbox
+// preview fallback), better-auth's built-in Google (GOOGLE_CLIENT_ID/SECRET,
+// when Grok vars are absent, e.g. Vercel), or none. See `./auth-mode`.
+const authMode = resolveAuthMode(process.env);
+/** Friendly message when a deployed server is missing auth settings (or null). */
+export const authSetupError = authMode.setupError;
+if (authSetupError) console.error(`[auth] ${authSetupError}`);
+
+const googleClientId = env("GOOGLE_CLIENT_ID");
+const googleClientSecret = env("GOOGLE_CLIENT_SECRET");
+const googleConfigured = authMode.mode === "google";
+
 /** True when federated sign-in is active (real auth is enforced). */
 export const authConfigured =
-  !authDisabled && Boolean(grokClientId && grokClientSecret);
+  !authDisabled &&
+  (googleConfigured ||
+    (authMode.mode === "grok" && Boolean(grokClientId && grokClientSecret)));
 
 // This app's own Better Auth origin. When deployed the deployer injects the
 // public URL. In the sandbox live preview there's no fixed URL (each preview gets
@@ -150,7 +165,7 @@ export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
 
 // Built separately so the `betterAuth({...})` call stays easy to edit without
 // breaking brackets (models often trip on the conditional plugin spread).
-const grokOAuthPlugin = authConfigured
+const grokOAuthPlugin = authConfigured && authMode.mode === "grok"
   ? genericOAuth({
       config: GROK_PROVIDERS.map(({ providerId, idp }) => ({
         providerId,
@@ -176,8 +191,25 @@ export const auth = betterAuth({
   baseURL,
   // Deployed apps inject BETTER_AUTH_SECRET. Preview: process-stable secret on
   // globalThis so HMR doesn't invalidate PGLite-backed sessions (see above).
+  // Deployed without BETTER_AUTH_SECRET: `authSetupError` is set, logged above,
+  // and /api/auth/* answers 503 (see routes/api/auth/$.ts), so the stand-in
+  // per-process secret below never signs a real deployed session.
   secret: env("BETTER_AUTH_SECRET") ?? previewAuthSecret(),
   database,
+
+  // Built-in Google sign-in, only when Grok broker vars are absent.
+  // Callback: <BETTER_AUTH_URL>/api/auth/callback/google
+  ...(googleConfigured
+    ? {
+        socialProviders: {
+          google: {
+            clientId: googleClientId as string,
+            clientSecret: googleClientSecret as string,
+            prompt: "select_account" as const,
+          },
+        },
+      }
+    : {}),
 
   // CSRF / origin check for credentialed auth POSTs (email sign-up/sign-in, …).
   // See `trustedOrigins` construction above — must cover live preview hosts AND
@@ -196,6 +228,7 @@ export const auth = betterAuth({
       enabled: true,
       trustedProviders: [
         ...GROK_PROVIDERS.map((p) => p.providerId),
+        "google",
         GATE_PROVIDER_ID,
       ],
       // X's synthetic email is never "verified", so don't gate linking on the

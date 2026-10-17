@@ -2,7 +2,8 @@
 /**
  * Deploy-time database migrator (node-postgres, `pg`).
  *
- * Runs during `npm run build` — on every Vercel deploy — applying pending files
+ * Runs via `npm run db:migrate` (or during `npm run build` only when
+ * AUTH_MIGRATE_ON_BUILD=1), applying pending files
  * in ../migrations to DATABASE_URL. Each file is applied in one transaction and
  * recorded in a `_migrations` table, so it runs once and is safe to re-run.
  *
@@ -19,6 +20,17 @@ import pg from "pg";
 import { pendingMigrations } from "./migration-plan.mjs";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+// `npm run build` calls this with --on-build. Builds never touch a database
+// unless AUTH_MIGRATE_ON_BUILD=1 is set explicitly; run `npm run db:migrate`
+// by hand otherwise. Migrations are idempotent (tracked in `_migrations`).
+if (process.argv.includes("--on-build") && process.env.AUTH_MIGRATE_ON_BUILD !== "1") {
+  console.log(
+    "[migrate] build: skipping database migrations (set AUTH_MIGRATE_ON_BUILD=1 to run them during build, or run `npm run db:migrate`).",
+  );
+  process.exit(0);
+}
+
 if (!databaseUrl) {
   console.log(
     "[migrate] DATABASE_URL not set — skipping (the PGLite fallback migrates itself).",

@@ -1,11 +1,18 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
-import { GROK_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
+import { useState } from "react";
+import { authEnabled, signIn } from "@/lib/auth/client";
+import { getSignInOptions } from "@/lib/auth/sign-in-options";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 
-export const Route = createFileRoute("/login")({ component: Login });
+export const Route = createFileRoute("/login")({
+  loader: () => getSignInOptions(),
+  component: Login,
+});
 
 function Login() {
   const { user, isPending } = useCurrentUserState();
+  const { providers, setupError } = Route.useLoaderData();
+  const [signInError, setSignInError] = useState<string | null>(null);
   if (isPending) {
     return (
       <main className="ce-app ce-login">
@@ -27,18 +34,29 @@ function Login() {
           Your cost estimates, masterlist, and RCE requests save to your account
           automatically.
         </p>
-        {authEnabled ? (
+        {setupError ? (
+          <p className="ce-login-copy" role="alert">{setupError}</p>
+        ) : authEnabled && providers.length > 0 ? (
           <div className="ce-login-actions">
-            {GROK_PROVIDERS.map((p) => (
+            {providers.map((p) => (
               <button
                 key={p.providerId}
                 type="button"
                 className="ce-login-btn"
-                onClick={() => signIn(p.providerId, { callbackURL: "/" })}
+                onClick={() => {
+                  setSignInError(null);
+                  signIn(p.providerId, { callbackURL: "/", errorCallbackURL: "/login" }).catch(
+                    (err: unknown) =>
+                      setSignInError(err instanceof Error ? err.message : "Sign-in failed"),
+                  );
+                }}
               >
                 Continue with {p.label}
               </button>
             ))}
+            {signInError ? (
+              <p className="ce-login-copy" role="alert">{signInError}</p>
+            ) : null}
           </div>
         ) : (
           <p className="ce-login-copy">Sign-in is disabled.</p>

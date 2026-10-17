@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Navigate } from "@tanstack/react-router";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import type { MasterlistState, SaveState, WorkspacePayload } from "@/lib/estimator/defaults";
 import { defaultWorkspace, jsonSafe } from "@/lib/estimator/defaults";
@@ -376,6 +377,10 @@ export function EstimatorShell() {
       })
       .catch((err) => noteFailure(err, body));
   }, [noteFailure]);
+
+  if (!supabaseConfigError && !sessionError && !isPending && !currentUser) {
+    return <Navigate to="/login" />;
+  }
 
   if (supabaseConfigError || sessionError || (!isPending && !currentUser)) {
     const message =
