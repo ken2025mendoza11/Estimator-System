@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useMemo, useRef, useState } from 'react';
+import { todayLocal } from "../lib/estimator/workflow";
 import {
   Plus,
   Trash2,
@@ -667,7 +668,7 @@ function emptyOif() {
   return {
     id: '',
     oifNo: '',
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocal(),
     projectDescription: '',
     rfqNo: '',
     customerName: '',
@@ -787,7 +788,7 @@ export function InspectionFormView({ initial, onBack, onSave }) {
             const reader = new FileReader();
             reader.onload = () =>
               resolve({
-                id: `ph-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                id: crypto.randomUUID(),
                 name: file.name,
                 type: file.type,
                 dataUrl: String(reader.result || ''),

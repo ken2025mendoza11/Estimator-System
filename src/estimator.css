@@ -1056,3 +1056,75 @@
 .mon-file-block { margin-bottom: 1rem; }
 .mon-file-block h4 { margin: 0 0 0.4rem; font-size: 0.8rem; letter-spacing: 0.02em; }
 .mon-preview-panel .ce-attach-card { background: #fff; }
+
+/* data-entry helpers (new classes only; mobile rules stay inside @media) */
+.ce-editor-root { padding-bottom: 3.6rem; }
+.ce-sticky-totals {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  align-items: baseline;
+  background: var(--ink);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+}
+.ce-sticky-totals b { font-family: var(--font-mono); font-weight: 600; }
+.ce-sticky-net { margin-left: auto; font-size: 0.92rem; }
+td.ce-cell-missing { background: #fff5f5; box-shadow: inset 0 0 0 1px #b42318; }
+td.ce-cell-missing .ce-grid-input { background: #fff5f5; }
+td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
+  content: attr(data-miss);
+  display: block;
+  color: #b42318;
+  font-size: 0.62rem;
+  line-height: 1.15;
+  padding: 0 0.35rem 0.18rem;
+}
+
+.rce-tri { display: inline-flex; border: 1px solid var(--border); border-radius: 0.4rem; overflow: hidden; }
+.rce-tri-btn { border: none; background: #fff; color: var(--ink); cursor: pointer; padding: 0.28rem 0.55rem; font-size: 0.75rem; font-weight: 650; }
+.rce-tri-btn + .rce-tri-btn { border-left: 1px solid var(--border); }
+.rce-tri-btn.is-on { background: var(--ink); color: #fff; }
+.rce-tri-btn:disabled { cursor: default; opacity: 0.7; }
+.rce-invalid { outline: 1px solid #b42318; border-color: #b42318 !important; background: #fff5f5; }
+.rce-field-error { color: #b42318; font-size: 0.72rem; font-weight: 600; }
+.rce-date-quick { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+
+.ce-line-pick { position: relative; min-width: 0; }
+.ce-line-pick .ce-grid-input, .ce-line-pick .ce-input { width: 100%; }
+.ce-line-pick-menu { z-index: 80; background: #fff; border: 1px solid var(--ink); max-height: 220px; overflow: auto; box-shadow: 0 8px 18px #0000001f; }
+.ce-line-pick-opt { display: flex; justify-content: space-between; gap: 0.6rem; width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--border); padding: 0.4rem 0.5rem; font: inherit; cursor: pointer; }
+.ce-line-pick-opt.is-on, .ce-line-pick-opt:hover { background: #f6f4ee; }
+.ce-crew-add { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: flex-end; padding: 0.45rem 0.75rem 0.2rem; }
+.ce-crew-add label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.72rem; color: var(--ink-soft); min-width: 0; }
+.ce-crew-add label:first-child { flex: 1; min-width: 12rem; }
+
+.oif-inline { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.oif-caption { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 0; background: #fffffff2; }
+.oif-photo { flex-direction: column; padding-bottom: 2.2rem; }
+.oif-mat-row { display: grid; grid-template-columns: 1fr 5.5rem; gap: 0.4rem; margin: 0.35rem 0; }
+.oif-checkline { display: grid; grid-template-columns: 1fr auto minmax(8rem, 14rem); gap: 0.45rem; align-items: center; margin: 0.35rem 0; }
+.oif-tpl { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0 0.6rem; }
+.oif-tpl .ce-input { max-width: 16rem; }
+.oif-sign { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+.oif-sign-pad { width: min(100%, 520px); height: 140px; border: 1px solid var(--ink); background: #fff; touch-action: none; cursor: crosshair; }
+
+@media (max-width: 720px) {
+  .oif-wrap { max-width: 100%; overflow-x: hidden; padding-left: 0.4rem; padding-right: 0.4rem; }
+  .oif-sheet, .oif-headgrid, .oif-split, .oif-photos, .oif-block { max-width: 100%; }
+  .oif-headgrid, .oif-headgrid > label, .oif-split, .oif-photo-grid, .oif-checks-grid, .oif-meas-row { grid-template-columns: 1fr; }
+  .oif-headgrid > label { border-right: none; }
+  .oif-wrap .ce-input, .oif-wrap textarea, .oif-wrap select { width: 100%; max-width: 100%; }
+  .oif-wrap .ce-btn-ghost, .oif-wrap .ce-btn-primary, .oif-wrap .oif-photo button { min-height: 44px; }
+  .oif-wrap .dash-header { flex-direction: column; align-items: stretch; }
+  .oif-checks { gap: 0.6rem; }
+  .oif-check { min-height: 44px; }
+  .oif-checkline, .oif-mat-row { grid-template-columns: 1fr; }
+  .oif-inline .ce-btn-ghost, .oif-sign .ce-btn-ghost { min-height: 44px; }
+}

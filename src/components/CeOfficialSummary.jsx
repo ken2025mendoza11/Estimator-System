@@ -19,15 +19,15 @@ export const DEFAULT_SUMMARY_NOTES = [
   },
 ];
 
-export function stripHonorific(name) {
+export function stripHonorific(/** @type {any} */ name) {
   return String(name || "").replace(/^(mr|mrs|ms|miss)\.?\s+/i, "").trim();
 }
 
-export function honorificName(name, users) {
+export function honorificName(/** @type {any} */ name, /** @type {any} */ users) {
   const raw = stripHonorific(name);
   if (!raw) return "";
-  const user = (users || []).find(
-    (u) => String(u?.name || "").trim().toLowerCase() === raw.toLowerCase(),
+  const user = (/** @type {any[]} */ (users || [])).find(
+    (/** @type {any} */ u) => String(u?.name || "").trim().toLowerCase() === raw.toLowerCase(),
   );
   const g = String(user?.gender || "").toLowerCase();
   if (g === "female" || g === "f" || g === "mrs") return `Mrs. ${raw}`;
@@ -35,26 +35,27 @@ export function honorificName(name, users) {
   return raw;
 }
 
-export function splitStamp(stamp) {
+export function splitStamp(/** @type {any} */ stamp) {
   const s = String(stamp || "").trim();
   const m = s.match(/^(.*?)(?:\s+)(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?\s*$/);
   if (!m) return { who: "", date: "", time: "" };
   return { who: stripHonorific(m[1]), date: m[2], time: m[3] };
 }
 
-export function notesForTemplates(allNotes, workTypes) {
+export function notesForTemplates(/** @type {any} */ allNotes, /** @type {any} */ workTypes) {
   const notes = Array.isArray(allNotes) && allNotes.length ? allNotes : DEFAULT_SUMMARY_NOTES;
-  const types = (workTypes || []).filter(Boolean);
-  return notes.filter((n) => {
+  const types = (/** @type {any[]} */ (workTypes || [])).filter(Boolean);
+  return notes.filter((/** @type {any} */ n) => {
     const t = n.templates || [];
     if (!t.length || t.includes('all')) return true;
     if (!types.length) return true;
-    return t.some((x) => types.includes(x));
+    return t.some((/** @type {any} */ x) => types.includes(x));
   });
 }
 
+/** @param {{ value?: any, onChange?: any }} _props */
 function FitNote({ value, onChange }) {
-  const ref = useRef(null);
+  const ref = useRef(/** @type {HTMLTextAreaElement | null} */ (null));
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -72,11 +73,12 @@ function FitNote({ value, onChange }) {
   );
 }
 
+/** @param {{ title?: any, notes?: any, onChange?: any, bare?: any, compact?: any, numbered?: any, icons?: any }} _props */
 export function SheetNotesEditor({ title = 'Notes', notes, onChange, bare = false, compact = false, numbered = false, icons = false }) {
   const list = Array.isArray(notes) ? notes : [];
   const [draft, setDraft] = useState('');
 
-  function commit(next) {
+  function commit(/** @type {any} */ next) {
     onChange?.(next);
   }
 
@@ -93,7 +95,7 @@ export function SheetNotesEditor({ title = 'Notes', notes, onChange, bare = fals
             {bare ? (
               <FitNote
                 value={n.text}
-                onChange={(text) => commit(list.map((row, idx) => (idx === i ? { ...row, text } : row)))}
+                onChange={(/** @type {any} */ text) => commit(list.map((row, idx) => (idx === i ? { ...row, text } : row)))}
               />
             ) : (
               <textarea
@@ -130,7 +132,7 @@ export function SheetNotesEditor({ title = 'Notes', notes, onChange, bare = fals
           title="Add note"
           disabled={!draft.trim()}
           onClick={() => {
-            commit([...list, { id: `note-${Date.now()}`, text: draft.trim() }]);
+            commit([...list, { id: crypto.randomUUID(), text: draft.trim() }]);
             setDraft('');
           }}
         >
@@ -141,7 +143,19 @@ export function SheetNotesEditor({ title = 'Notes', notes, onChange, bare = fals
   );
 }
 
-function SignSlot({ label, name, title, stamp, nameKey, titleKey, onProject, users }) {
+/**
+ * @param {{
+ *   label?: any,
+ *   name?: any,
+ *   title?: any,
+ *   stamp?: any,
+ *   nameKey?: any,
+ *   titleKey?: any,
+ *   onProject?: any,
+ *   users?: any,
+ * }} [_props]
+ */
+function SignSlot({ label, name, title, stamp, nameKey, titleKey, onProject, users } = {}) {
   if (!label) return <div className="ce-sign-slot" />;
   const shown = honorificName(name, users);
   const parts = splitStamp(stamp);
@@ -175,6 +189,7 @@ function SignSlot({ label, name, title, stamp, nameKey, titleKey, onProject, use
   );
 }
 
+/** @param {{ value?: any, onCommit?: any }} _props */
 function MoneyCell({ value, onCommit }) {
   const [text, setText] = useState(String(value ?? ''));
   useEffect(() => {
@@ -190,6 +205,7 @@ function MoneyCell({ value, onCommit }) {
   );
 }
 
+/** @param {any} _props */
 export default function CeOfficialSummary({
   rows,
   includes,
@@ -218,7 +234,7 @@ export default function CeOfficialSummary({
   useEffect(() => {
     setPicked(thirdShow?.keys || []);
   }, [keySig]);
-  const set = (key) => (value) => onProject?.({ [key]: value });
+  const set = (/** @type {any} */ key) => (/** @type {any} */ value) => onProject?.({ [key]: value });
   const lines = thirdLines || [];
 
   return (
@@ -338,7 +354,7 @@ export default function CeOfficialSummary({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.map((/** @type {any} */ row) => (
             <tr
               key={row.key}
               className={
@@ -353,7 +369,7 @@ export default function CeOfficialSummary({
               <td className="ce-official-amt">
                 {row.group || row.breakdown
                   ? row.display
-                  : <MoneyCell value={row.display} onCommit={(raw) => onAmount?.(row, raw)} />}
+                  : <MoneyCell value={row.display} onCommit={(/** @type {any} */ raw) => onAmount?.(row, raw)} />}
               </td>
               <td className="ce-official-actions">
                 {row.third ? (
@@ -389,7 +405,7 @@ export default function CeOfficialSummary({
               <td></td>
             </tr>
           ) : null}
-          {includes.map((row, index) => (
+          {includes.map((/** @type {any} */ row, /** @type {any} */ index) => (
             <tr key={row.id} className="ce-official-custom">
               <td></td>
               <td>{`${row.num || `F.${index + 1}`} ${row.label}`}</td>
@@ -448,7 +464,7 @@ export default function CeOfficialSummary({
             <button
               type="button"
               className="ce-btn-ghost ce-btn-sm"
-              onClick={() => onThirdShow?.({ mode: 'all', keys: lines.map((l) => l.key) })}
+              onClick={() => onThirdShow?.({ mode: 'all', keys: lines.map((/** @type {any} */ l) => l.key) })}
             >
               Show all
             </button>
@@ -470,13 +486,13 @@ export default function CeOfficialSummary({
           </div>
           {lines.length ? (
             <div className="ce-tp-list">
-              {lines.map((line) => (
+              {lines.map((/** @type {any} */ line) => (
                 <label key={line.key}>
                   <input
                     type="checkbox"
                     checked={picked.includes(line.key)}
-                    onChange={(e) => setPicked((cur) => (
-                      e.target.checked ? [...cur, line.key] : cur.filter((key) => key !== line.key)
+                    onChange={(e) => setPicked((/** @type {any} */ cur) => (
+                      e.target.checked ? [...cur, line.key] : cur.filter((/** @type {any} */ key) => key !== line.key)
                     ))}
                   />
                   {line.description}
@@ -494,7 +510,7 @@ export default function CeOfficialSummary({
       <div className="ce-official-include">
         <select className="ce-input" value={pick} onChange={(e) => setPick(e.target.value)}>
           <option value="">Include another cost…</option>
-          {includeCatalog.map((c) => (
+          {includeCatalog.map((/** @type {any} */ c) => (
             <option key={c.key} value={c.key}>
               {c.label}
             </option>

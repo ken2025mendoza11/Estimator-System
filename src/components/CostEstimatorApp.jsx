@@ -17,6 +17,8 @@ import Papa from "papaparse";
 import CeOfficialSummary, { notesForTemplates, SheetNotesEditor, honorificName } from "./CeOfficialSummary";
 import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
 import { SystemManual } from "./SystemManual";
+import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
+import { checksumTotal, commercialNet, miscAmount, qtyUnitAmount, roundMoney } from "../lib/estimator/money";
 
 //#region src/components/CostEstimatorApp.jsx
 function interpolateDocTokens(template, vars) {
@@ -1979,7 +1981,7 @@ function emptyOif() {
 	return {
 		id: "",
 		oifNo: "",
-		date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+		date: todayLocal(),
 		projectDescription: "",
 		rfqNo: "",
 		customerName: "",
@@ -2046,31 +2048,121 @@ function emptyOif() {
 		materialsRight: ""
 	};
 }
-function InspectionFormView({ initial, onBack, onSave }) {
+function oifDraftKey(initial) {
+	return `oif-draft:${initial?.id || initial?.oifNo || "new"}`;
+}
+function SignaturePad({ value, onChange }) {
+	const ref = useRef(null);
+	const drawing = useRef(false);
+	useEffect(() => {
+		const canvas = ref.current;
+		if (!canvas) return;
+		const ctx = canvas.getContext("2d");
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		ctx.lineWidth = 1.6;
+		ctx.lineCap = "round";
+		ctx.strokeStyle = "#18170f";
+		if (!value) return;
+		const img = new Image();
+		img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+		img.src = value;
+	}, [value]);
+	function point(e) {
+		const canvas = ref.current;
+		const rect = canvas.getBoundingClientRect();
+		const src = e.touches ? e.touches[0] : e;
+		return {
+			x: (src.clientX - rect.left) * (canvas.width / rect.width),
+			y: (src.clientY - rect.top) * (canvas.height / rect.height)
+		};
+	}
+	function start(e) {
+		e.preventDefault();
+		const canvas = ref.current;
+		const ctx = canvas.getContext("2d");
+		const p = point(e);
+		drawing.current = true;
+		ctx.beginPath();
+		ctx.moveTo(p.x, p.y);
+	}
+	function move(e) {
+		if (!drawing.current) return;
+		e.preventDefault();
+		const p = point(e);
+		const ctx = ref.current.getContext("2d");
+		ctx.lineTo(p.x, p.y);
+		ctx.stroke();
+	}
+	function end() {
+		if (!drawing.current) return;
+		drawing.current = false;
+		onChange?.(ref.current.toDataURL("image/png"));
+	}
+	return /* @__PURE__ */ jsxs("div", {
+		className: "oif-sign",
+		children: [/* @__PURE__ */ jsx("canvas", {
+			ref,
+			width: 520,
+			height: 140,
+			className: "oif-sign-pad",
+			onPointerDown: start,
+			onPointerMove: move,
+			onPointerUp: end,
+			onPointerLeave: end
+		}), /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			onClick: () => onChange?.(""),
+			children: "Clear signature"
+		})]
+	});
+}
+function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "", checkTemplates = [], onCheckTemplatesChange }) {
+	const clients = useMasterlist().clients || [];
+	const roles = useMasterlist().BOL || [];
+	const materialsList = useMasterlist().BOCM || [];
 	const [form, setForm] = useState(() => ({
 		...emptyOif(),
+		onsiteInspector: currentUserName || "",
 		...initial || {}
 	}));
+	const [oifErrors, setOifErrors] = useState([]);
+	const limits = useLimitNotes();
+	const templates = Array.isArray(checkTemplates) ? checkTemplates : [];
+	const [tplOpen, setTplOpen] = useState(false);
+	const [tplType, setTplType] = useState("");
+	const [tplItem, setTplItem] = useState("");
+	const [draftNote, setDraftNote] = useState("");
+	const [voiceOn, setVoiceOn] = useState(false);
 	const photoRef = useRef(null);
+	const cameraRef = useRef(null);
+	const voiceRef = useRef(null);
+	const canEditTemplates = actingLevel === "admin";
+	const speechOk = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 	function patch(partial) {
 		setForm((prev) => ({
 			...prev,
 			...partial
 		}));
 	}
-	async function addPhotos(e) {
+	async function addPhotos(e, section) {
 		const files = Array.from(e.target.files || []);
 		e.target.value = "";
 		const records = await Promise.all(files.map((file) => new Promise((resolve) => {
 			const reader = new FileReader();
 			reader.onload = () => resolve({
-				id: `ph-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+				id: crypto.randomUUID(),
 				name: file.name,
 				type: file.type,
-				dataUrl: String(reader.result || "")
+				dataUrl: String(reader.result || ""),
+				section: section || "Photos"
 			});
 			reader.readAsDataURL(file);
 		})));
+		const start = (form.photos || []).length;
+		records.forEach((rec, index) => {
+			rec.caption = `Photo ${start + index + 1} – ${rec.section}`;
+		});
 		patch({ photos: [...form.photos || [], ...records] });
 	}
 	function updateManpower(id, field, value) {
@@ -2079,6 +2171,175 @@ function InspectionFormView({ initial, onBack, onSave }) {
 			[field]: value
 		} : row) });
 	}
+	const clientOptions = clientsRecentFirst(clients, (priorReports || []).map((r) => ({ customer: r.customerName })));
+	function onCustomerName(value) {
+		const needle = value.trim().toLowerCase();
+		const match = clientOptions.find((c) => (c.fullName || "").toLowerCase() === needle || (c.clientCode || "").toLowerCase() === needle);
+		const contact = clientContactText(match);
+		patch({
+			customerName: value,
+			customerAddress: match && match.address ? match.address : form.customerAddress || "",
+			contactNo: contact || form.contactNo || ""
+		});
+	}
+	function saveReport(opts = {}) {
+		const misses = [];
+		if (!String(form.customerName || "").trim()) misses.push("Customer is required.");
+		if (!String(form.projectDescription || "").trim()) misses.push("Project description is required.");
+		if (!form.date) misses.push("Date is required.");
+		if (!String(form.onsiteInspector || "").trim()) misses.push("Inspector is required.");
+		const svc = form.serviceType || {};
+		if (!Object.entries(svc).some(([key, value]) => key !== "othersText" && value)) misses.push("Tick at least one service type.");
+		setOifErrors(misses);
+		if (misses.length) {
+			requestAnimationFrame(() => {
+				document.querySelector(".oif-sheet .rce-field-error, .oif-sheet .rce-invalid")?.scrollIntoView({
+					behavior: "smooth",
+					block: "center"
+				});
+			});
+			return;
+		}
+		try {
+			localStorage.removeItem(oifDraftKey(initial));
+		} catch {}
+		onSave(form, opts);
+	}
+	function copyFromLast() {
+		const tag = String(form.equipmentTag || "").trim().toLowerCase();
+		if (!tag) return;
+		const last = [...priorReports || []].reverse().find((r) => String(r.equipmentTag || "").trim().toLowerCase() === tag && (r.id || r.oifNo) !== (form.id || form.oifNo));
+		if (!last) {
+			window.alert("No earlier report for this equipment tag.");
+			return;
+		}
+		patch({
+			customerName: last.customerName || form.customerName,
+			customerAddress: last.customerAddress || form.customerAddress || "",
+			customerRep: last.customerRep || "",
+			contactNo: last.contactNo || "",
+			projectDescription: last.projectDescription || "",
+			rfqNo: last.rfqNo || "",
+			activity: last.activity || form.activity,
+			serviceType: last.serviceType || form.serviceType,
+			quantity: last.quantity || "",
+			length: last.length || "",
+			width: last.width || "",
+			thk: last.thk || "",
+			outsideDia: last.outsideDia || "",
+			insideDia: last.insideDia || "",
+			dimLength: last.dimLength || "",
+			weightTons: !!last.weightTons,
+			weightKg: !!last.weightKg,
+			weightValue: last.weightValue || "",
+			drawingAvailable: last.drawingAvailable || "",
+			duration: last.duration || "",
+			manpower: last.manpower || form.manpower,
+			scopeLeft: last.scopeLeft || "",
+			scopeRight: last.scopeRight || "",
+			materialsLeft: last.materialsLeft || "",
+			materialsRight: last.materialsRight || "",
+			materialRows: last.materialRows || [],
+			equipmentType: last.equipmentType || form.equipmentType,
+			checklist: (last.checklist || []).map((row) => ({
+				...row,
+				result: "",
+				remark: ""
+			})),
+			checklistLoadedFor: last.equipmentType || form.equipmentType || ""
+		});
+	}
+	function addMaterialRow() {
+		patch({ materialRows: [...form.materialRows || [], {
+			id: `mat-${Date.now()}`,
+			description: "",
+			qty: ""
+		}] });
+	}
+	function startVoice() {
+		const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+		if (!SR) return;
+		const rec = voiceRef.current || new SR();
+		voiceRef.current = rec;
+		rec.lang = "en-PH";
+		rec.onresult = (event) => {
+			const text = Array.from(event.results).map((row) => row[0]?.transcript || "").join(" ");
+			setForm((prev) => ({
+				...prev,
+				remarks: `${prev.remarks || ""} ${text}`.trim()
+			}));
+		};
+		rec.onend = () => setVoiceOn(false);
+		setVoiceOn(true);
+		rec.start();
+	}
+	function saveTemplateItem() {
+		const type = tplType.trim();
+		const text = tplItem.trim();
+		if (!type || !text || !onCheckTemplatesChange) return;
+		const next = templates.map((row) => ({ ...row, items: [...row.items || []] }));
+		let tpl = next.find((row) => String(row.equipmentType || "").toLowerCase() === type.toLowerCase());
+		if (!tpl) {
+			tpl = { id: `otpl-${Date.now()}`, equipmentType: type, items: [] };
+			next.push(tpl);
+		}
+		tpl.items.push({ id: `oti-${Date.now()}`, text });
+		onCheckTemplatesChange(next);
+		setTplItem("");
+	}
+	useEffect(() => {
+		try {
+			const raw = localStorage.getItem(oifDraftKey(initial));
+			if (!raw) return;
+			const saved = JSON.parse(raw);
+			if (!saved?.form) return;
+			const fresh = !initial?.customerName && !initial?.projectDescription && !(initial?.checklist || []).length;
+			if (!fresh) return;
+			const { photos, inspectorSignature, ...textFields } = saved.form || {};
+			setForm((prev) => ({
+				...prev,
+				...textFields,
+				oifNo: prev.oifNo || textFields.oifNo,
+				date: textFields.date || prev.date,
+				onsiteInspector: textFields.onsiteInspector || prev.onsiteInspector
+			}));
+			setDraftNote("Draft restored");
+		} catch {}
+	}, []);
+	useEffect(() => {
+		const timer = setInterval(() => {
+			const key = oifDraftKey(initial);
+			try {
+				const { photos, inspectorSignature, ...textFields } = form || {};
+				localStorage.setItem(key, JSON.stringify({ form: textFields, at: Date.now() }));
+				setDraftNote("Saved");
+			} catch {}
+		}, 4000);
+		return () => clearInterval(timer);
+	}, [form]);
+	useEffect(() => {
+		const type = String(form.equipmentType || "").trim();
+		if (!type || form.checklistLoadedFor === type) return;
+		const tpl = templates.find((row) => String(row.equipmentType || "").trim().toLowerCase() === type.toLowerCase());
+		if (!tpl) return;
+		if ((form.checklist || []).some((row) => row.result)) {
+			if (!window.confirm(`Load the “${tpl.equipmentType}” checklist? Current answers will be replaced.`)) {
+				setForm((prev) => ({ ...prev, checklistLoadedFor: type }));
+				return;
+			}
+		}
+		setForm((prev) => ({
+			...prev,
+			checklistLoadedFor: type,
+			checklist: (tpl.items || []).map((it, index) => ({
+				id: it.id || `ck-${index}`,
+				text: it.text,
+				result: "",
+				remark: ""
+			}))
+		}));
+	}, [form.equipmentType, templates]);
+	const oifBad = (test) => oifErrors.some(test);
 	function addManpower() {
 		patch({ manpower: [...form.manpower, {
 			id: `m-${Date.now()}`,
@@ -2086,6 +2347,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 			pax: ""
 		}] });
 	}
+	const lastTag = String(form.equipmentTag || "").trim();
 	return /* @__PURE__ */ jsxs("div", {
 		className: "oif-wrap",
 		children: [/* @__PURE__ */ jsxs("div", {
@@ -2106,9 +2368,34 @@ function InspectionFormView({ initial, onBack, onSave }) {
 				}), /* @__PURE__ */ jsx("button", {
 					type: "button",
 					className: "ce-btn-primary",
-					onClick: () => onSave(form),
+					onClick: () => saveReport(),
 					children: "Save report"
-				})]
+				}), /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: () => saveReport({ andNew: true }),
+					children: "Save & new for same client"
+				}), /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: () => {
+						const hasPeople = (form.manpower || []).some((row) => String(row.designation || "").trim());
+						const hasMats = (form.materialRows || []).some((row) => String(row.description || "").trim());
+						if (!hasPeople && !hasMats) {
+							window.alert("Add a role or a material row first. The free-text material boxes stay on the report and are not sent as priced lines.");
+							return;
+						}
+						const id = onSendToCe?.(form);
+						if (id) {
+							patch({ ceId: id });
+							setDraftNote(`Lines added on ${id}`);
+						}
+					},
+					children: "Send to CE"
+				}), draftNote ? /* @__PURE__ */ jsx("span", {
+					className: "ce-save-note",
+					children: draftNote
+				}) : null]
 			})]
 		}), /* @__PURE__ */ jsxs("div", {
 			className: "oif-sheet",
@@ -2120,8 +2407,13 @@ function InspectionFormView({ initial, onBack, onSave }) {
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-headgrid",
 					children: [
+						oifErrors.length ? /* @__PURE__ */ jsx("div", {
+							className: "oif-span2 rce-field-error",
+							style: { padding: "0.45rem 0.7rem" },
+							children: oifErrors.join(" ")
+						}) : null,
 						/* @__PURE__ */ jsxs("label", { children: ["DATE", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
+							className: "ce-input" + (oifBad((m) => m.startsWith("Date")) ? " rce-invalid" : ""),
 							type: "date",
 							value: form.date,
 							onChange: (e) => patch({ date: e.target.value })
@@ -2134,7 +2426,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 						/* @__PURE__ */ jsxs("label", {
 							className: "oif-span2",
 							children: ["PROJECT DESCRIPTION", /* @__PURE__ */ jsx("input", {
-								className: "ce-input",
+								className: "ce-input" + (oifBad((m) => m.startsWith("Project")) ? " rce-invalid" : ""),
 								value: form.projectDescription,
 								onChange: (e) => patch({ projectDescription: e.target.value })
 							})]
@@ -2145,9 +2437,43 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							onChange: (e) => patch({ rfqNo: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CUSTOMER NAME", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
+							className: "ce-input" + (oifBad((m) => m.startsWith("Customer")) ? " rce-invalid" : ""),
+							list: "oif-client-list",
 							value: form.customerName,
-							onChange: (e) => patch({ customerName: e.target.value })
+							onChange: (e) => onCustomerName(e.target.value)
+						}), /* @__PURE__ */ jsx("datalist", {
+							id: "oif-client-list",
+							children: clientOptions.map((c) => /* @__PURE__ */ jsx("option", {
+								value: c.fullName || c.clientCode || "",
+								children: [c.clientCode, c.fullName].filter(Boolean).join(" — ")
+							}, c.id))
+						})] }),
+						/* @__PURE__ */ jsxs("label", { children: ["ADDRESS", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							value: form.customerAddress || "",
+							onChange: (e) => patch({ customerAddress: e.target.value })
+						})] }),
+						/* @__PURE__ */ jsxs("label", { children: ["EQUIPMENT TYPE", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							list: "oif-equip-list",
+							value: form.equipmentType || "",
+							onChange: (e) => patch({ equipmentType: e.target.value })
+						}), /* @__PURE__ */ jsx("datalist", {
+							id: "oif-equip-list",
+							children: templates.map((tpl) => /* @__PURE__ */ jsx("option", { value: tpl.equipmentType }, tpl.id))
+						})] }),
+						/* @__PURE__ */ jsxs("label", { children: ["EQUIPMENT / TAG", /* @__PURE__ */ jsxs("span", {
+							className: "oif-inline",
+							children: [/* @__PURE__ */ jsx("input", {
+								className: "ce-input",
+								value: form.equipmentTag || "",
+								onChange: (e) => patch({ equipmentTag: e.target.value })
+							}), lastTag ? /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: copyFromLast,
+								children: "Copy from last report"
+							}) : null]
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CUSTOMER REPRESENTATIVE", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
@@ -2155,7 +2481,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							onChange: (e) => patch({ customerRep: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["ONSITE INSPECTOR", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
+							className: "ce-input" + (oifBad((m) => m.startsWith("Inspector")) ? " rce-invalid" : ""),
 							value: form.onsiteInspector,
 							onChange: (e) => patch({ onsiteInspector: e.target.value })
 						})] }),
@@ -2179,6 +2505,12 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							onClick: () => photoRef.current?.click(),
 							children: "Upload photos"
 						}),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => cameraRef.current?.click(),
+							children: "Take photo"
+						}),
 						/* @__PURE__ */ jsx("input", {
 							ref: photoRef,
 							type: "file",
@@ -2187,14 +2519,26 @@ function InspectionFormView({ initial, onBack, onSave }) {
 							hidden: true,
 							onChange: addPhotos
 						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: cameraRef,
+							type: "file",
+							accept: "image/*",
+							capture: "environment",
+							hidden: true,
+							onChange: addPhotos
+						}),
 						/* @__PURE__ */ jsx("div", {
 							className: "oif-photo-grid",
-							children: (form.photos || []).map((p) => /* @__PURE__ */ jsxs("div", {
+							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
 								className: "oif-photo",
 								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
 									src: p.dataUrl,
-									alt: p.name
-								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("button", {
+									alt: p.caption || p.name
+								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input oif-caption",
+									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
+									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
+								}), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
 									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
@@ -2238,7 +2582,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								children: "Service type"
 							}),
 							/* @__PURE__ */ jsx("div", {
-								className: "oif-checks oif-checks-grid",
+								className: "oif-checks oif-checks-grid" + (oifBad((m) => /service type/i.test(m)) ? " rce-invalid" : ""),
 								children: [
 									["repair", "Repair"],
 									["electrical", "Electrical"],
@@ -2281,6 +2625,7 @@ function InspectionFormView({ initial, onBack, onSave }) {
 						children: [
 							/* @__PURE__ */ jsxs("label", { children: ["A. Quantity", /* @__PURE__ */ jsx("input", {
 								className: "ce-input",
+								inputMode: "decimal",
 								value: form.quantity,
 								onChange: (e) => patch({ quantity: e.target.value })
 							})] }),
@@ -2293,18 +2638,21 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								children: [
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Length",
 										value: form.length,
 										onChange: (e) => patch({ length: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Width",
 										value: form.width,
 										onChange: (e) => patch({ width: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Thk",
 										value: form.thk,
 										onChange: (e) => patch({ thk: e.target.value })
@@ -2316,18 +2664,21 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								children: [
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Outside Ø",
 										value: form.outsideDia,
 										onChange: (e) => patch({ outsideDia: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Inside Ø",
 										value: form.insideDia,
 										onChange: (e) => patch({ insideDia: e.target.value })
 									}),
 									/* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										placeholder: "Length",
 										value: form.dimLength,
 										onChange: (e) => patch({ dimLength: e.target.value })
@@ -2411,23 +2762,31 @@ function InspectionFormView({ initial, onBack, onSave }) {
 								const a = form.manpower[i * 2];
 								const b = form.manpower[i * 2 + 1];
 								return /* @__PURE__ */ jsxs("tr", { children: [
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
 										value: a.designation,
-										onChange: (e) => updateManpower(a.id, "designation", e.target.value)
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(a.id, "designation", value)
 									}) }),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										value: a.pax,
 										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
 										value: b.designation,
-										onChange: (e) => updateManpower(b.id, "designation", e.target.value)
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(b.id, "designation", value)
 									}) : null }),
 									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx("input", {
 										className: "ce-input",
+										inputMode: "decimal",
 										value: b.pax,
 										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
 									}) : null })
@@ -2477,6 +2836,115 @@ function InspectionFormView({ initial, onBack, onSave }) {
 						rows: 10,
 						value: form.materialsRight,
 						onChange: (e) => patch({ materialsRight: e.target.value })
+					})]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [/* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Materials from the list"
+					}), (form.materialRows || []).map((row) => /* @__PURE__ */ jsxs("div", {
+						className: "oif-mat-row",
+						children: [/* @__PURE__ */ jsx(LineNamePicker, {
+							category: "BOCM",
+							list: materialsList,
+							value: row.description,
+							placeholder: "Material or free text",
+							inputClass: "ce-input",
+							onChange: (value) => patch({ materialRows: (form.materialRows || []).map((item) => item.id === row.id ? { ...item, description: value } : item) })
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							inputMode: "decimal",
+							placeholder: "Qty",
+							value: row.qty,
+							onChange: (e) => {
+								if (limits.reject(row.id, "qty", e.target.value)) return;
+								patch({ materialRows: (form.materialRows || []).map((item) => item.id === row.id ? { ...item, qty: e.target.value } : item) });
+							}
+						}), limitNote(limits.fieldNote(row.id, "qty"))]
+					}, row.id)), /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: addMaterialRow,
+						children: "Add material"
+					})]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [/* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: "Equipment checklist"
+						}), canEditTemplates ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => setTplOpen((v) => !v),
+							children: "Checklist templates"
+						}) : null]
+					}), tplOpen && /* @__PURE__ */ jsxs("div", {
+						className: "oif-tpl",
+						children: [/* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Equipment type",
+							value: tplType,
+							onChange: (e) => setTplType(e.target.value)
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Check item",
+							value: tplItem,
+							onChange: (e) => setTplItem(e.target.value)
+						}), /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: saveTemplateItem,
+							children: "Add item"
+						}), templates.map((tpl) => /* @__PURE__ */ jsx("p", {
+							className: "ce-empty",
+							children: `${tpl.equipmentType}: ${(tpl.items || []).map((it) => it.text).join("; ") || "—"}`
+						}, tpl.id))]
+					}), (form.checklist || []).map((row) => /* @__PURE__ */ jsxs("div", {
+						className: "oif-checkline",
+						children: [/* @__PURE__ */ jsx("span", { children: row.text }), /* @__PURE__ */ jsx("span", {
+							className: "rce-tri",
+							children: ["Pass", "Fail", "N/A"].map((value) => /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "rce-tri-btn" + (row.result === value ? " is-on" : ""),
+								onClick: () => patch({ checklist: form.checklist.map((item) => item.id === row.id ? { ...item, result: item.result === value ? "" : value } : item) }),
+								children: value
+							}, value))
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Remark",
+							value: row.remark || "",
+							onChange: (e) => patch({ checklist: form.checklist.map((item) => item.id === row.id ? { ...item, remark: e.target.value } : item) })
+						})]
+					}, row.id))]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [/* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: "Remarks"
+						}), speechOk ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: startVoice,
+							children: voiceOn ? "Listening…" : "Mic"
+						}) : null]
+					}), /* @__PURE__ */ jsx("textarea", {
+						className: "ce-input ce-notes-box",
+						rows: 4,
+						value: form.remarks || "",
+						onChange: (e) => patch({ remarks: e.target.value })
+					}), /* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Inspector signature"
+					}), /* @__PURE__ */ jsx(SignaturePad, {
+						value: form.inspectorSignature || "",
+						onChange: (inspectorSignature) => patch({ inspectorSignature })
 					})]
 				})
 			]
@@ -2620,13 +3088,6 @@ function userMayReviseEstimate(users, name, level) {
 	if (lvl === "lead" || lvl === "head" || lvl === "admin") return true;
 	const user = (users || []).find((u) => String(u?.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
 	return /sales/i.test(`${user?.department || ""} ${user?.designation || ""}`);
-}
-function nextCeRevision(current) {
-	const s = String(current || "").trim();
-	if (!s || s === "0" || s === "00" || /^\d+\.\d+$/.test(s)) return "01";
-	const m = s.match(/(\d+)\s*$/);
-	const n = m ? parseInt(m[1], 10) : 0;
-	return String((n || 0) + 1).padStart(2, "0");
 }
 function ceFullySigned(doc) {
 	const approval = doc?.approval;
@@ -2822,11 +3283,11 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 			part.push([w.label, it.section || "", i + 1, it.description, it.qty, it.days || 1, fmt(it.unitCost), fmt(itemSubtotal("MISC", it))]);
 		})));
 		if (!part.length) return;
-		const partTotal = tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
+		const partTotal = roundMoney(tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
 			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return s3;
 			return s3 + itemSubtotal("MISC", it);
-		}, 0), 0), 0);
-		miscGrand += partTotal;
+		}, 0), 0), 0));
+		miscGrand = roundMoney(miscGrand + partTotal);
 		miscBlocks.push({
 			banner: `${w.letter}. ${w.full}`,
 			bannerFill: BOL_LIGHT_BLUE,
@@ -3081,27 +3542,6 @@ function sortMonitoringRows(rows, sortBy) {
 		return monPriorityRank(a.priority) - monPriorityRank(b.priority) || String(a.ceDisplay || "").localeCompare(String(b.ceDisplay || ""));
 	});
 	return copy;
-}
-function nextRevisionNo(baseNo, ceList, documents) {
-	let max = 0;
-	const take = (raw) => {
-		const s = String(raw || "").trim();
-		if (!s || s === "0" || s === "00" || /^\d+\.\d+$/.test(s)) return;
-		const m = s.match(/(\d+)\s*$/);
-		if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
-	};
-	(ceList || []).forEach((ce) => {
-		const doc = documents?.[ce.id] || {};
-		const docNo = doc.projectInfo?.docNo || "";
-		const id = ce.id || "";
-		if (docNo === baseNo || id === baseNo || id.startsWith(`${baseNo}-R`)) {
-			take(doc.projectInfo?.revNo);
-			const tagged = id.match(/-R(\d+)/);
-			if (tagged) take(tagged[1]);
-		}
-	});
-	take(documents?.[baseNo]?.projectInfo?.revNo);
-	return String(max + 1).padStart(2, "0");
 }
 function revisionCopyId(baseNo, revNo, ceList) {
 	const ids = new Set((ceList || []).map((ce) => ce.id));
@@ -4074,11 +4514,12 @@ function normalizeAdminConfig(raw) {
 		},
 		masterlistRules: normalizeMasterlistRules(src.masterlistRules),
 		templateFormula: normalizeTemplateFormula(src.templateFormula),
-		boardColors: normalizeBoardColors(src.boardColors)
+		boardColors: normalizeBoardColors(src.boardColors),
+		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : []
 	};
 }
-function uid(prefix) {
-	return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 6)}`;
+function uid(_prefix) {
+	return crypto.randomUUID();
 }
 function TemplateFormulaPanel({ cfg, patch }) {
 	const f = cfg.templateFormula || normalizeTemplateFormula();
@@ -4976,6 +5417,23 @@ function DocumentControlPanel({ cfg, patch }) {
 						})]
 					}),
 					/* @__PURE__ */ jsxs("label", {
+						className: "wiz-field",
+						children: [/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: "Default contingency %"
+						}), /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							type: "number",
+							min: "0",
+							step: "any",
+							value: dc.defaultContingencyPct ?? 0,
+							onChange: (e) => setDc({ defaultContingencyPct: e.target.value === "" ? 0 : Number(e.target.value) })
+						}), /* @__PURE__ */ jsx("span", {
+							className: "wiz-hint",
+							children: "Used only when a new cost estimate is created. Existing estimates keep their own contingency."
+						})]
+					}),
+					/* @__PURE__ */ jsxs("label", {
 						className: "wiz-field wiz-span",
 						children: [/* @__PURE__ */ jsx("span", {
 							className: "ce-field-label",
@@ -5546,11 +6004,17 @@ var NOTICE_EVENTS = {
 function nowIso() {
 	return (/* @__PURE__ */ new Date()).toISOString();
 }
-function uid2(prefix) {
-	return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+function uid2(_prefix) {
+	return crypto.randomUUID();
+}
+let sessionUserIdForWrites = "";
+let actedByUserIdForWrites = "";
+function noteSecurityActor(sessionUserId, actedByUserId) {
+	sessionUserIdForWrites = sessionUserId || "";
+	actedByUserIdForWrites = actedByUserId || "";
 }
 function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "" }) {
-	return {
+	const entry = {
 		id: uid2("tl"),
 		at: nowIso(),
 		who: who || "",
@@ -5559,6 +6023,8 @@ function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "" })
 		snapshot,
 		rev: rev || ""
 	};
+	if (actedByUserIdForWrites) entry.actedByUserId = actedByUserIdForWrites;
+	return entry;
 }
 function appendTimeline(list, entry) {
 	return [...list || [], entry];
@@ -5568,17 +6034,9 @@ function pushNotice(list, notice) {
 		id: uid2("nt"),
 		at: nowIso(),
 		read: false,
-		...notice
+		...notice,
+		...(actedByUserIdForWrites ? { actedByUserId: actedByUserIdForWrites } : {})
 	}, ...list || []].slice(0, 80);
-}
-function unreadNotices(list, user) {
-	return (list || []).filter((n) => !n.read && (!n.to || n.to === user || n.to === "*" || n.toRole && n.toRole));
-}
-function markNoticesRead(list, user) {
-	return (list || []).map((n) => !n.to || n.to === user || n.to === "*" ? {
-		...n,
-		read: true
-	} : n);
 }
 function userLevel(adminConfig, name) {
 	return (adminConfig?.users || []).find((u) => u.name === name || u.email === name || u.name && name && u.name.toLowerCase() === String(name).toLowerCase())?.level || "staff";
@@ -5595,6 +6053,7 @@ function normalizeFlow(steps) {
 function startApproval(steps, actor) {
 	const flow = normalizeFlow(steps);
 	const startIndex = flow.length > 1 ? 1 : 0;
+	const signerId = sessionUserIdForWrites || "";
 	return {
 		status: "in-progress",
 		currentIndex: startIndex,
@@ -5603,10 +6062,12 @@ function startApproval(steps, actor) {
 			decision: i < startIndex ? "prepared" : "",
 			by: i < startIndex ? actor : "",
 			at: i < startIndex ? nowIso() : "",
-			remarks: ""
+			remarks: "",
+			...(i < startIndex && signerId ? { byUserId: signerId } : {})
 		})),
 		startedAt: nowIso(),
-		startedBy: actor || ""
+		startedBy: actor || "",
+		...(signerId ? { startedByUserId: signerId } : {})
 	};
 }
 function rceStepTitle(step) {
@@ -5640,57 +6101,6 @@ function canActOnStep(step, level) {
 	if (step.role === "lead") return level === "lead" || level === "head";
 	if (step.role === "head") return level === "head";
 	return level === step.role;
-}
-function applyApprovalDecision(approval, { actor, level, decision, remarks }) {
-	if (!approval || approval.status !== "in-progress") return {
-		ok: false,
-		reason: "No in-progress approval."
-	};
-	const step = currentApprovalStep(approval);
-	if (!canActOnStep(step, level)) return {
-		ok: false,
-		reason: `This step is for ${step?.role || "an approver"}.`
-	};
-	const steps = approval.steps.map((s, i) => i === approval.currentIndex ? {
-		...s,
-		decision,
-		by: actor,
-		at: nowIso(),
-		remarks: remarks || ""
-	} : s);
-	if (decision === "reject") return {
-		ok: true,
-		approval: {
-			...approval,
-			status: "rejected",
-			currentIndex: approval.currentIndex,
-			steps
-		},
-		rejected: true,
-		final: false
-	};
-	if (!!step.isFinal || approval.currentIndex >= steps.length - 1) return {
-		ok: true,
-		approval: {
-			...approval,
-			status: "accepted",
-			currentIndex: approval.currentIndex,
-			steps
-		},
-		rejected: false,
-		final: true
-	};
-	return {
-		ok: true,
-		approval: {
-			...approval,
-			status: "in-progress",
-			currentIndex: approval.currentIndex + 1,
-			steps
-		},
-		rejected: false,
-		final: false
-	};
 }
 function nextRevLabel(current) {
 	const raw = String(current || "0").replace(/^rev\s*/i, "");
@@ -5752,10 +6162,6 @@ function attachmentSourceTag(source, rev) {
 		source: source || "Estimator",
 		tag: `from ${source || "estimator"} Rev ${rev == null || rev === "" ? "0" : String(rev)}`
 	};
-}
-function checksumTotal(n) {
-	const v = Number(n) || 0;
-	return Math.round(v * 100) / 100;
 }
 var SKIP = /* @__PURE__ */ new Set([
 	"no",
@@ -6407,6 +6813,52 @@ var PHP = new Intl.NumberFormat("en-PH", {
 });
 var fmt = (n) => PHP.format(Number.isFinite(n) ? n : 0);
 var num2 = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
+function limitError(field, raw) {
+	const key = String(field || "");
+	const percent = key === "contingencyPct" || key === "discountPct";
+	const money = key === "qty" || key === "days" || key === "rate" || key === "unitCost";
+	if (!percent && !money) return "";
+	const text = String(raw ?? "").trim();
+	if (text === "") return "";
+	const n = Number(text);
+	if (!Number.isFinite(n)) return "";
+	if (percent && (n < 0 || n > 100)) return "Must be between 0 and 100%.";
+	if (money && n < 0) return "Cannot be negative.";
+	return "";
+}
+function withoutBadLimits(patch) {
+	const next = { ...patch || {} };
+	let error = "";
+	Object.keys(next).forEach((key) => {
+		const err = limitError(key, next[key]);
+		if (!err) return;
+		if (!error) error = err;
+		delete next[key];
+	});
+	return { patch: next, error };
+}
+function limitNote(message) {
+	if (!message) return null;
+	return /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: message });
+}
+function useLimitNotes() {
+	const [notes, setNotes] = useState({});
+	const reject = (id, field, value) => {
+		const err = limitError(field, value);
+		const key = `${id}:${field}`;
+		setNotes((prev) => {
+			if (!err && !prev[key]) return prev;
+			const next = { ...prev };
+			if (err) next[key] = err;
+			else delete next[key];
+			return next;
+		});
+		return err;
+	};
+	const fieldNote = (id, field) => notes[`${id}:${field}`] || "";
+	const rowNote = (id) => fieldNote(id, "qty") || fieldNote(id, "days") || fieldNote(id, "rate") || fieldNote(id, "unitCost") || "";
+	return { reject, fieldNote, rowNote };
+}
 var DAY_TYPES = [
 	"Regular",
 	"Sun/Special",
@@ -6511,8 +6963,7 @@ var JOB_STATUSES = [
 	"Cancelled",
 	"Close bid"
 ];
-var _seq = 0;
-var uid3 = (p) => `${p}-${(_seq++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+var uid3 = (p) => p === "mob-custom" ? `mob-custom-${crypto.randomUUID()}` : crypto.randomUUID();
 var FIXED_CATEGORY_KEYS = [
 	"manpower",
 	"equipment",
@@ -6782,17 +7233,17 @@ function calcBOL(item) {
 		perDiemAllow,
 		labor: base + ot,
 		benefits: perDiemAllow,
-		subtotal: base + ot + perDiemAllow
+		subtotal: roundMoney(base + ot + perDiemAllow)
 	};
 }
 var calcBOTE = (i, workType) => {
 	const use = num2(i.qty) * num2(i.days) * num2(i.rate);
-	if (!chargesPower(workType)) return use;
-	return use + boteElectricityCost(i);
+	if (!chargesPower(workType)) return roundMoney(use);
+	return roundMoney(use + boteElectricityCost(i));
 };
-var calcBOCM = (i) => num2(i.qty) * num2(i.unitCost);
-var calcPPE = (i) => num2(i.qty) * num2(i.unitCost);
-var calcMISC = (i) => num2(i.qty) * (num2(i.days) || 1) * num2(i.unitCost);
+var calcBOCM = (i) => qtyUnitAmount(i.qty, i.unitCost);
+var calcPPE = (i) => qtyUnitAmount(i.qty, i.unitCost);
+var calcMISC = (i) => miscAmount(i.qty, i.days, i.unitCost);
 function miscBucket(tasks, section) {
 	let total = 0;
 	const lines = [];
@@ -6810,8 +7261,11 @@ function miscBucket(tasks, section) {
 		});
 	})));
 	return {
-		total,
-		lines
+		total: roundMoney(total),
+		lines: lines.map((l) => ({
+			...l,
+			amount: roundMoney(l.amount)
+		}))
 	};
 }
 function buildOfficialBaseRows(tasks) {
@@ -6949,10 +7403,10 @@ function itemSubtotal(cat, item, workType) {
 	return calcMISC(item);
 }
 function categoryTotal(items, cat, workType) {
-	return (items || []).reduce((s, it) => s + itemSubtotal(cat, it, workType), 0);
+	return roundMoney((items || []).reduce((s, it) => s + itemSubtotal(cat, it, workType), 0));
 }
 function subtaskTotal(subtask2, workType) {
-	return CATS.reduce((s, c) => s + categoryTotal(subtask2.items?.[c] || [], c, workType), 0) + (subtask2.children || []).reduce((s, ch) => s + subtaskTotal(ch, workType), 0);
+	return roundMoney(CATS.reduce((s, c) => s + categoryTotal(subtask2.items?.[c] || [], c, workType), 0) + (subtask2.children || []).reduce((s, ch) => s + subtaskTotal(ch, workType), 0));
 }
 function flattenSubs(task2) {
 	const out = [];
@@ -6974,10 +7428,10 @@ function botePowerOnTask(task2) {
 }
 function taskTotal(task2) {
 	const wt = taskWorkType(task2);
-	return (task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt), 0);
+	return roundMoney((task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt), 0));
 }
 function projectTotal(tasks) {
-	return tasks.reduce((s, t) => s + taskTotal(t), 0);
+	return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
 }
 function bolItem(o) {
 	return {
@@ -7064,12 +7518,16 @@ function emptySummaryTaskFilters() {
 		selectedTaskIds: []
 	};
 }
+function defaultContingencyPct(documentControl) {
+	const n = Number(documentControl?.defaultContingencyPct);
+	return Number.isFinite(n) ? n : 0;
+}
 function buildEmptyProject() {
 	return {
 		meta: {
 			client: "",
 			location: "",
-			date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+			date: todayLocal(),
 			title: "New Cost Estimate",
 			subtitle: ""
 		},
@@ -7147,13 +7605,16 @@ function reducer(state, action) {
 				[action.field]: action.value
 			}
 		};
-		case "PATCH_COMMERCIAL": return {
-			...state,
-			commercial: {
-				...state.commercial || {},
-				...action.patch || {}
-			}
-		};
+		case "PATCH_COMMERCIAL": {
+			const patch = withoutBadLimits(action.patch).patch;
+			return {
+				...state,
+				commercial: {
+					...state.commercial || {},
+					...patch
+				}
+			};
+		}
 		case "SET_ASSUMPTIONS": return {
 			...state,
 			assumptions: action.value || ""
@@ -7487,13 +7948,13 @@ function reducer(state, action) {
 				...s.items,
 				[action.category]: s.items[action.category].map((i) => {
 					if (i.id !== action.itemId) return i;
-					const patch = { ...action.patch };
+					const patch = withoutBadLimits(action.patch).patch;
 					if (i.masterlistId && ("rate" in patch || "unitCost" in patch || "powerKw" in patch || "kwhRate" in patch)) patch.rateOverridden = true;
 					let next = {
 						...i,
 						...patch
 					};
-					if (identityPatch(action.category, action.patch)) {
+					if (identityPatch(action.category, patch)) {
 						const ex = findRateException(state.rateExceptions, action.category, next);
 						if (ex && num2(ex.rate) > 0) next = {
 							...next,
@@ -7501,8 +7962,23 @@ function reducer(state, action) {
 							rateOverridden: true
 						};
 					}
+					if (next.entryGap && !lineGapFields(action.category, next).length) {
+						next = priceFromException(action.category, next, state.rateExceptions);
+						next = { ...next, entryGap: false };
+					}
 					return next;
 				})
+			}
+		})));
+		case "ADD_ITEMS_RAW": return mapTask(state, action.taskId, (t) => mapSubtask(t, action.subtaskId, (s) => ({
+			...s,
+			items: {
+				...s.items,
+				[action.category]: [...s.items[action.category] || [], ...(action.items || []).map((it) => {
+					const field = itemMoneyField(action.category);
+					if (it[field] === "" || it[field] == null) return it;
+					return priceFromException(action.category, it, state.rateExceptions);
+				})]
 			}
 		})));
 		case "SYNC_DATABASE_RATES": {
@@ -7848,6 +8324,16 @@ function collectNotes(tasks) {
 	});
 	return rows;
 }
+function organizeSummaryNotes(tasks) {
+	return collectNotes(tasks).slice().sort((a, b) => {
+		const taskA = String(a.who || "").split(" / ")[0];
+		const taskB = String(b.who || "").split(" / ")[0];
+		const byTask = taskA.localeCompare(taskB, undefined, { sensitivity: "base" });
+		if (byTask) return byTask;
+		if (a.kind !== b.kind) return a.kind === "main" ? -1 : 1;
+		return String(a.who || "").localeCompare(String(b.who || ""), undefined, { sensitivity: "base" }) || String(a.notes || "").localeCompare(String(b.notes || ""), undefined, { sensitivity: "base" });
+	});
+}
 function SummaryNotesBlock({ tasks }) {
 	const noteRows = collectNotes(tasks);
 	return /* @__PURE__ */ jsxs("div", {
@@ -8145,6 +8631,11 @@ function defaultDaysForSubtask(task2, subtask2) {
 	}));
 	if (d < 1) d = num2(task2?.duration) || 1;
 	return d;
+}
+function defaultLabourDays(task2, subtask2) {
+	const job = num2(task2?.duration);
+	if (job > 0) return job;
+	return defaultDaysForSubtask(task2, subtask2);
 }
 function buildCePreflight(tasks, opts = {}) {
 	const zeros = scanCostEstimate(tasks);
@@ -8758,11 +9249,522 @@ function rowDrag(row, category, task2, subtask2, dispatch) {
 		}
 	};
 }
+function lineRowName(category, row) {
+	if (!row) return "";
+	if (category === "BOL") return String(row.role || "").trim();
+	if (category === "PPE") return String(row.item || "").trim();
+	return String(row.description || "").trim();
+}
+function lineRequiredKeys(category) {
+	if (category === "BOL" || category === "BOTE") return [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]];
+	return [["qty", "Qty"], ["unitCost", "Unit cost"]];
+}
+function lineFieldMissing(value) {
+	return value === "" || value == null || !(Number(value) > 0);
+}
+function lineGapFields(category, row) {
+	if (!lineRowName(category, row)) return [];
+	return lineRequiredKeys(category).filter(([key]) => lineFieldMissing(row[key]));
+}
+function lineGapClass(category, row, field) {
+	if (!lineRequiredKeys(category).some(([key]) => key === field)) return "";
+	if (!lineRowName(category, row)) return "";
+	const blank = row[field] === "" || row[field] == null;
+	if (row.isDraft && blank) return "ce-cell-missing";
+	if (row.entryGap && lineFieldMissing(row[field])) return "ce-cell-missing";
+	return "";
+}
+function lineGapNote(category, row, field) {
+	if (!lineGapClass(category, row, field)) return "";
+	const hit = lineRequiredKeys(category).find(([key]) => key === field);
+	return hit ? `Enter ${hit[1]}` : "";
+}
+function blankOrNumber(value) {
+	if (value === "" || value == null) return "";
+	const n = Number(value);
+	return Number.isFinite(n) ? n : "";
+}
+function optionalNumber(value) {
+	const n = Number(value);
+	return Number.isFinite(n) ? n : 0;
+}
+function listEntryGaps(tasks) {
+	const out = [];
+	(tasks || []).forEach((task2) => {
+		flattenSubs(task2).forEach((sub) => {
+			["BOL", "BOTE", "BOCM", "PPE"].forEach((cat) => {
+				(sub.items?.[cat] || []).forEach((it) => {
+					const name = lineRowName(cat, it);
+					if (!name) return;
+					const miss = lineRequiredKeys(cat).filter(([key]) => {
+						const v = it[key];
+						if (v === "" || v == null) return true;
+						return !!it.entryGap && !(Number(v) > 0);
+					});
+					if (!miss.length) return;
+					out.push(`${task2.title || "Task"} / ${sub.title || "Scope"} / ${cat} / ${name} — missing ${miss.map(([, label]) => label).join(", ")}`);
+				});
+			});
+		});
+	});
+	return out;
+}
+function draftLooksEmpty(category, row) {
+	if (lineRowName(category, row)) return false;
+	const extras = {
+		BOL: ["qty", "days", "rate", "otHrs", "perDiem", "allowance"],
+		BOTE: ["qty", "days", "rate", "powerKw", "hoursPerDay", "kwhRate"],
+		BOCM: ["qty", "unit", "unitCost"],
+		PPE: ["qty", "unitCost"]
+	}[category] || [];
+	return extras.every((key) => String(row?.[key] ?? "").trim() === "");
+}
+function lineCellsIn(root) {
+	if (!root?.querySelectorAll) return [];
+	return [...root.querySelectorAll("input, select, textarea")].filter((el) => !el.closest(".ce-grid-del") && !el.disabled);
+}
+function useLineEntry({ category, makeEmpty, taskId, subtaskId, dispatch, toItem, rowsRef }) {
+	const [draftRows, setDraftState] = useState(() => [makeEmpty()]);
+	const draftsRef = useRef(draftRows);
+	const committedRef = useRef(/* @__PURE__ */ new Set());
+	const ctxRef = useRef({});
+	ctxRef.current = {
+		category,
+		makeEmpty,
+		taskId,
+		subtaskId,
+		dispatch,
+		toItem,
+		rowsRef
+	};
+	const setDraftRows = (next) => {
+		const resolved = typeof next === "function" ? next(draftsRef.current) : next;
+		draftsRef.current = resolved;
+		setDraftState(resolved);
+	};
+	const commitNamed = (rows) => {
+		const ctx = ctxRef.current;
+		const named = [];
+		const rest = [];
+		(rows || []).forEach((row) => {
+			if (lineRowName(ctx.category, row) && !committedRef.current.has(row.id)) {
+				committedRef.current.add(row.id);
+				named.push(row);
+			} else if (!committedRef.current.has(row.id)) rest.push(row);
+		});
+		if (named.length) {
+			const complete = [];
+			const incomplete = [];
+			named.forEach((row) => {
+				const item = ctx.toItem(row);
+				if (lineGapFields(ctx.category, row).length) incomplete.push({
+					...item,
+					entryGap: true
+				});
+				else complete.push(item);
+			});
+			if (complete.length) ctx.dispatch({
+				type: "ADD_ITEMS",
+				taskId: ctx.taskId,
+				subtaskId: ctx.subtaskId,
+				category: ctx.category,
+				items: complete
+			});
+			if (incomplete.length) ctx.dispatch({
+				type: "ADD_ITEMS_RAW",
+				taskId: ctx.taskId,
+				subtaskId: ctx.subtaskId,
+				category: ctx.category,
+				items: incomplete
+			});
+		}
+		let next = rest.length ? rest : [ctx.makeEmpty()];
+		if (lineRowName(ctx.category, next[next.length - 1])) next = [...next, ctx.makeEmpty()];
+		draftsRef.current = next;
+		return next;
+	};
+	useEffect(() => () => {
+		commitNamed(draftsRef.current);
+	}, []);
+	const saveDrafts = () => setDraftRows(commitNamed(draftsRef.current));
+	const pasteFields = {
+		BOL: ["role", "dayType", "shift", "qty", "days", "rate", "otHrs", "perDiem", "allowance"],
+		BOTE: ["description", "qty", "days", "rate", "powerKw", "hoursPerDay", "kwhRate"],
+		BOCM: ["description", "qty", "unit", "unitCost"],
+		PPE: ["item", "qty", "unitCost"]
+	};
+	const onTablePaste = (e) => {
+		const text = e.clipboardData?.getData("text/plain") || "";
+		if (!text.includes("\t") && !text.includes("\n")) return;
+		const parsed = Papa.parse(String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim(), {
+			delimiter: "\t",
+			skipEmptyLines: true
+		});
+		const grid = (parsed.data || []).filter((row) => (row || []).some((cell) => String(cell || "").trim()));
+		if (!grid.length) return;
+		e.preventDefault();
+		if (grid.length > 5 && !window.confirm(`Paste ${grid.length} rows into this table?`)) return;
+		const ctx = ctxRef.current;
+		const fields = pasteFields[ctx.category] || [];
+		const made = grid.map((cells) => {
+			const row = ctx.makeEmpty();
+			fields.forEach((field, index) => {
+				if (cells[index] == null) return;
+				const value = String(cells[index]).trim();
+				if (limitError(field, value)) {
+					row.limitError = limitError(field, value);
+					return;
+				}
+				row[field] = value;
+			});
+			return row;
+		}).filter((row) => lineRowName(ctx.category, row));
+		if (!made.length) return;
+		setDraftRows((prev) => {
+			const base = prev.filter((row) => lineRowName(ctx.category, row) || !draftLooksEmpty(ctx.category, { ...row, isDraft: true }));
+			const next = [...base, ...made];
+			if (!next.length || lineRowName(ctx.category, next[next.length - 1])) next.push(ctx.makeEmpty());
+			return next;
+		});
+	};
+	const onTableBlur = (e) => {
+		const rowEl = e.target?.closest?.("tr[data-line-id]");
+		if (!rowEl) return;
+		const nextEl = e.relatedTarget;
+		if (nextEl && rowEl.contains(nextEl)) return;
+		const id = rowEl.getAttribute("data-line-id");
+		const row = draftsRef.current.find((r) => r.id === id);
+		if (!row || !lineRowName(ctxRef.current.category, row)) return;
+		setDraftRows(commitNamed(draftsRef.current));
+		if (nextEl && typeof nextEl.focus === "function") requestAnimationFrame(() => {
+			if (document.contains(nextEl)) nextEl.focus();
+		});
+	};
+	const addAfter = (afterId) => {
+		const fresh = ctxRef.current.makeEmpty();
+		setDraftRows((prev) => {
+			const i = prev.findIndex((r) => r.id === afterId);
+			if (i < 0) return [...prev, fresh];
+			const next = prev.slice();
+			next.splice(i + 1, 0, fresh);
+			return next;
+		});
+		requestAnimationFrame(() => {
+			const el = document.querySelector(`[data-line-id="${fresh.id}"] input, [data-line-id="${fresh.id}"] select`);
+			if (el) el.focus();
+		});
+	};
+	const onTableKeyDown = (e) => {
+		const table = e.currentTarget;
+		const tr = e.target?.closest?.("tr[data-line-id]");
+		if (!tr || !table.contains(tr)) return;
+		const id = tr.getAttribute("data-line-id");
+		const rows = ctxRef.current.rowsRef?.current?.() || [];
+		const row = rows.find((r) => r.id === id) || draftsRef.current.find((r) => r.id === id);
+		const ctx = ctxRef.current;
+		if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "d") {
+			e.preventDefault();
+			if (!row) return;
+			if (row.isDraft) {
+				const copy = {
+					...row,
+					id: uid3("dup")
+				};
+				delete copy.isDraft;
+				setDraftRows((prev) => {
+					const i = prev.findIndex((r) => r.id === row.id);
+					const next = prev.slice();
+					next.splice(i < 0 ? next.length : i + 1, 0, copy);
+					return next;
+				});
+			} else {
+				const item = ctx.toItem(row);
+				const gaps = lineGapFields(ctx.category, row);
+				ctx.dispatch({
+					type: gaps.length ? "ADD_ITEMS_RAW" : "ADD_ITEMS",
+					taskId: ctx.taskId,
+					subtaskId: ctx.subtaskId,
+					category: ctx.category,
+					items: [gaps.length ? {
+						...item,
+						entryGap: true
+					} : item]
+				});
+			}
+			return;
+		}
+		if (e.key === "Delete" && row?.isDraft && draftLooksEmpty(ctx.category, row)) {
+			e.preventDefault();
+			setDraftRows((prev) => {
+				const next = prev.filter((r) => r.id !== row.id);
+				return next.length ? next : [ctx.makeEmpty()];
+			});
+			return;
+		}
+		if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			const rowCells = lineCellsIn(tr);
+			if (!rowCells.length || e.target !== rowCells[rowCells.length - 1]) return;
+			e.preventDefault();
+			const all = [...table.querySelectorAll("tbody tr[data-line-id]")];
+			const idx = all.indexOf(tr);
+			const nextTr = all[idx + 1];
+			if (nextTr) {
+				const el = lineCellsIn(nextTr)[0];
+				if (el) el.focus();
+				return;
+			}
+			addAfter(id);
+			return;
+		}
+		if (e.key === "Tab") {
+			const cells = lineCellsIn(table);
+			const i = cells.indexOf(e.target);
+			if (i < 0) return;
+			if (e.shiftKey) {
+				if (i === 0) return;
+				e.preventDefault();
+				cells[i - 1].focus();
+				return;
+			}
+			if (i < cells.length - 1) {
+				e.preventDefault();
+				cells[i + 1].focus();
+				return;
+			}
+			e.preventDefault();
+			addAfter(id);
+		}
+	};
+	return {
+		draftRows,
+		setDraftRows,
+		onTableBlur,
+		onTableKeyDown,
+		saveDrafts,
+		onTablePaste
+	};
+}
+const CE_RECENT_KEY = "ce-recent-items";
+function readRecentIds(category) {
+	try {
+		const all = JSON.parse(localStorage.getItem(CE_RECENT_KEY) || "{}");
+		return Array.isArray(all[category]) ? all[category] : [];
+	} catch {
+		return [];
+	}
+}
+function rememberRecent(category, id) {
+	if (!id) return;
+	try {
+		const all = JSON.parse(localStorage.getItem(CE_RECENT_KEY) || "{}");
+		const prev = Array.isArray(all[category]) ? all[category].filter((x) => x !== id) : [];
+		all[category] = [id, ...prev].slice(0, 12);
+		localStorage.setItem(CE_RECENT_KEY, JSON.stringify(all));
+	} catch {}
+}
+function masterlistItemUnit(category, it) {
+	if (!it) return "";
+	if (category === "BOL") return it.unit || it.uom || "day";
+	return it.unit || it.uom || "";
+}
+function linePickMatches(category, list, query) {
+	const words = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+	const active = (list || []).filter(masterlistItemActive);
+	const filtered = words.length ? active.filter((it) => {
+		const hay = masterlistItemLabel(category, it).toLowerCase();
+		return words.every((word) => hay.includes(word));
+	}) : active;
+	const rank = new Map(readRecentIds(category).map((id, index) => [id, index]));
+	return filtered.slice().sort((a, b) => {
+		const ra = rank.has(a.id) ? rank.get(a.id) : 999;
+		const rb = rank.has(b.id) ? rank.get(b.id) : 999;
+		if (ra !== rb) return ra - rb;
+		return masterlistItemLabel(category, a).localeCompare(masterlistItemLabel(category, b));
+	}).slice(0, 12);
+}
+function LineNamePicker({ category, list, value, placeholder, onChange, onFocus, inputClass = "ce-grid-input" }) {
+	const [open, setOpen] = useState(false);
+	const [hi, setHi] = useState(0);
+	const wrapRef = useRef(null);
+	const [box, setBox] = useState(null);
+	const options = open ? linePickMatches(category, list, value) : [];
+	useEffect(() => {
+		setHi(0);
+	}, [value, open]);
+	function place() {
+		const rect = wrapRef.current?.getBoundingClientRect();
+		if (!rect) return;
+		setBox({
+			top: rect.bottom,
+			left: rect.left,
+			width: Math.max(rect.width, 260)
+		});
+	}
+	function choose(it) {
+		rememberRecent(category, it.id);
+		onChange(masterlistItemLabel(category, it));
+		setOpen(false);
+	}
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-line-pick",
+		ref: wrapRef,
+		children: [/* @__PURE__ */ jsx("input", {
+			className: inputClass,
+			value: value || "",
+			placeholder,
+			onFocus: () => {
+				setOpen(true);
+				place();
+				onFocus?.();
+			},
+			onChange: (e) => {
+				onChange(e.target.value);
+				setOpen(true);
+				place();
+			},
+			onBlur: () => {
+				setTimeout(() => setOpen(false), 140);
+			},
+			onKeyDown: (e) => {
+				if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !open) {
+					setOpen(true);
+					place();
+					e.preventDefault();
+					e.stopPropagation();
+					return;
+				}
+				if (e.key === "Escape") {
+					setOpen(false);
+					e.stopPropagation();
+					return;
+				}
+				if (!options.length) return;
+				if (e.key === "ArrowDown") {
+					e.preventDefault();
+					e.stopPropagation();
+					setHi((i) => Math.min(options.length - 1, i + 1));
+				} else if (e.key === "ArrowUp") {
+					e.preventDefault();
+					e.stopPropagation();
+					setHi((i) => Math.max(0, i - 1));
+				} else if (e.key === "Enter" && open) {
+					e.preventDefault();
+					e.stopPropagation();
+					choose(options[Math.min(hi, options.length - 1)]);
+				}
+			}
+		}), open && options.length ? /* @__PURE__ */ jsx("div", {
+			className: "ce-line-pick-menu",
+			style: box ? {
+				position: "fixed",
+				top: box.top,
+				left: box.left,
+				width: box.width
+			} : void 0,
+			children: options.map((it, index) => /* @__PURE__ */ jsxs("button", {
+				type: "button",
+				className: "ce-line-pick-opt" + (index === hi ? " is-on" : ""),
+				onMouseDown: (e) => {
+					e.preventDefault();
+					choose(it);
+				},
+				children: [/* @__PURE__ */ jsx("span", { children: masterlistItemLabel(category, it) || "Untitled" }), /* @__PURE__ */ jsx("span", {
+					className: "ce-mono",
+					children: [masterlistItemUnit(category, it), fmt(masterlistItemRate(it))].filter(Boolean).join(" · ")
+				})]
+			}, it.id))
+		}) : null]
+	});
+}
+function CrewQuickAdd({ task: task2, subtask: subtask2, dispatch, list }) {
+	const jobDays = num2(task2?.duration);
+	const [role, setRole] = useState("");
+	const [people, setPeople] = useState("1");
+	const [days, setDays] = useState(jobDays > 0 ? String(jobDays) : "");
+	function addCrew() {
+		const name = String(role || "").trim();
+		if (!name) return;
+		const filled = fillFromMasterlist("BOL", list, name);
+		const dayCount = num2(days) > 0 ? num2(days) : defaultLabourDays(task2, subtask2);
+		dispatch({
+			type: "ADD_ITEMS",
+			taskId: task2.id,
+			subtaskId: subtask2.id,
+			category: "BOL",
+			items: [bolItem({
+				masterlistId: filled.masterlistId || null,
+				lastReviewed: filled.lastReviewed || "",
+				role: name,
+				qty: num2(people) || 1,
+				days: dayCount,
+				rate: filled.masterlistId ? num2(filled.rate) : "",
+				otHrs: 0,
+				perDiem: num2(filled.perDiem),
+				allowance: num2(filled.allowance)
+			})]
+		});
+		setRole("");
+	}
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-crew-add",
+		children: [/* @__PURE__ */ jsxs("label", { children: ["Role", /* @__PURE__ */ jsx(LineNamePicker, {
+			category: "BOL",
+			list,
+			value: role,
+			placeholder: "Role",
+			inputClass: "ce-input",
+			onChange: setRole
+		})] }), /* @__PURE__ */ jsxs("label", { children: ["People", /* @__PURE__ */ jsx("input", {
+			className: "ce-input",
+			type: "number",
+			min: "1",
+			value: people,
+			onChange: (e) => setPeople(e.target.value),
+			style: { width: 72 }
+		})] }), /* @__PURE__ */ jsxs("label", { children: ["Days", /* @__PURE__ */ jsx("input", {
+			className: "ce-input",
+			type: "number",
+			min: "0",
+			placeholder: jobDays > 0 ? String(jobDays) : "Days",
+			value: days,
+			onChange: (e) => setDays(e.target.value),
+			style: { width: 80 }
+		})] }), /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			onClick: addCrew,
+			children: "Crew quick-add"
+		})]
+	});
+}
 function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 	const { BOL: masterlistBOL } = useMasterlist();
 	const exceptions = useRateExceptions();
 	const datalistId = useState(() => uid3("dl"))[0];
-	const [draftRows, setDraftRows] = useState([emptyBOLDraft(uid3("bol-draft"))]);
+	const limits = useLimitNotes();
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "BOL",
+		makeEmpty: () => emptyBOLDraft(uid3("bol-draft")),
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("bol-item"),
+			masterlistId: r.masterlistId,
+			role: String(r.role || "").trim(),
+			dayType: r.dayType,
+			shift: r.shift,
+			qty: blankOrNumber(r.qty),
+			days: blankOrNumber(r.days),
+			rate: blankOrNumber(r.rate),
+			otHrs: optionalNumber(r.otHrs),
+			perDiem: optionalNumber(r.perDiem),
+			allowance: optionalNumber(r.allowance)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("bol-bd-col-widths", {
 		itemNo: 55,
 		role: 180,
@@ -8788,10 +9790,12 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 		}));
 		return [...existing, ...drafts];
 	}, [subtask2.items.BOL, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
+		if (limits.reject(row.id, field, value)) return;
 		const extra = field === "role" ? fillFromMasterlist("BOL", masterlistBOL, value) : {};
 		if (extra.masterlistId) {
-			if (!num2(row.days)) extra.days = defaultDaysForSubtask(task2, subtask2);
+			if (!num2(row.days)) extra.days = defaultLabourDays(task2, subtask2);
 			if (!num2(row.qty)) extra.qty = 1;
 		}
 		const patch = applyIdentityException("BOL", row, {
@@ -8808,7 +9812,8 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 		});
 		else setDraftRows((prev) => prev.map((r) => r.id === row.id ? {
 			...r,
-			...patch
+			...patch,
+			limitError: ""
 		} : r));
 	};
 	const appendRowIfLast = (row) => {
@@ -8829,29 +9834,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.role.trim() && Number(r.qty) > 0 && Number(r.days) > 0 && Number(r.rate) > 0).map((r) => ({
-			id: uid3("bol-item"),
-			masterlistId: r.masterlistId,
-			role: r.role.trim(),
-			dayType: r.dayType,
-			shift: r.shift,
-			qty: Number(r.qty),
-			days: Number(r.days),
-			rate: Number(r.rate),
-			otHrs: Number(r.otHrs) || 0,
-			perDiem: Number(r.perDiem) || 0,
-			allowance: Number(r.allowance) || 0
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "BOL",
-			items: newItems
-		});
-		setDraftRows([emptyBOLDraft(uid3("bol-draft"))]);
-	};
+	const handleSave = () => lineEntry.saveDrafts();
 	const copyChoices = [
 		{
 			dayType: "Regular",
@@ -8940,6 +9923,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 		benefits: 0,
 		total: 0
 	});
+	totals.total = roundMoney(totals.total);
 	const manpowerQty = subtask2.items.BOL.reduce((s, it) => s + num2(it.qty), 0);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-card ce-bol-card",
@@ -9040,9 +10024,11 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 					})]
 				})
 			}),
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistBOL.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.role }, l.id))
+			/* @__PURE__ */ jsx(CrewQuickAdd, {
+				task: task2,
+				subtask: subtask2,
+				dispatch,
+				list: masterlistBOL
 			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
@@ -9053,6 +10039,9 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 				},
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid ce-bol-breakdown-table",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [
 						/* @__PURE__ */ jsxs("colgroup", { children: [
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.itemNo}px` } }),
@@ -9151,6 +10140,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 							row.isDraft || calcBOL(row);
 							return /* @__PURE__ */ jsxs("tr", {
 								...rowDrag(row, "BOL", task2, subtask2, dispatch),
+								"data-line-id": row.id,
 								className: isLast && row.isDraft ? "ce-grid-row-ghost" : "ce-row-draggable",
 								children: [
 									/* @__PURE__ */ jsx("td", {
@@ -9159,13 +10149,13 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 									}),
 									/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 										className: "ce-desc-line",
-										children: [/* @__PURE__ */ jsx("input", {
-										className: "ce-grid-input",
-										list: datalistId,
+										children: [/* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: masterlistBOL,
 										value: row.role,
 										placeholder: row.isDraft ? "Type role…" : "",
-										onChange: (e) => {
-											updateRow(row, "role", e.target.value);
+										onChange: (value) => {
+											updateRow(row, "role", value);
 											appendRowIfLast(row);
 										},
 										onFocus: () => appendRowIfLast(row)
@@ -9216,7 +10206,10 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 											children: "Night"
 										})]
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+									/* @__PURE__ */ jsx("td", {
+										className: lineGapClass("BOL", row, "qty"),
+										"data-miss": lineGapNote("BOL", row, "qty"),
+										children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
 										className: "ce-grid-input",
@@ -9227,7 +10220,10 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 										},
 										onFocus: () => appendRowIfLast(row)
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+									/* @__PURE__ */ jsx("td", {
+										className: lineGapClass("BOL", row, "days"),
+										"data-miss": lineGapNote("BOL", row, "days"),
+										children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
 										className: "ce-grid-input",
@@ -9238,7 +10234,10 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 										},
 										onFocus: () => appendRowIfLast(row)
 									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+									/* @__PURE__ */ jsx("td", {
+										className: lineGapClass("BOL", row, "rate"),
+										"data-miss": lineGapNote("BOL", row, "rate"),
+										children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
 										className: "ce-grid-input",
@@ -9284,7 +10283,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 									}) }),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-grid-subtotal",
-										children: row.isDraft ? "—" : fmt(calcBOL(row).subtotal)
+										children: [row.isDraft ? "—" : fmt(calcBOL(row).subtotal), limitNote(limits.rowNote(row.id) || row.limitError)]
 									}),
 									/* @__PURE__ */ jsxs("td", {
 										className: "ce-grid-del",
@@ -9334,7 +10333,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 					className: "ce-form-footer-actions",
 					children: [/* @__PURE__ */ jsx(AddFromDatabaseButton, {
 						category: "BOL",
-						defaultDays: defaultDaysForSubtask(task2, subtask2),
+						defaultDays: defaultLabourDays(task2, subtask2),
 						onPicked: (rows) => dispatch({
 							type: "ADD_ITEMS",
 							taskId: task2.id,
@@ -9346,7 +10345,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 								role: masterlistItemLabel("BOL", r),
 								rate: masterlistItemRate(r),
 								qty: r.pickQty || 1,
-								days: defaultDaysForSubtask(task2, subtask2),
+								days: defaultLabourDays(task2, subtask2),
 								otHrs: 0,
 								perDiem: num2(r.perDiem),
 								allowance: num2(r.allowance)
@@ -9373,6 +10372,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 	const exceptions = useRateExceptions();
 	const isShop = chargesPower(task2);
 	const datalistId = useState(() => uid3("dl"))[0];
+	const limits = useLimitNotes();
 	const emptyDraft = () => ({
 		id: uid3("bote-draft"),
 		description: "",
@@ -9383,7 +10383,27 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		hoursPerDay: "",
 		kwhRate: ""
 	});
-	const [draftRows, setDraftRows] = useState([emptyDraft()]);
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "BOTE",
+		makeEmpty: emptyDraft,
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("bote-item"),
+			masterlistId: r.masterlistId || "",
+			description: String(r.description || "").trim(),
+			qty: blankOrNumber(r.qty),
+			days: blankOrNumber(r.days),
+			rate: blankOrNumber(r.rate),
+			powerKw: optionalNumber(r.powerKw),
+			hoursPerDay: optionalNumber(r.hoursPerDay),
+			kwhRate: optionalNumber(r.kwhRate)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("bote-col-widths", {
 		itemNo: 55,
 		description: 250,
@@ -9408,7 +10428,9 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		}));
 		return [...existing, ...drafts];
 	}, [items, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
+		if (limits.reject(row.id, field, value)) return;
 		const extra = field === "description" ? fillFromMasterlist("BOTE", masterlistBOTE, value) : {};
 		if (extra.masterlistId) {
 			if (!num2(row.days)) extra.days = defaultDaysForSubtask(task2, subtask2);
@@ -9428,7 +10450,8 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		});
 		else setDraftRows((prev) => prev.map((r) => r.id === row.id ? {
 			...r,
-			...patch
+			...patch,
+			limitError: ""
 		} : r));
 	};
 	const appendRowIfLast = (row) => {
@@ -9449,39 +10472,18 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.description.trim() && Number(r.qty) > 0 && Number(r.days) > 0 && Number(r.rate) > 0).map((r) => ({
-			id: uid3("bote-item"),
-			masterlistId: r.masterlistId || "",
-			description: r.description.trim(),
-			qty: Number(r.qty),
-			days: Number(r.days),
-			rate: Number(r.rate),
-			powerKw: Number(r.powerKw) || 0,
-			hoursPerDay: Number(r.hoursPerDay) || 0,
-			kwhRate: Number(r.kwhRate) || 0
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "BOTE",
-			items: newItems
-		});
-		setDraftRows([emptyDraft()]);
-	};
-	const boteSubtotal = items.reduce((s, it) => s + calcBOTE(it, taskWorkType(task2)), 0);
+	const handleSave = () => lineEntry.saveDrafts();
+	const boteSubtotal = roundMoney(items.reduce((s, it) => s + calcBOTE(it, taskWorkType(task2)), 0));
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-form",
 		children: [
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistBOTE.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.description }, l.id))
-			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsxs(ResizableTh, {
 							colKey: "itemNo",
@@ -9561,6 +10563,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 						const isLast = index === allRows.length - 1;
 						return /* @__PURE__ */ jsxs("tr", {
 							...rowDrag(row, "BOTE", task2, subtask2, dispatch),
+							"data-line-id": row.id,
 							className: (isLast && row.isDraft ? "ce-grid-row-ghost " : "ce-row-draggable ") + (monthsSince(row.lastReviewed) > STALE_RATE_MONTHS ? "ce-row-stale" : ""),
 							children: [
 								/* @__PURE__ */ jsx("td", {
@@ -9570,13 +10573,13 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 									className: "ce-desc-line",
 									children: [
-									/* @__PURE__ */ jsx("input", {
-										className: "ce-grid-input",
-										list: datalistId,
+									/* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOTE",
+										list: masterlistBOTE,
 										value: row.description,
 										placeholder: row.isDraft ? "Type item…" : "",
-										onChange: (e) => {
-											updateRow(row, "description", e.target.value);
+										onChange: (value) => {
+											updateRow(row, "description", value);
 											appendRowIfLast(row);
 										},
 										onFocus: () => appendRowIfLast(row)
@@ -9611,7 +10614,10 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									})
 										]
 									})] })] }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOTE", row, "qty"),
+									"data-miss": lineGapNote("BOTE", row, "qty"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9622,7 +10628,10 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOTE", row, "days"),
+									"data-miss": lineGapNote("BOTE", row, "days"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9633,7 +10642,10 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOTE", row, "rate"),
+									"data-miss": lineGapNote("BOTE", row, "rate"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9685,7 +10697,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								] }),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-grid-subtotal",
-									children: fmt(lineTotal)
+									children: [fmt(lineTotal), limitNote(limits.rowNote(row.id) || row.limitError)]
 								}),
 								/* @__PURE__ */ jsxs("td", {
 									className: "ce-grid-del",
@@ -9766,13 +10778,32 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 	const { BOCM: masterlistBOCM } = useMasterlist();
 	const exceptions = useRateExceptions();
 	const datalistId = useState(() => uid3("dl"))[0];
-	const [draftRows, setDraftRows] = useState([{
+	const limits = useLimitNotes();
+	const emptyBocm = () => ({
 		id: uid3("bocm-draft"),
 		description: "",
 		qty: "",
 		unit: "",
 		unitCost: ""
-	}]);
+	});
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "BOCM",
+		makeEmpty: emptyBocm,
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("bocm-item"),
+			masterlistId: r.masterlistId || "",
+			description: String(r.description || "").trim(),
+			qty: blankOrNumber(r.qty),
+			unit: String(r.unit || "").trim() || (lineGapFields("BOCM", r).length ? "" : "unit"),
+			unitCost: blankOrNumber(r.unitCost)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("bocm-col-widths", {
 		itemNo: 55,
 		description: 250,
@@ -9793,7 +10824,9 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		}));
 		return [...existing, ...drafts];
 	}, [items, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
+		if (limits.reject(row.id, field, value)) return;
 		const extra = field === "description" ? fillFromMasterlist("BOCM", masterlistBOCM, value) : {};
 		if (extra.masterlistId && !num2(row.qty)) extra.qty = 1;
 		const patch = applyIdentityException("BOCM", row, {
@@ -9810,7 +10843,8 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		});
 		else setDraftRows((prev) => prev.map((r) => r.id === row.id ? {
 			...r,
-			...patch
+			...patch,
+			limitError: ""
 		} : r));
 	};
 	const appendRowIfLast = (row) => {
@@ -9837,42 +10871,18 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.description.trim() && Number(r.qty) > 0 && Number(r.unitCost) > 0).map((r) => ({
-			id: uid3("bocm-item"),
-			masterlistId: r.masterlistId || "",
-			description: r.description.trim(),
-			qty: Number(r.qty),
-			unit: r.unit.trim() || "unit",
-			unitCost: Number(r.unitCost)
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "BOCM",
-			items: newItems
-		});
-		setDraftRows([{
-			id: uid3("bocm-draft"),
-			description: "",
-			qty: "",
-			unit: "",
-			unitCost: ""
-		}]);
-	};
-	const bocmSubtotal = items.reduce((s, it) => s + calcBOCM(it), 0);
+	const handleSave = () => lineEntry.saveDrafts();
+	const bocmSubtotal = roundMoney(items.reduce((s, it) => s + calcBOCM(it), 0));
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-form",
 		children: [
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistBOCM.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.description }, l.id))
-			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsxs(ResizableTh, {
 							colKey: "itemNo",
@@ -9921,10 +10931,11 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							onResize: updateWidth
 						})
 					] }) }), /* @__PURE__ */ jsx("tbody", { children: allRows.map((row, index) => {
-						const lineTotal = Number(row.qty) * Number(row.unitCost);
+						const lineTotal = roundMoney(Number(row.qty) * Number(row.unitCost));
 						const isLast = index === allRows.length - 1;
 						return /* @__PURE__ */ jsxs("tr", {
 							...rowDrag(row, "BOCM", task2, subtask2, dispatch),
+							"data-line-id": row.id,
 							className: (isLast && row.isDraft ? "ce-grid-row-ghost " : "ce-row-draggable ") + (monthsSince(row.lastReviewed) > STALE_RATE_MONTHS ? "ce-row-stale" : ""),
 							children: [
 								/* @__PURE__ */ jsx("td", {
@@ -9933,13 +10944,13 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								}),
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 									className: "ce-desc-line",
-									children: [/* @__PURE__ */ jsx("input", {
-									className: "ce-grid-input",
-									list: datalistId,
+									children: [/* @__PURE__ */ jsx(LineNamePicker, {
+									category: "BOCM",
+									list: masterlistBOCM,
 									value: row.description,
 									placeholder: row.isDraft ? "Type item…" : "",
-									onChange: (e) => {
-										updateRow(row, "description", e.target.value);
+									onChange: (value) => {
+										updateRow(row, "description", value);
 										appendRowIfLast(row);
 									},
 									onFocus: () => appendRowIfLast(row)
@@ -9964,7 +10975,10 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									checked: !!row.needsQuote,
 									onChange: (next) => updateRow(row, "needsQuote", next)
 								})] })] })] }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOCM", row, "qty"),
+									"data-miss": lineGapNote("BOCM", row, "qty"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9985,7 +10999,10 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("BOCM", row, "unitCost"),
+									"data-miss": lineGapNote("BOCM", row, "unitCost"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -9998,7 +11015,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								}) }),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-grid-subtotal",
-									children: fmt(lineTotal)
+									children: [fmt(lineTotal), limitNote(limits.rowNote(row.id) || row.limitError)]
 								}),
 								/* @__PURE__ */ jsxs("td", {
 									className: "ce-grid-del",
@@ -10068,12 +11085,30 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 	const { PPE: masterlistPPE } = useMasterlist();
 	const exceptions = useRateExceptions();
 	const datalistId = useState(() => uid3("dl"))[0];
-	const [draftRows, setDraftRows] = useState([{
+	const limits = useLimitNotes();
+	const emptyPpe = () => ({
 		id: uid3("ppe-draft"),
 		item: "",
 		qty: "",
 		unitCost: ""
-	}]);
+	});
+	const lineRowsRef = useRef(() => []);
+	const lineEntry = useLineEntry({
+		category: "PPE",
+		makeEmpty: emptyPpe,
+		taskId: task2.id,
+		subtaskId: subtask2.id,
+		dispatch,
+		rowsRef: lineRowsRef,
+		toItem: (r) => ({
+			id: uid3("ppe-item"),
+			masterlistId: r.masterlistId || "",
+			item: String(r.item || "").trim(),
+			qty: blankOrNumber(r.qty),
+			unitCost: blankOrNumber(r.unitCost)
+		})
+	});
+	const { draftRows, setDraftRows } = lineEntry;
 	const { widths, updateWidth } = useResizableColumns("ppe-col-widths", {
 		itemNo: 55,
 		item: 250,
@@ -10093,7 +11128,9 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		}));
 		return [...existing, ...drafts];
 	}, [items, draftRows]);
+	lineRowsRef.current = () => allRows;
 	const updateRow = (row, field, value) => {
+		if (limits.reject(row.id, field, value)) return;
 		const extra = field === "item" ? fillFromMasterlist("PPE", masterlistPPE, value) : {};
 		if (extra.masterlistId && !num2(row.qty)) extra.qty = 1;
 		const patch = applyIdentityException("PPE", row, {
@@ -10110,7 +11147,8 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		});
 		else setDraftRows((prev) => prev.map((r) => r.id === row.id ? {
 			...r,
-			...patch
+			...patch,
+			limitError: ""
 		} : r));
 	};
 	const appendRowIfLast = (row) => {
@@ -10136,40 +11174,18 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			itemId: row.id
 		});
 	};
-	const handleSave = () => {
-		const newItems = draftRows.filter((r) => r.item.trim() && Number(r.qty) > 0 && Number(r.unitCost) > 0).map((r) => ({
-			id: uid3("ppe-item"),
-			masterlistId: r.masterlistId || "",
-			item: r.item.trim(),
-			qty: Number(r.qty),
-			unitCost: Number(r.unitCost)
-		}));
-		if (newItems.length > 0) dispatch({
-			type: "ADD_ITEMS",
-			taskId: task2.id,
-			subtaskId: subtask2.id,
-			category: "PPE",
-			items: newItems
-		});
-		setDraftRows([{
-			id: uid3("ppe-draft"),
-			item: "",
-			qty: "",
-			unitCost: ""
-		}]);
-	};
-	const ppeSubtotal = items.reduce((s, it) => s + calcPPE(it), 0);
+	const handleSave = () => lineEntry.saveDrafts();
+	const ppeSubtotal = roundMoney(items.reduce((s, it) => s + calcPPE(it), 0));
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-form",
 		children: [
-			/* @__PURE__ */ jsx("datalist", {
-				id: datalistId,
-				children: masterlistPPE.filter(masterlistItemActive).map((l) => /* @__PURE__ */ jsx("option", { value: l.item }, l.id))
-			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "ce-gridwrap",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-grid",
+					onBlur: lineEntry.onTableBlur,
+					onKeyDown: lineEntry.onTableKeyDown,
+					onPaste: lineEntry.onTablePaste,
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsxs(ResizableTh, {
 							colKey: "itemNo",
@@ -10212,10 +11228,11 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							onResize: updateWidth
 						})
 					] }) }), /* @__PURE__ */ jsx("tbody", { children: allRows.map((row, index) => {
-						const lineTotal = Number(row.qty) * Number(row.unitCost);
+						const lineTotal = roundMoney(Number(row.qty) * Number(row.unitCost));
 						const isLast = index === allRows.length - 1;
 						return /* @__PURE__ */ jsxs("tr", {
 							...rowDrag(row, "PPE", task2, subtask2, dispatch),
+							"data-line-id": row.id,
 							className: isLast && row.isDraft ? "ce-grid-row-ghost" : "ce-row-draggable",
 							children: [
 								/* @__PURE__ */ jsx("td", {
@@ -10224,13 +11241,13 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								}),
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsxs("div", {
 									className: "ce-desc-line",
-									children: [/* @__PURE__ */ jsx("input", {
-									className: "ce-grid-input",
-									list: datalistId,
+									children: [/* @__PURE__ */ jsx(LineNamePicker, {
+									category: "PPE",
+									list: masterlistPPE,
 									value: row.item,
 									placeholder: row.isDraft ? "Type PPE item…" : "",
-									onChange: (e) => {
-										updateRow(row, "item", e.target.value);
+									onChange: (value) => {
+										updateRow(row, "item", value);
 										appendRowIfLast(row);
 									},
 									onFocus: () => appendRowIfLast(row)
@@ -10252,7 +11269,10 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										patch
 									})
 								})] })] })] }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("PPE", row, "qty"),
+									"data-miss": lineGapNote("PPE", row, "qty"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -10263,7 +11283,10 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									},
 									onFocus: () => appendRowIfLast(row)
 								}) }),
-								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+								/* @__PURE__ */ jsx("td", {
+									className: lineGapClass("PPE", row, "unitCost"),
+									"data-miss": lineGapNote("PPE", row, "unitCost"),
+									children: /* @__PURE__ */ jsx("input", {
 									type: "number",
 									min: "0",
 									className: "ce-grid-input",
@@ -10276,7 +11299,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 								}) }),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-grid-subtotal",
-									children: fmt(lineTotal)
+									children: [fmt(lineTotal), limitNote(limits.rowNote(row.id) || row.limitError)]
 								}),
 								/* @__PURE__ */ jsxs("td", {
 									className: "ce-grid-del",
@@ -10654,6 +11677,7 @@ var MISC_PRELOAD = [
 function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, onToggle, hideHeader }) {
 	const exceptions = useRateExceptions();
 	const { MISC: masterlistMISC } = useMasterlist();
+	const limits = useLimitNotes();
 	const { widths, updateWidth } = useResizableColumns("misc-breakdown-col-widths", {
 		itemNo: 55,
 		description: 250,
@@ -10686,11 +11710,14 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 	const [sectionMode, setSectionMode] = useState("suggested");
 	const [picked, setPicked] = useState(["D", "E"]);
 	const updateRow = (id, patch) => {
+		const clean = withoutBadLimits(patch);
+		Object.keys(patch || {}).forEach((key) => limits.reject(id, key, patch[key]));
+		if (!Object.keys(clean.patch).length) return;
 		setDraftRows((rows) => rows.map((r) => {
 			if (r.id !== id) return r;
 			let next = {
 				...r,
-				...patch
+				...clean.patch
 			};
 			if ("description" in patch) {
 				const ex = findRateException(exceptions, "MISC", next);
@@ -10816,7 +11843,7 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 			}), grouped.map((sec) => {
 				const showDays = sec.section === "B" || sec.section === "D" || sec.section === "E";
 				const sectionRows = draftRows.filter((r) => r.section === sec.section);
-				const sectionTotal = sectionRows.reduce((sum, r) => sum + (showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost)), 0);
+				const sectionTotal = roundMoney(sectionRows.reduce((sum, r) => sum + roundMoney(showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost)), 0));
 				return /* @__PURE__ */ jsxs("div", {
 					className: "misc-group",
 					children: [/* @__PURE__ */ jsxs("div", {
@@ -10921,7 +11948,7 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 									onResize: updateWidth
 								})
 							] }) }), /* @__PURE__ */ jsx("tbody", { children: sec.rows.map((r, idx) => {
-								const lineTotal = showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost);
+								const lineTotal = roundMoney(showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost));
 								return /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-center ce-item-no",
@@ -10984,7 +12011,7 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 									}) }),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-right ce-mono misc-total-cell",
-										children: fmt(lineTotal)
+										children: [fmt(lineTotal), limitNote(limits.rowNote(r.id))]
 									}),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("button", {
 										className: "ce-btn-ghost ce-btn-sm misc-insert-btn",
@@ -11065,6 +12092,10 @@ var BreakdownDndContext = createContext(null);
 function useBreakdownDnd() {
 	return useContext(BreakdownDndContext);
 }
+var LineKitContext = createContext(null);
+function useLineKits() {
+	return useContext(LineKitContext);
+}
 function dropEq(a, b) {
 	if (a === b) return true;
 	if (!a || !b) return !a && !b;
@@ -11136,6 +12167,8 @@ function SubtaskCard({ task: task2, subtask: subtask2, dispatch, allTasks, taskT
 	const dnd = useBreakdownDnd();
 	const [copyOpen, setCopyOpen] = useState(false);
 	const [addOpen, setAddOpen] = useState(false);
+	const [kitOpen, setKitOpen] = useState(false);
+	const lineKits = useLineKits();
 	const [openCats, setOpenCats] = useState(() => sheetMemory?.current?.[subtask2.id] || {});
 	useEffect(() => {
 		if (!sheetMemory) return;
@@ -11297,6 +12330,63 @@ function SubtaskCard({ task: task2, subtask: subtask2, dispatch, allTasks, taskT
 							"aria-label": "Copy",
 							onClick: () => setCopyOpen(true),
 							children: /* @__PURE__ */ jsx(Copy, { size: 14 })
+						}),
+						/* @__PURE__ */ jsx("button", {
+							className: "ce-btn-ghost ce-btn-sm",
+							type: "button",
+							title: "Save the current BOL, BOTE, BOCM and PPE lines as a kit",
+							onClick: () => {
+								const name = window.prompt("Kit name", subtask2.title || "Welding repair");
+								if (!name || !String(name).trim()) return;
+								const items = emptyItems();
+								["BOL", "BOTE", "BOCM", "PPE"].forEach((c) => {
+									items[c] = (subtask2.items?.[c] || []).map((it) => ({
+										...it,
+										id: uid3(c.toLowerCase())
+									}));
+								});
+								lineKits?.save?.({
+									id: uid3("ptt"),
+									name: String(name).trim(),
+									workType: task2.workType || "onsite",
+									notes: "",
+									items
+								});
+							},
+							children: "Save lines as kit"
+						}),
+						/* @__PURE__ */ jsxs("div", {
+							className: "ce-add-menu",
+							children: [/* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost ce-btn-sm",
+								type: "button",
+								title: "Insert a kit. Lines are added, not replaced.",
+								onClick: () => setKitOpen((v) => !v),
+								children: "Insert kit"
+							}), kitOpen && /* @__PURE__ */ jsxs("div", {
+								className: "ce-add-pop",
+								children: [!(lineKits?.templates || []).length ? /* @__PURE__ */ jsx("p", {
+									className: "ce-empty",
+									children: "No kits yet."
+								}) : (lineKits.templates || []).map((tpl) => /* @__PURE__ */ jsx("button", {
+									type: "button",
+									onClick: () => {
+										if (!window.confirm(`Insert “${tpl.name}” into this scope? Lines will be added, not replaced.`)) return;
+										setKitOpen(false);
+										dispatch({
+											type: "COPY_SUBTASK_PACK",
+											taskId: task2.id,
+											subtaskId: subtask2.id,
+											pack: {
+												items: tpl.items || emptyItems(),
+												notes: "",
+												categories: ["BOL", "BOTE", "BOCM", "PPE"]
+											}
+										});
+									},
+									children: tpl.name
+								}, tpl.id))]
+							})]
 						}),
 						/* @__PURE__ */ jsxs("div", {
 							className: "ce-add-menu",
@@ -12164,7 +13254,7 @@ function KeptScopeBar({ task, sub, path, onExpand, onOpenCat }) {
 		})]
 	});
 }
-function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates, enabledWorkTypes, hiddenWorkTypes, rateExceptions = [] }) {
+function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates, onTaskTemplatesChange, enabledWorkTypes, hiddenWorkTypes, rateExceptions = [] }) {
 	const db = useMasterlist();
 	const [addingTask, setAddingTask] = useState(false);
 	const [addingWorkType, setAddingWorkType] = useState("onsite");
@@ -12328,7 +13418,12 @@ function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates
 		PPE: db.PPE,
 		MISC: db.MISC
 	};
-	return /* @__PURE__ */ jsx(RateExceptionContext.Provider, {
+	return /* @__PURE__ */ jsx(LineKitContext.Provider, {
+		value: {
+			templates: taskTemplates || [],
+			save: (tpl) => onTaskTemplatesChange?.([...(taskTemplates || []), tpl])
+		},
+		children: /* @__PURE__ */ jsx(RateExceptionContext.Provider, {
 		value: rateExceptions,
 		children: /* @__PURE__ */ jsxs(BreakdownDndContext.Provider, {
 		value: dnd,
@@ -12853,7 +13948,7 @@ function BreakdownView({ tasks, dispatch, goToLibrary, goToSearch, taskTemplates
 				]
 			})
 		})]
-	}) });
+	}) }) });
 }
 function computeSchedule(tasks) {
 	const visitedTasks = /* @__PURE__ */ new Set();
@@ -13138,7 +14233,7 @@ function SummaryView({ tasks, viewType }) {
 		if (index >= 2 && index <= 5 && tasks[index - 2]) return tasks[index - 2].title;
 		return stdLabel;
 	});
-	const grandTotal = tasks.reduce((s, t) => s + taskTotal(t), 0);
+	const grandTotal = roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
 	const catTotals = CATS.map((c) => ({
 		cat: c,
 		total: tasks.reduce((s, t) => s + categoryOnTask(t, c), 0),
@@ -13406,7 +14501,7 @@ function buildBolGroups(tasks) {
 				const hours = f.hoursPerDay || 8;
 				const effRate = r.rate * dtMult * (1 + shiftAdd);
 				const otRate = r.rate / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-				r.subtotal = r.qty * r.days * effRate + r.qty * r.days * r.otHrs * otRate;
+				r.subtotal = roundMoney(r.qty * r.days * effRate + r.qty * r.days * r.otHrs * otRate);
 			});
 		});
 	});
@@ -13416,12 +14511,12 @@ function buildBolGroups(tasks) {
 		Object.values(groups[dt] || {}).forEach((shiftGroup) => Object.values(shiftGroup).forEach((r) => {
 			total += r.subtotal;
 		}));
-		dayTypeTotals[dt] = total;
+		dayTypeTotals[dt] = roundMoney(total);
 	});
 	return {
 		groups,
 		dayTypeTotals,
-		grandTotal: DAY_TYPES.reduce((s, dt) => s + dayTypeTotals[dt], 0),
+		grandTotal: roundMoney(DAY_TYPES.reduce((s, dt) => s + dayTypeTotals[dt], 0)),
 		allBOL
 	};
 }
@@ -13447,12 +14542,14 @@ function usePersistentEdits(storeRef, key) {
 	const [edits, setEdits] = useState(() => storeRef?.current?.[key] || {});
 	const update = (id, patch) => {
 		setEdits((prev) => {
+			const merged = { ...prev[id] };
+			Object.keys(patch || {}).forEach((k) => {
+				if (patch[k] === undefined) delete merged[k];
+				else merged[k] = patch[k];
+			});
 			const next = {
 				...prev,
-				[id]: {
-					...prev[id],
-					...patch
-				}
+				[id]: merged
 			};
 			if (storeRef) {
 				if (!storeRef.current) storeRef.current = {};
@@ -13470,7 +14567,7 @@ function bolLineAmount(row, dt, shift) {
 	const hours = f.hoursPerDay || 8;
 	const effRate = num2(row.rate) * dtMult * (1 + shiftAdd);
 	const otRate = num2(row.rate) / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-	return num2(row.qty) * num2(row.days) * effRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * otRate;
+	return roundMoney(num2(row.qty) * num2(row.days) * effRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * otRate);
 }
 function withBolEdit(row, edit, dt, shift) {
 	const next = {
@@ -13482,9 +14579,33 @@ function withBolEdit(row, edit, dt, shift) {
 	next.subtotal = bolLineAmount(next, dt, shift);
 	return next;
 }
+function matchingItemIds(tasks, category, match) {
+	const ids = [];
+	(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => {
+		(s.items?.[category] || []).forEach((it) => {
+			if (match(it)) ids.push(it.id);
+		});
+	}));
+	return ids;
+}
+function SummaryDeleteBtn({ label, onDelete }) {
+	return /* @__PURE__ */ jsx(IconBtn, {
+		danger: true,
+		title: "Remove",
+		confirm: `Remove "${label}" from this summary? This deletes the matching breakdown line and cannot be undone.`,
+		onClick: onDelete,
+		children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
+	});
+}
+function summaryQueryMatch(label, query) {
+	const q = String(query || "").trim().toLowerCase();
+	if (!q) return true;
+	return String(label || "").toLowerCase().includes(q);
+}
 function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
+	const limits = useLimitNotes();
 	const qtyTotal = rows.reduce((s, r) => s + num2(r.qty), 0);
-	const amount = rows.reduce((s, r) => s + num2(r.subtotal), 0);
+	const amount = roundMoney(rows.reduce((s, r) => s + num2(r.subtotal), 0));
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-sum-shift-block",
 		children: [
@@ -13523,14 +14644,20 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 								min: "0",
 								className: "ce-input",
 								value: r.qty,
-								onChange: (e) => onEdit?.(r.role, { qty: e.target.value })
+								onChange: (e) => {
+									if (limits.reject(`${label}:${r.role}`, "qty", e.target.value)) return;
+									onEdit?.(r.role, { qty: e.target.value });
+								}
 							}) }),
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center", children: /* @__PURE__ */ jsx("input", {
 								type: "number",
 								min: "0",
 								className: "ce-input",
 								value: r.days,
-								onChange: (e) => onEdit?.(r.role, { days: e.target.value })
+								onChange: (e) => {
+									if (limits.reject(`${label}:${r.role}`, "days", e.target.value)) return;
+									onEdit?.(r.role, { days: e.target.value });
+								}
 							}) }),
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: fmt(r.rate) }),
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center", children: /* @__PURE__ */ jsx("input", {
@@ -13540,7 +14667,7 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 								value: r.otHrs,
 								onChange: (e) => onEdit?.(r.role, { otHrs: e.target.value })
 							}) }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: fmt(r.subtotal) })
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: [fmt(r.subtotal), limitNote(limits.rowNote(`${label}:${r.role}`))] })
 						] }, `${label}-${idx}`)) }),
 						/* @__PURE__ */ jsx("tfoot", { children: /* @__PURE__ */ jsxs("tr", {
 							className: "ce-sum-sub",
@@ -13591,14 +14718,14 @@ function BOLMasterSummary({ tasks, editsRef }) {
 	const full = buildBolGroups(tasks);
 	const allBOL = full.allBOL;
 	const scheduleMap = getScheduledItemMap(tasks, "BOL");
-	const grandTotal = WORK_TYPES.reduce((sum, w) => {
+	const grandTotal = roundMoney(WORK_TYPES.reduce((sum, w) => {
 		const model = buildBolGroups(tasksOfType(tasks, w.id));
 		return sum + BOL_SHIFT_GROUPS.reduce((block, g) => {
 			return block + Object.values(model.groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => {
 				return rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal);
 			}, 0);
 		}, 0);
-	}, 0);
+	}, 0));
 	const benefitsMap = {};
 	allBOL.forEach((it) => {
 		const role = it.role || "Unnamed";
@@ -13969,7 +15096,7 @@ function buildCategoryAutoRows(tasks, category, workType) {
 			hoursPerDay,
 			kwhRate,
 			electricity,
-			subtotal: use + electricity
+			subtotal: roundMoney(use + electricity)
 		};
 	});
 	return summarySort(rows, category, (row) => row.description);
@@ -13979,7 +15106,7 @@ function categoryEditedRow(category, row, edit, workType) {
 	const days = edit && Object.prototype.hasOwnProperty.call(edit, "days") ? num2(edit.days) : row.activeDays;
 	const hours = edit && Object.prototype.hasOwnProperty.call(edit, "hoursPerDay") ? num2(edit.hoursPerDay) : num2(row.hoursPerDay);
 	const electricity = category === "BOTE" && chargesPower(workType) ? qty * days * hours * num2(row.powerKw) * num2(row.kwhRate) : 0;
-	const subtotal = category === "BOTE" ? qty * days * num2(row.rate) + electricity : qty * num2(row.rate);
+	const subtotal = roundMoney(category === "BOTE" ? qty * days * num2(row.rate) + electricity : qty * num2(row.rate));
 	return {
 		...row,
 		editQty: qty,
@@ -13990,6 +15117,7 @@ function categoryEditedRow(category, row, edit, workType) {
 	};
 }
 function AggregatedCategoryTab({ tasks, category, editsRef }) {
+	const limits = useLimitNotes();
 	const [manualRows, setManualRows] = useState([]);
 	const [autoEdits, setAutoEdits] = usePersistentEdits(editsRef, `cat-${category}`);
 	const [wtFilter, setWtFilter] = useState("all");
@@ -14016,12 +15144,12 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 			...w,
 			subset,
 			rows,
-			total: rows.reduce((s, r) => s + r.subtotal, 0)
+			total: roundMoney(rows.reduce((s, r) => s + r.subtotal, 0))
 		};
 	});
-	const autoTotal = typeBlocks.reduce((s, b) => s + b.total, 0);
-	const manualTotal = manualRows.reduce((s, r) => s + manualSubtotal(r), 0);
-	const grandTotal = autoTotal + manualTotal;
+	const autoTotal = roundMoney(typeBlocks.reduce((s, b) => s + b.total, 0));
+	const manualTotal = roundMoney(manualRows.reduce((s, r) => s + manualSubtotal(r), 0));
+	const grandTotal = roundMoney(autoTotal + manualTotal);
 	function addManualRow() {
 		if (category === "BOTE") setManualRows([...manualRows, {
 			id: uid3("manual-bote"),
@@ -14044,17 +15172,20 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 		}]);
 	}
 	function updateManualRow(id, patch) {
+		const clean = withoutBadLimits(patch);
+		Object.keys(patch || {}).forEach((key) => limits.reject(id, key, patch[key]));
+		if (!Object.keys(clean.patch).length) return;
 		setManualRows((rows) => rows.map((r) => r.id === id ? {
 			...r,
-			...patch
+			...clean.patch
 		} : r));
 	}
 	function deleteManualRow(id) {
 		setManualRows((rows) => rows.filter((r) => r.id !== id));
 	}
 	function manualSubtotal(r) {
-		if (category === "BOTE") return num2(r.qty) * num2(r.days) * num2(r.rate) + num2(r.qty) * num2(r.days) * num2(r.hoursPerDay) * num2(r.powerKw) * num2(r.kwhRate);
-		return num2(r.qty) * (category === "BOCM" || category === "PPE" ? num2(r.unitCost) : 1);
+		if (category === "BOTE") return roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate) + num2(r.qty) * num2(r.days) * num2(r.hoursPerDay) * num2(r.powerKw) * num2(r.kwhRate));
+		return roundMoney(num2(r.qty) * (category === "BOCM" || category === "PPE" ? num2(r.unitCost) : 1));
 	}
 	const showElec = category === "BOTE" && wtFilter !== "onsite";
 	const colCount = category === "BOTE" ? showElec ? 11 : 7 : 6;
@@ -14208,7 +15339,10 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 											min: "0",
 											className: "ce-input",
 											value: r.editQty,
-											onChange: (e) => setAutoEdits(`${b.id}|${r.description}`, { qty: e.target.value })
+											onChange: (e) => {
+												if (limits.reject(`${b.id}|${r.description}`, "qty", e.target.value)) return;
+												setAutoEdits(`${b.id}|${r.description}`, { qty: e.target.value });
+											}
 										})
 									}), /* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center",
@@ -14217,7 +15351,10 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 											min: "0",
 											className: "ce-input",
 											value: r.editDays,
-											onChange: (e) => setAutoEdits(`${b.id}|${r.description}`, { days: e.target.value })
+											onChange: (e) => {
+												if (limits.reject(`${b.id}|${r.description}`, "days", e.target.value)) return;
+												setAutoEdits(`${b.id}|${r.description}`, { days: e.target.value });
+											}
 										})
 									})] }) : /* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center",
@@ -14226,7 +15363,10 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 											min: "0",
 											className: "ce-input",
 											value: r.editQty,
-											onChange: (e) => setAutoEdits(`${b.id}|${r.description}`, { qty: e.target.value })
+											onChange: (e) => {
+												if (limits.reject(`${b.id}|${r.description}`, "qty", e.target.value)) return;
+												setAutoEdits(`${b.id}|${r.description}`, { qty: e.target.value });
+											}
 										})
 									}),
 									/* @__PURE__ */ jsx("td", {
@@ -14260,7 +15400,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 									] }),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-money ce-mono",
-										children: fmt(r.subtotal)
+										children: [fmt(r.subtotal), limitNote(limits.rowNote(`${b.id}|${r.description}`))]
 									}),
 									/* @__PURE__ */ jsx("td", {})
 								] }, `${b.id}-auto-${idx}`)),
@@ -14358,7 +15498,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 								] }),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-sum-money ce-mono",
-									children: fmt(manualSubtotal(r))
+									children: [fmt(manualSubtotal(r)), limitNote(limits.rowNote(r.id))]
 								}),
 								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(IconBtn, {
 									danger: true,
@@ -14419,6 +15559,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 }
 function MISCSheet({ tasks = [] }) {
 	const { MISC: miscList } = useMasterlist();
+	const limits = useLimitNotes();
 	const { widths, updateWidth } = useResizableColumns("misc-accom-col-widths", {
 		itemNo: 55,
 		description: 250,
@@ -14525,9 +15666,12 @@ function MISCSheet({ tasks = [] }) {
 		});
 	}, [tasks]);
 	const updateEntry = (id, patch) => {
+		const clean = withoutBadLimits(patch);
+		Object.keys(patch || {}).forEach((key) => limits.reject(id, key, patch[key]));
+		if (!Object.keys(clean.patch).length) return;
 		setEntries((rows) => rows.map((r) => r.id === id ? {
 			...r,
-			...patch
+			...clean.patch
 		} : r));
 	};
 	function chooseMiscDescription(id, description) {
@@ -14572,9 +15716,9 @@ function MISCSheet({ tasks = [] }) {
 			allRowsCount: allRows.length
 		};
 	});
-	const grandTotal = entries.reduce((s, e) => {
-		return s + (e.section === "B" || e.section === "D" || e.section === "E" ? num2(e.qty) * num2(e.days) * num2(e.unitCost) : num2(e.qty) * num2(e.unitCost));
-	}, 0);
+	const grandTotal = roundMoney(entries.reduce((s, e) => {
+		return s + roundMoney(e.section === "B" || e.section === "D" || e.section === "E" ? num2(e.qty) * num2(e.days) * num2(e.unitCost) : num2(e.qty) * num2(e.unitCost));
+	}, 0));
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-card ce-summary-block",
 		children: [/* @__PURE__ */ jsxs("div", {
@@ -14714,7 +15858,7 @@ function MISCSheet({ tasks = [] }) {
 								}),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-mono misc-total",
-									children: fmt(lineTotal)
+									children: [fmt(lineTotal), limitNote(limits.rowNote(r.id))]
 								}),
 								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsx("button", {
 									className: "ce-btn-ghost ce-btn-sm misc-insert-btn",
@@ -14738,7 +15882,7 @@ function MISCSheet({ tasks = [] }) {
 								}),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-mono misc-total",
-									children: fmt(sec.rows.reduce((s, r) => s + (showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost)), 0))
+									children: fmt(roundMoney(sec.rows.reduce((s, r) => s + roundMoney(showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost)), 0)))
 								}),
 								/* @__PURE__ */ jsx("td", {})
 							]
@@ -14756,7 +15900,7 @@ function formatThousands(value) {
 	const grouped = Number(whole || 0).toLocaleString("en-US");
 	return frac != null ? `${grouped}.${frac}` : grouped;
 }
-function CommaMoneyInput({ value, onChange, disabled, signed }) {
+function CommaMoneyInput({ value, onChange, disabled, signed, className, onFocus: onFocusProp, onBlur: onBlurProp, label }) {
 	const [focus, setFocus] = useState(false);
 	const raw = value ?? "";
 	const shown = focus ? String(raw).replace(/,/g, "").replace(/^₱/, "") : signed && String(raw) !== "" ? `₱${Number(num2(raw)).toLocaleString("en-PH", {
@@ -14764,12 +15908,20 @@ function CommaMoneyInput({ value, onChange, disabled, signed }) {
 		maximumFractionDigits: 2
 	})}` : formatThousands(raw);
 	return /* @__PURE__ */ jsx("input", {
-		className: "ce-input",
+		className: className ? `ce-input ${className}` : "ce-input",
 		inputMode: "decimal",
 		disabled,
+		"aria-label": label,
 		value: shown,
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
+		onFocus: (e) => {
+			setFocus(true);
+			onFocusProp?.(e);
+		},
+		onBlur: (e) => {
+			setFocus(false);
+			const cleaned = String(e.target.value || "").replace(/,/g, "").replace(/^₱/, "").replace(/[^\d.]/g, "");
+			onBlurProp?.(cleaned);
+		},
 		onChange: (e) => onChange(e.target.value.replace(/,/g, "").replace(/[^\d.]/g, ""))
 	});
 }
@@ -14777,6 +15929,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 	const allowanceRates = MOB_ALLOWANCE_RATES;
 	const isMobDemob = title === "Mobilization" || title === "Demobilization";
 	const { BOL: manpowerList, MISC: miscList } = useMasterlist();
+	const limits = useLimitNotes();
 	const autoRows = useMemo(() => {
 		const rows = getMobManpowerRows(tasks);
 		if (!isMobDemob) return rows;
@@ -14904,8 +16057,11 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 		setCopyUndo(null);
 	};
 	function updatePartA(id, patch) {
+		const clean = withoutBadLimits(patch);
+		Object.keys(patch || {}).forEach((key) => limits.reject(id, key, patch[key]));
+		if (!Object.keys(clean.patch).length) return;
 		if (!isMobDemob) {
-			setSupplyRows((rows) => rows.map((r) => r.id === id ? { ...r, ...patch } : r));
+			setSupplyRows((rows) => rows.map((r) => r.id === id ? { ...r, ...clean.patch } : r));
 			return;
 		}
 		const row = partA.find((r) => r.id === id);
@@ -14918,7 +16074,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 				days: row.days,
 				rate: row.rate,
 				otHrs: row.otHrs,
-				...patch
+				...clean.patch
 			}
 		}));
 	}
@@ -14946,9 +16102,12 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 		onCopy?.(parts);
 	}
 	function updatePartB(id, patch) {
+		const clean = withoutBadLimits(patch);
+		Object.keys(patch || {}).forEach((key) => limits.reject(id, key, patch[key]));
+		if (!Object.keys(clean.patch).length) return;
 		setPartB((rows) => rows.map((r) => r.id === id ? {
 			...r,
-			...patch
+			...clean.patch
 		} : r));
 	}
 	function insertCustomRow(afterId) {
@@ -14993,10 +16152,10 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 			qty,
 			days,
 			rate,
-			total: num2(qty) * num2(days) * num2(rate)
+			total: roundMoney(num2(qty) * num2(days) * num2(rate))
 		};
 	});
-	const partAllowTotal = allowRows.reduce((s, r) => s + r.total, 0);
+	const partAllowTotal = roundMoney(allowRows.reduce((s, r) => s + r.total, 0));
 	const partBPax = allowRows.reduce((s, r) => s + num2(r.qty), 0);
 	const shownAllowRows = allowRows.map((r, idx) => ({
 		...r,
@@ -15008,7 +16167,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 		if (hideUnused && num2(r.qty) <= 0 && !custom) return false;
 		return true;
 	});
-	const partBTotal = visiblePartB.reduce((s, r) => s + num2(r.qty) * num2(r.days) * num2(r.unitCost), 0);
+	const partBTotal = roundMoney(visiblePartB.reduce((s, r) => s + roundMoney(num2(r.qty) * num2(r.days) * num2(r.unitCost)), 0));
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-card ce-summary-block mob-summary-card",
 		children: [/* @__PURE__ */ jsxs("div", {
@@ -15329,7 +16488,9 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 								min: "0",
 								className: "ce-input",
 								value: r.qty,
-								onChange: (e) => setAllowEdits((prev) => ({
+								onChange: (e) => {
+									if (limits.reject(r.category, "qty", e.target.value)) return;
+									setAllowEdits((prev) => ({
 									...prev,
 									[r.category]: {
 										...prev[r.category] || {},
@@ -15337,7 +16498,8 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 										days: r.days,
 										rate: r.rate
 									}
-								}))
+								}));
+								}
 							})
 						}),
 						/* @__PURE__ */ jsx("td", {
@@ -15351,7 +16513,9 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 								min: "0",
 								className: "ce-input",
 								value: r.days,
-								onChange: (e) => setAllowEdits((prev) => ({
+								onChange: (e) => {
+									if (limits.reject(r.category, "days", e.target.value)) return;
+									setAllowEdits((prev) => ({
 									...prev,
 									[r.category]: {
 										...prev[r.category] || {},
@@ -15359,7 +16523,8 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 										days: e.target.value,
 										rate: r.rate
 									}
-								}))
+								}));
+								}
 							})
 						}),
 						/* @__PURE__ */ jsx("td", {
@@ -15368,7 +16533,9 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 								className: "mob-peso",
 								children: [/* @__PURE__ */ jsx("span", { children: "₱" }), /* @__PURE__ */ jsx(CommaMoneyInput, {
 									value: r.rate,
-									onChange: (next) => setAllowEdits((prev) => ({
+									onChange: (next) => {
+										if (limits.reject(r.category, "rate", next)) return;
+										setAllowEdits((prev) => ({
 										...prev,
 										[r.category]: {
 											...prev[r.category] || {},
@@ -15376,13 +16543,14 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 											days: r.days,
 											rate: next
 										}
-									}))
+									}));
+									}
 								})]
 							})
 						}),
 						/* @__PURE__ */ jsx("td", {
 							className: "mob-total ce-mono",
-							children: fmt(r.total)
+							children: [fmt(r.total), limitNote(limits.rowNote(r.category))]
 						})
 					] }, r.category)), isMobDemob ? /* @__PURE__ */ jsxs("tr", {
 						className: "ce-subtotal-row",
@@ -15472,7 +16640,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 						})
 					] }) }), /* @__PURE__ */ jsxs("tbody", { children: [
 						visiblePartB.map((r, idx) => {
-							const lineTotal = num2(r.qty) * num2(r.days) * num2(r.unitCost);
+							const lineTotal = roundMoney(num2(r.qty) * num2(r.days) * num2(r.unitCost));
 							return /* @__PURE__ */ jsxs("tr", { children: [
 								/* @__PURE__ */ jsx("td", {
 									className: "mob-item",
@@ -15527,7 +16695,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 								}),
 								/* @__PURE__ */ jsx("td", {
 									className: "mob-total ce-mono",
-									children: fmt(lineTotal)
+									children: [fmt(lineTotal), limitNote(limits.rowNote(r.id))]
 								}),
 								/* @__PURE__ */ jsxs("td", { children: [
 									/* @__PURE__ */ jsx("button", {
@@ -15627,7 +16795,7 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 			window.removeEventListener("keydown", resetTimer);
 			window.removeEventListener("click", resetTimer);
 		};
-	}, [autoSave, setIsParked]);
+	}, []);
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-header",
 		children: [
@@ -15885,7 +17053,7 @@ function buildBolExportSection(tasks, notes) {
 		const model = buildBolGroups(tasksOfType(tasks, w.id));
 		if (!model.allBOL.length) return;
 		any = true;
-		grand += model.grandTotal;
+		grand = roundMoney(grand + model.grandTotal);
 		const banner = `${w.letter}. ${w.full}`;
 		blocks.push({
 			banner,
@@ -15999,8 +17167,8 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		const auto = buildCategoryAutoRows(subset, cat, w.id);
 		if (!auto.length) return;
 		any = true;
-		const blockTotal = auto.reduce((s, r) => s + num2(r.subtotal), 0);
-		grand += blockTotal;
+		const blockTotal = roundMoney(auto.reduce((s, r) => s + num2(r.subtotal), 0));
+		grand = roundMoney(grand + blockTotal);
 		const lineRows = [];
 		const lineMeta = [];
 		auto.forEach((r, idx) => {
@@ -16120,10 +17288,10 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	let partATotal = 0;
 	partA.forEach((r, idx) => {
 		const allowanceAmount = MOB_ALLOWANCE_RATES[r.category] || MOB_ALLOWANCE_RATES[r.role] || 0;
-		const subtotalA = num2(r.qty) * num2(r.days) * num2(r.rate);
-		const subtotalB = num2(r.qty) * num2(r.days) * allowanceAmount;
+		const subtotalA = roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate));
+		const subtotalB = roundMoney(num2(r.qty) * num2(r.days) * allowanceAmount);
 		if (subtotalA === 0 && subtotalB === 0) return;
-		partATotal += subtotalA;
+		partATotal = roundMoney(partATotal + subtotalA);
 		aRows.push([
 			idx + 1,
 			r.role,
@@ -16135,7 +17303,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			r.otHrs,
 			fmt(allowanceAmount),
 			fmt(subtotalB),
-			fmt(subtotalA + subtotalB)
+			fmt(roundMoney(subtotalA + subtotalB))
 		]);
 		aMeta.push({ kind: "line" });
 	});
@@ -16151,7 +17319,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"",
 		"",
 		"",
-		fmt(partATotal)
+		fmt(roundMoney(partATotal))
 	] : [
 		"Subtotal — Part A",
 		"",
@@ -16163,7 +17331,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"",
 		"",
 		"",
-		fmt(partATotal)
+		fmt(roundMoney(partATotal))
 	]);
 	aMeta.push({ kind: "total" });
 	const allowRows = [
@@ -16181,7 +17349,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			qty,
 			days,
 			rate,
-			total: num2(qty) * num2(days) * num2(rate)
+			total: roundMoney(num2(qty) * num2(days) * num2(rate))
 		};
 	});
 	const bRows = [];
@@ -16189,7 +17357,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	let partBTotal = 0;
 	allowRows.forEach((r, idx) => {
 		if (num2(r.total) === 0) return;
-		partBTotal += r.total;
+		partBTotal = roundMoney(partBTotal + r.total);
 		bRows.push([
 			idx + 1,
 			r.category,
@@ -16209,7 +17377,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"",
 		"",
 		"",
-		fmt(partBTotal)
+		fmt(roundMoney(partBTotal))
 	] : [
 		"Subtotal — Part B",
 		"",
@@ -16217,7 +17385,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"",
 		"",
 		"",
-		fmt(partBTotal)
+		fmt(roundMoney(partBTotal))
 	]);
 	bMeta.push({ kind: "total" });
 	const visible = (Array.isArray(snap?.partB) && snap.partB.length ? snap.partB : seedMobPartB(title)).filter((r) => {
@@ -16228,7 +17396,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	const cMeta = [];
 	let partCTotal = 0;
 	visible.forEach((r, idx) => {
-		const lineTotal = num2(r.qty) * num2(r.days) * num2(r.unitCost);
+		const lineTotal = roundMoney(num2(r.qty) * num2(r.days) * num2(r.unitCost));
 		if (lineTotal === 0) return;
 		partCTotal += lineTotal;
 		cRows.push([
@@ -16249,7 +17417,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"",
 		"",
 		"",
-		fmt(partCTotal)
+		fmt(roundMoney(partCTotal))
 	]);
 	cMeta.push({ kind: "total" });
 	cRows.push([
@@ -16259,7 +17427,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"",
 		"",
 		"",
-		fmt(partATotal + partBTotal + partCTotal)
+		fmt(roundMoney(partATotal + partBTotal + partCTotal))
 	]);
 	cMeta.push({ kind: "total" });
 	const blocks = [
@@ -16372,35 +17540,29 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], adminConfig, onBack, onEditingChange }) {
-	const [lastActivity, setLastActivity] = useState(Date.now());
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange }) {
+	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
 		if (isEditorLocked) return;
-		const handleActivity = () => {
-			setLastActivity(Date.now());
-			if (onUserActivity) onUserActivity();
+		let notified = 0;
+		const mark = () => {
+			lastActivityRef.current = Date.now();
+			if (!onUserActivity || Date.now() - notified < 6e4) return;
+			notified = Date.now();
+			onUserActivity();
 		};
-		window.addEventListener("mousemove", handleActivity);
-		window.addEventListener("keydown", handleActivity);
-		return () => {
-			window.removeEventListener("mousemove", handleActivity);
-			window.removeEventListener("keydown", handleActivity);
-		};
-	}, [isEditorLocked, onUserActivity]);
-	useEffect(() => {
-		if (isEditorLocked) return;
+		window.addEventListener("mousemove", mark, { passive: true });
+		window.addEventListener("keydown", mark);
 		const interval = setInterval(() => {
-			if (Date.now() - lastActivity > 9e5) {
-				if (onLock) onLock();
-			}
-		}, 1e3);
-		return () => clearInterval(interval);
-	}, [
-		lastActivity,
-		isEditorLocked,
-		onLock
-	]);
+			if (Date.now() - lastActivityRef.current > 9e5 && onLock) onLock();
+		}, 15e3);
+		return () => {
+			window.removeEventListener("mousemove", mark);
+			window.removeEventListener("keydown", mark);
+			clearInterval(interval);
+		};
+	}, [isEditorLocked, onUserActivity, onLock]);
 	const [state, baseDispatch] = useReducer(reducer, void 0, () => {
 		const base = buildEmptyProject();
 		if (!ceData) return base;
@@ -16479,6 +17641,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [docNo, setDocNo] = useState("");
 	const [revNo, setRevNo] = useState("");
 	const [revDate, setRevDate] = useState("");
+	const commercialLimits = useLimitNotes();
 	const [mobView, setMobView] = useState(null);
 	const [mobSheetsOpen, setMobSheetsOpen] = useState(true);
 	const [mobCopy, setMobCopy] = useState(null);
@@ -16519,6 +17682,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [exportPreview, setExportPreview] = useState(null);
 	const fileInputRef = useRef(null);
 	const grand = projectTotal(state.tasks);
+	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat), 0);
+	const contPct = num2(state.commercial?.contingencyPct);
+	const discPct = num2(state.commercial?.discountPct);
+	const netTotal = checksumTotal(grand * (1 + contPct / 100) * (1 - discPct / 100));
 	const saveVersion = () => {
 		const snapshot = {
 			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -16598,11 +17765,11 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				]);
 			})));
 			if (!part.length) return;
-			const partTotal = tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
+			const partTotal = roundMoney(tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
 				if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return s3;
 				return s3 + itemSubtotal("MISC", it);
-			}, 0), 0), 0);
-			miscGrand += partTotal;
+			}, 0), 0), 0));
+			miscGrand = roundMoney(miscGrand + partTotal);
 			const banner = `${w.letter}. ${w.full}`;
 			miscBlocks.push({
 				banner,
@@ -16797,7 +17964,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			revDate: info.revDate || "",
 			docNo: docNoOut,
 			documentControl,
-			docDate: info.date || state.meta.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+			docDate: info.date || state.meta.date || todayLocal(),
 			ceNumber: docNoOut || ceData?.id || state.meta.title || "—",
 			attachmentFiles,
 			sections
@@ -16869,10 +18036,14 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		provisionalIds,
 		rateExceptions: state.rateExceptions || []
 	};
-	const samplePreviewBypass = ceData?.id === "CE-2026-014";
 	const runIssuePack = async () => {
+		const gaps = listEntryGaps(state.tasks);
+		if (gaps.length) {
+			window.alert(`These rows are missing quantity, days, or rate:\n\n${gaps.join("\n")}`);
+			return;
+		}
 		const { failures, warnings } = buildCePreflight(state.tasks, preflightOpts);
-		if (failures.length && !samplePreviewBypass) {
+		if (failures.length) {
 			setCheckerOpen(true);
 			window.alert("Fix Fail items before exporting the issue pack.");
 			return;
@@ -16882,7 +18053,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const cont = num2(state.commercial?.contingencyPct);
 		const disc = num2(state.commercial?.discountPct);
 		const grand2 = projectTotal(state.tasks);
-		const net = grand2 * (1 + cont / 100) * (1 - disc / 100);
+		const net = commercialNet(grand2, cont, disc);
 		const typesInUse = [...new Set((state.enabledWorkTypes && state.enabledWorkTypes.length ? state.enabledWorkTypes : (state.tasks || []).map((t) => taskWorkType(t))).filter(Boolean))];
 		const tradingOnly = typesInUse.length === 1 && typesInUse[0] === "trading";
 		const parties = partiesFromApproval(linkedRce?.approval);
@@ -17008,7 +18179,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		if (raw === void 0 || raw === "") return num2(row.computed);
 		return num2(raw);
 	};
-	const miscShown = officialBase.rows.filter((r) => r.sub && !r.breakdown).reduce((sum, r) => sum + shownAmount(r), 0);
+	const miscShown = roundMoney(officialBase.rows.filter((r) => r.sub && !r.breakdown).reduce((sum, r) => sum + roundMoney(shownAmount(r)), 0));
 	const sheetRows = withThirdPartyRows(officialBase.rows, officialBase.thirdLines, state.thirdPartyShow);
 	const officialRows = sheetRows.map((row) => ({
 		...row,
@@ -17022,12 +18193,12 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		num: `F.${i + 1}`
 	}));
 	const officialQty = num2(resolvedProject.quantity);
-	const officialTotal = officialBase.rows.filter((r) => [
+	const officialTotal = roundMoney(officialBase.rows.filter((r) => [
 		"A",
 		"B",
 		"C",
 		"D"
-	].includes(r.key)).reduce((sum, r) => sum + shownAmount(r), 0) + miscShown;
+	].includes(r.key)).reduce((sum, r) => sum + roundMoney(shownAmount(r)), 0) + miscShown);
 	const includeCatalog = [{
 		key: "elec",
 		label: "BOTE electricity",
@@ -17041,6 +18212,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		onChange: (notes) => saveSheetNotes(sheet, notes)
 	});
 	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-editor-root",
 		children: [
 			onBack ? /* @__PURE__ */ jsxs("div", {
 				className: "ce-editor-back",
@@ -17237,8 +18409,20 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									className: "ce-btn-primary ce-btn-sm",
 									onClick: () => {
 										const remarks = window.prompt("Approval remarks") || "";
+										const step = currentApprovalStep(ceData?.approval || state.approval);
+										const finalStep = !!step?.isFinal;
+										if (finalStep && (state.projectInfo || {}).revisionPending) {
+											dispatch({
+												type: "PATCH_PROJECT_INFO",
+												patch: {
+													revNo: nextCeRevision((state.projectInfo || {}).revNo),
+													revDate: todayLocal(),
+													revisionPending: false
+												}
+											});
+										}
 										onApprovalDecision?.(ceData?.id, "accept", remarks);
-										if (currentApprovalStep(ceData?.approval || state.approval)?.isFinal) setCeStatus("Done");
+										if (finalStep) setCeStatus("Done");
 									},
 									children: "Approve step"
 								}), /* @__PURE__ */ jsx("button", {
@@ -17262,12 +18446,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										onClick: () => {
 											const instruction = window.prompt("Revision instruction from sales or the approver");
 											if (!instruction || !instruction.trim()) return;
-											const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 											dispatch({
 												type: "PATCH_PROJECT_INFO",
 												patch: {
-													revNo: nextCeRevision((state.projectInfo || {}).revNo),
-													revDate: today,
+													revisionPending: true,
 													revisionNote: instruction.trim()
 												}
 											});
@@ -17477,20 +18659,26 @@ ${names.join(", ")}`, editingUser) : editingUser;
 													className: "ce-input",
 													type: "number",
 													value: state.commercial?.contingencyPct ?? 0,
-													onChange: (e) => dispatch({
-														type: "PATCH_COMMERCIAL",
-														patch: { contingencyPct: e.target.value }
-													})
-												})] }),
+													onChange: (e) => {
+														if (commercialLimits.reject("commercial", "contingencyPct", e.target.value)) return;
+														dispatch({
+															type: "PATCH_COMMERCIAL",
+															patch: { contingencyPct: e.target.value }
+														});
+													}
+												}), limitNote(commercialLimits.fieldNote("commercial", "contingencyPct"))] }),
 												/* @__PURE__ */ jsxs("label", { children: ["Discount %", /* @__PURE__ */ jsx("input", {
 													className: "ce-input",
 													type: "number",
 													value: state.commercial?.discountPct ?? 0,
-													onChange: (e) => dispatch({
-														type: "PATCH_COMMERCIAL",
-														patch: { discountPct: e.target.value }
-													})
-												})] }),
+													onChange: (e) => {
+														if (commercialLimits.reject("commercial", "discountPct", e.target.value)) return;
+														dispatch({
+															type: "PATCH_COMMERCIAL",
+															patch: { discountPct: e.target.value }
+														});
+													}
+												}), limitNote(commercialLimits.fieldNote("commercial", "discountPct"))] }),
 												/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("b", { children: "Net" }), /* @__PURE__ */ jsx("div", {
 													className: "ce-mono",
 													children: fmt(grand * (1 + num2(state.commercial?.contingencyPct) / 100) * (1 - num2(state.commercial?.discountPct) / 100))
@@ -17526,6 +18714,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								goToLibrary,
 								goToSearch,
 								taskTemplates,
+								onTaskTemplatesChange,
 								enabledWorkTypes: state.enabledWorkTypes,
 								hiddenWorkTypes: state.hiddenWorkTypes,
 								rateExceptions: state.rateExceptions || []
@@ -17688,14 +18877,6 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									className: "ce-btn-ghost",
 									onClick: () => setCheckerOpen(false),
 									children: "Back to editor"
-								}), samplePreviewBypass && /* @__PURE__ */ jsx("button", {
-									type: "button",
-									className: "ce-btn-ghost",
-									onClick: () => {
-										setCheckerOpen(false);
-										runIssuePack();
-									},
-									children: "View PDF preview"
 								}), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-primary",
@@ -17785,8 +18966,24 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						})
 					]
 				})
-			})
+			}),
+			/* @__PURE__ */ jsxs("div", {
+				className: "ce-sticky-totals",
+				children: [
+					/* @__PURE__ */ jsxs("span", { children: ["BOL ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOL")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["BOTE ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOTE")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["BOCM ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOCM")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["PPE ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("PPE")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["MISC ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("MISC")) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["Contingency ", contPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * contPct / 100) })] }),
+					/* @__PURE__ */ jsxs("span", { children: ["Discount ", discPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * (1 + contPct / 100) * discPct / 100) })] }),
+					/* @__PURE__ */ jsxs("span", {
+						className: "ce-sticky-net",
+						children: ["Net ", /* @__PURE__ */ jsx("b", { children: fmt(netTotal) })]
+					})
 				]
+			})
+		]
 			})
 		]
 	});
@@ -23134,8 +24331,45 @@ var RCE_EVIDENCE_ITEMS = [
 function rceItem2Text(company) {
 	return `IN-LINE WITH COMPANY ${company === "Company 2" ? "2" : "1"} PRODUCTS AND SERVICES`;
 }
-function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = null, rceList = [], documentControl = {} }) {
+function clientContactText(client) {
+	if (!client) return "";
+	return [client.contact, client.contactPerson, client.contactNo, client.phone, client.mobile, client.email].map((v) => String(v || "").trim()).filter(Boolean).join(" · ");
+}
+function clientsRecentFirst(clients, rceList) {
+	const order = [];
+	const seen = /* @__PURE__ */ new Set();
+	const push = (client) => {
+		if (!client) return;
+		const key = String(client.id || client.fullName || client.clientCode || "").toLowerCase();
+		if (!key || seen.has(key)) return;
+		seen.add(key);
+		order.push(client);
+	};
+	[...(rceList || [])].slice().reverse().forEach((rce) => {
+		const name = String(rce.customer || rce.client || "").trim().toLowerCase();
+		if (!name) return;
+		push((clients || []).find((c) => String(c.fullName || "").trim().toLowerCase() === name || String(c.clientCode || "").trim().toLowerCase() === name));
+	});
+	(clients || []).forEach(push);
+	return order;
+}
+function RceDateQuick({ disabled, onPick }) {
+	if (disabled) return null;
+	const opts = [["Today", 0], ["+2 days", 2], ["+1 week", 7]];
+	return /* @__PURE__ */ jsx("span", {
+		className: "rce-date-quick",
+		children: opts.map(([label, days]) => /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			onClick: () => onPick(days ? addDaysLocal(days) : todayLocal()),
+			children: label
+		}, label))
+	});
+}
+function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = null, rceList = [], documentControl = {}, currentUserName = "" }) {
 	const clients = useMasterlist().clients || [];
+	const clientOptions = clientsRecentFirst(clients, rceList);
+	const draftKey = initialData ? `ce-rce-draft:${initialData.id || initialData.rceNo || "edit"}` : "ce-rce-draft:new";
 	const dc = documentControl || {};
 	const c1Name = dc.company1Name || "Company 1";
 	const c2Name = dc.company2Name || "Company 2";
@@ -23147,7 +24381,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			inquiryNumber: "",
 			inquiryDate: "",
 			rceNo: initialData?.rceNo || initialData?.id || nextDocNo("RCE", rceList),
-			rceDate: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+			rceDate: todayLocal(),
 			customer: "",
 			address: "",
 			projectTitle: "",
@@ -23162,7 +24396,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			estDurationDays: "",
 			otherRemarks: "",
 			declineReason: "",
-			preparedBy: "",
+			preparedBy: initialData ? "" : currentUserName || "",
 			reviewedBy: "",
 			approvedBy: ""
 		};
@@ -23228,6 +24462,23 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			setAttachments((prev) => [...prev, ...fileObjects]);
 		});
 	};
+	function markAllChecklist(value, onlyBlank) {
+		if (readOnly) return;
+		setChecklist((prev) => {
+			const next = { ...prev };
+			RCE_CHECKLIST_ITEMS.forEach((it) => {
+				if (onlyBlank && next[it.key]?.complete) return;
+				next[it.key] = {
+					...next[it.key],
+					complete: value
+				};
+			});
+			return next;
+		});
+	}
+	function rceErr(test) {
+		return fieldErrors.some(test);
+	}
 	function patchForm(partial) {
 		if (readOnly) return;
 		setForm((prev) => ({
@@ -23237,10 +24488,12 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}
 	function onCustomerChange(value) {
 		const needle = value.trim().toLowerCase();
-		const match = clients.find((c) => (c.fullName || "").toLowerCase() === needle || (c.clientCode || "").toLowerCase() === needle);
+		const match = clientOptions.find((c) => (c.fullName || "").toLowerCase() === needle || (c.clientCode || "").toLowerCase() === needle);
+		const contact = clientContactText(match);
 		patchForm({
 			customer: value,
-			address: match && match.address ? match.address : form.address
+			address: match && match.address ? match.address : form.address,
+			customerContact: contact || form.customerContact || ""
 		});
 	}
 	const checklistItemsForExport = RCE_CHECKLIST_ITEMS.map((it) => ({
@@ -23249,11 +24502,98 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		complete: checklist[it.key]?.complete || "",
 		remarks: checklist[it.key]?.remarks || ""
 	}));
+	const [fieldErrors, setFieldErrors] = useState([]);
+	const [draftNote, setDraftNote] = useState("");
+	const [draftOffer, setDraftOffer] = useState(null);
+	const draftReady = useRef(false);
+	const isExistingRce = !!(initialData && (initialData.id || initialData.rceNo));
+	function rceSavedAt(rce) {
+		const times = [];
+		(Array.isArray(rce?.timeline) ? rce.timeline : []).forEach((ev) => {
+			const t = Date.parse(ev?.at || "");
+			if (Number.isFinite(t)) times.push(t);
+		});
+		[rce?.updatedAt, rce?.rceDate, rce?.dateReceived].forEach((v) => {
+			const t = Date.parse(v || "");
+			if (Number.isFinite(t)) times.push(t);
+		});
+		return times.length ? Math.max(...times) : 0;
+	}
+	function applyRceDraft(saved) {
+		if (!saved?.form) return;
+		setForm((prev) => ({
+			...prev,
+			...saved.form
+		}));
+		if (saved.checklist) setChecklist(saved.checklist);
+		if (saved.company) setCompany(saved.company);
+		setDraftNote("Draft restored");
+	}
+	function discardRceDraft() {
+		try { localStorage.removeItem(draftKey); } catch {}
+		setDraftOffer(null);
+		draftReady.current = true;
+	}
+	function restoreRceDraft() {
+		if (draftOffer?.saved) applyRceDraft(draftOffer.saved);
+		setDraftOffer(null);
+		draftReady.current = true;
+	}
+	useEffect(() => {
+		if (readOnly) return;
+		draftReady.current = false;
+		try {
+			const raw = localStorage.getItem(draftKey);
+			if (raw) {
+				const saved = JSON.parse(raw);
+				if (saved?.form) {
+					if (!isExistingRce) {
+						applyRceDraft(saved);
+					} else {
+						const savedAt = Number(saved.at) || 0;
+						const rceAt = rceSavedAt(initialData);
+						const revSame = String(saved.rev ?? "") === String(initialData.revNo || "0");
+						const statusSame = String(saved.status ?? "") === String(initialData.status || "");
+						if (savedAt > rceAt && revSame && statusSame) {
+							setDraftOffer({ saved, at: savedAt });
+							return;
+						}
+						try { localStorage.removeItem(draftKey); } catch {}
+					}
+				}
+			}
+		} catch {}
+		draftReady.current = true;
+	}, []);
+	useEffect(() => {
+		if (readOnly || !draftReady.current) return;
+		const timer = setTimeout(() => {
+			try {
+				localStorage.setItem(draftKey, JSON.stringify({
+					form,
+					checklist,
+					company,
+					at: Date.now(),
+					rev: initialData?.revNo || "0",
+					status: initialData?.status || "",
+					updatedAt: initialData?.updatedAt || ""
+				}));
+				setDraftNote("Saved");
+			} catch {}
+		}, 700);
+		return () => clearTimeout(timer);
+	}, [form, checklist, company, readOnly, draftKey]);
 	const handleSubmit = () => {
 		if (readOnly) return;
 		const hard = rceHardBlocks(form, company);
+		setFieldErrors(hard);
 		if (hard.length) {
-			window.alert(hard.join("\n"));
+			requestAnimationFrame(() => {
+				document.querySelector(".rce-field-error, .rce-invalid")?.scrollIntoView({
+					behavior: "smooth",
+					block: "center"
+				});
+			});
 			return;
 		}
 		const soft = rceSoftWarns(form, checklist, attachments);
@@ -23268,6 +24608,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				return;
 			}
 		}
+		try {
+			localStorage.removeItem(draftKey);
+			localStorage.removeItem("ce-rce-draft:new");
+		} catch {}
 		const rceData = {
 			...form,
 			company,
@@ -23362,6 +24706,25 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				onClick: onBack,
 				children: "← Back"
 			}),
+			draftOffer ? /* @__PURE__ */ jsxs("div", {
+				className: "ce-save-note",
+				style: { display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.4rem 0" },
+				children: [
+					/* @__PURE__ */ jsx("span", { children: `Unsaved draft from ${new Date(draftOffer.at).toLocaleString()} —` }),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: restoreRceDraft,
+						children: "Restore"
+					}),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: discardRceDraft,
+						children: "Discard"
+					})
+				]
+			}) : null,
 			/* @__PURE__ */ jsxs("div", {
 				className: "rce-toolbar",
 				children: [
@@ -23467,16 +24830,17 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 										children: "Customer"
 									}),
 									/* @__PURE__ */ jsx("input", {
-										className: "ce-input",
+										className: "ce-input" + (rceErr((m) => m.startsWith("Customer")) ? " rce-invalid" : ""),
 										list: "rce-client-list",
 										value: form.customer,
 										disabled: readOnly,
 										placeholder: "Select a client or type a new name",
 										onChange: (e) => onCustomerChange(e.target.value)
 									}),
+									rceErr((m) => m.startsWith("Customer")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Customer is required." }) : null,
 									/* @__PURE__ */ jsx("datalist", {
 										id: "rce-client-list",
-										children: clients.map((c) => /* @__PURE__ */ jsx("option", {
+										children: clientOptions.map((c) => /* @__PURE__ */ jsx("option", {
 											value: c.fullName || c.clientCode || "",
 											children: [c.clientCode, c.fullName].filter(Boolean).join(" — ")
 										}, c.id))
@@ -23522,9 +24886,22 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								className: "ce-field rce-fl",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
+									children: "Contact"
+								}), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									value: form.customerContact || "",
+									disabled: readOnly,
+									placeholder: "Filled when the client record has contact details",
+									onChange: (e) => patchForm({ customerContact: e.target.value })
+								})]
+							}),
+							/* @__PURE__ */ jsxs("label", {
+								className: "ce-field rce-fl",
+								children: [/* @__PURE__ */ jsx("span", {
+									className: "ce-field-label",
 									children: "Priority"
 								}), /* @__PURE__ */ jsxs("select", {
-									className: "ce-input",
+									className: "ce-input" + (rceErr((m) => m.startsWith("Priority")) ? " rce-invalid" : ""),
 									value: form.priorityLevel,
 									disabled: readOnly,
 									onChange: (e) => patchForm({ priorityLevel: e.target.value }),
@@ -23535,7 +24912,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 										/* @__PURE__ */ jsx("option", { children: "Urgent" }),
 										/* @__PURE__ */ jsx("option", { children: "Emergency" })
 									]
-								})]
+								}), rceErr((m) => m.startsWith("Priority")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Priority is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("label", {
 								className: "ce-field rce-fl rce-fl-span",
@@ -23543,12 +24920,12 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									className: "ce-field-label",
 									children: "Project title"
 								}), /* @__PURE__ */ jsx("input", {
-									className: "ce-input",
+									className: "ce-input" + (rceErr((m) => m.startsWith("Project title")) ? " rce-invalid" : ""),
 									value: form.projectTitle,
 									disabled: readOnly,
 									placeholder: "Short job title",
 									onChange: (e) => patchForm({ projectTitle: e.target.value })
-								})]
+								}), rceErr((m) => m.startsWith("Project title")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Project title is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
 								className: "ce-field rce-fl",
@@ -23592,13 +24969,13 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 												className: "ce-field-label",
 												children: "Est. days"
 											}), /* @__PURE__ */ jsx("input", {
-												className: "ce-input",
+												className: "ce-input" + (rceErr((m) => /duration/i.test(m)) ? " rce-invalid" : ""),
 												type: "number",
 												min: "1",
 												value: form.estDurationDays,
 												disabled: readOnly,
 												onChange: (e) => patchForm({ estDurationDays: e.target.value })
-											})]
+											}), rceErr((m) => /duration/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Onsite is ticked — enter estimated duration in days." }) : null]
 										}) : null
 									]
 								})]
@@ -23609,12 +24986,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									className: "ce-field-label",
 									children: "CE deadline"
 								}), /* @__PURE__ */ jsx("input", {
-									className: "ce-input",
+									className: "ce-input" + (rceErr((m) => m.startsWith("CE deadline")) ? " rce-invalid" : ""),
 									type: "date",
 									value: form.ceDeadline,
 									disabled: readOnly,
 									onChange: (e) => patchForm({ ceDeadline: e.target.value })
-								})]
+								}), /* @__PURE__ */ jsx(RceDateQuick, {
+									disabled: readOnly,
+									onPick: (value) => patchForm({ ceDeadline: value })
+								}), rceErr((m) => m.startsWith("CE deadline")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "CE deadline is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
 								className: "ce-field rce-fl",
@@ -23659,6 +25039,9 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									value: form.submissionDeadline,
 									disabled: readOnly,
 									onChange: (e) => patchForm({ submissionDeadline: e.target.value })
+								}), /* @__PURE__ */ jsx(RceDateQuick, {
+									disabled: readOnly,
+									onPick: (value) => patchForm({ submissionDeadline: value })
 								})]
 							})
 						]
@@ -23695,6 +25078,22 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							}) }, `${name}-${idx}`);
 						})
 					}),
+					/* @__PURE__ */ jsxs("div", {
+						className: "rce-toolbar",
+						children: [/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly,
+							onClick: () => markAllChecklist("YES", false),
+							children: "Mark all Yes"
+						}), /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly,
+							onClick: () => markAllChecklist("N/A", true),
+							children: "Set remaining to N/A"
+						}), rceErr((m) => /work type/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Tick at least one work type (Onsite, Shopwork, or Trading)." }) : null]
+					}),
 					/* @__PURE__ */ jsx("p", {
 						className: "rce-section-label",
 						children: "Scope checklist"
@@ -23707,9 +25106,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								/* @__PURE__ */ jsxs("colgroup", { children: [
 									/* @__PURE__ */ jsx("col", { style: { width: `${widths.itemNo}px` } }),
 									/* @__PURE__ */ jsx("col", { style: { width: `${widths.description}px` } }),
-									/* @__PURE__ */ jsx("col", { style: { width: `${widths.yes}px` } }),
-									/* @__PURE__ */ jsx("col", { style: { width: `${widths.no}px` } }),
-									/* @__PURE__ */ jsx("col", { style: { width: `${widths.na}px` } }),
+									/* @__PURE__ */ jsx("col", { style: { width: `${widths.yes + widths.no + widths.na}px` } }),
 									/* @__PURE__ */ jsx("col", { style: { width: `${widths.remarks}px` } })
 								] }),
 								/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
@@ -23727,21 +25124,9 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									}),
 									/* @__PURE__ */ jsx(ResizableTh, {
 										colKey: "yes",
-										width: widths.yes,
+										width: widths.yes + widths.no + widths.na,
 										onResize: updateWidth,
-										children: "Yes"
-									}),
-									/* @__PURE__ */ jsx(ResizableTh, {
-										colKey: "no",
-										width: widths.no,
-										onResize: updateWidth,
-										children: "No"
-									}),
-									/* @__PURE__ */ jsx(ResizableTh, {
-										colKey: "na",
-										width: widths.na,
-										onResize: updateWidth,
-										children: "N/A"
+										children: "Answer"
 									}),
 									/* @__PURE__ */ jsx(ResizableTh, {
 										colKey: "remarks",
@@ -23911,6 +25296,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						onClick: handleSubmit,
 						children: "Submit"
 					}),
+					draftNote ? /* @__PURE__ */ jsx("span", {
+						className: "ce-save-note",
+						children: draftNote
+					}) : null,
 					/* @__PURE__ */ jsx("button", {
 						className: "ce-btn-ghost",
 						type: "button",
@@ -23923,7 +25312,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	});
 }
 function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, onRemarksChange, readOnly = false, indent = false }) {
-	const mark = (val) => {
+	const setMark = (val) => {
 		if (readOnly) return;
 		onCompleteChange(complete === val ? "" : val);
 	};
@@ -23936,20 +25325,22 @@ function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, on
 			className: indent ? "rce-indent-desc" : "",
 			children: desc
 		}),
-		[
-			"YES",
-			"NO",
-			"N/A"
-		].map((val) => /* @__PURE__ */ jsx("td", {
+		/* @__PURE__ */ jsx("td", {
 			className: "rce-check-cell",
-			children: /* @__PURE__ */ jsx("input", {
-				type: "checkbox",
-				checked: complete === val,
-				disabled: readOnly,
-				"aria-label": `${val} for item ${num3}`,
-				onChange: () => mark(val)
+			colSpan: 1,
+			children: /* @__PURE__ */ jsx("span", {
+				className: "rce-tri",
+				role: "group",
+				"aria-label": `Answer for item ${num3}`,
+				children: ["YES", "NO", "N/A"].map((val) => /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "rce-tri-btn" + (complete === val ? " is-on" : ""),
+					disabled: readOnly,
+					onClick: () => setMark(val),
+					children: val === "N/A" ? "N/A" : val === "YES" ? "Yes" : "No"
+				}, val))
 			})
-		}, val)),
+		}),
 		/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
 			className: "rce-cell-input",
 			type: "text",
@@ -24083,7 +25474,7 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 		}) : null
 	] });
 }
-function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAccept, onReject, onWithdraw, onRevise, onCancelRequest, onReplyInfo, onSubmitRevision, actingUser, actingLevel, liveCe, canPreviewGenerate }) {
+function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAccept, onReject, onWithdraw, onRevise, onCancelRequest, onReplyInfo, onSubmitRevision, onDuplicate, actingUser, actingLevel, liveCe, canPreviewGenerate }) {
 	const [remarks, setRemarks] = useState("");
 	const step = currentApprovalStep(rce?.approval);
 	const canAct = canActOnStep(step, actingLevel);
@@ -24106,6 +25497,12 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 				className: "ce-btn-ghost ce-btn-sm",
 				onClick: onBack,
 				children: "← Back to RCE Inbox"
+			}),
+			/* @__PURE__ */ jsx("button", {
+				className: "ce-btn-ghost ce-btn-sm",
+				type: "button",
+				onClick: () => onDuplicate?.(rce),
+				children: "Duplicate"
 			}),
 			/* @__PURE__ */ jsx(SalesRCEForm, {
 				readOnly: !editable,
@@ -24619,11 +26016,12 @@ function navKeyForView(view) {
 	if (view === "rce-form" || view === "rce-detail" || view === "rce-inbox") return "monitoring";
 	return view;
 }
-function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave }) {
+function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [bellOpen, setBellOpen] = useState(false);
 	const activeKey = navKeyForView(currentView);
-	const unread = unreadNotices(notifications, actingUser).length;
+	const visibleNotices = (notifications || []).filter((n) => noticeVisible(n, actingUser, actingLevel));
+	const unread = unreadNotices(notifications, actingUser, actingLevel).length;
 	const go = (next) => {
 		if (!next || next === currentView) return;
 		if ((currentView === "editor" || currentView === "scope-editor") && onRequestLeave) {
@@ -24663,12 +26061,19 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 				!collapsed && /* @__PURE__ */ jsxs("div", {
 					className: "ce-acting",
 					children: [
-						/* @__PURE__ */ jsx("label", { children: "Acting as" }),
+						/* @__PURE__ */ jsx("label", { children: testMode ? "Acting as · TEST MODE" : "Acting as" }),
 						/* @__PURE__ */ jsx("select", {
 							className: "ce-input",
 							value: actingUser || "",
-							onChange: (e) => onActingUser?.(e.target.value),
-							children: (users || []).map((u) => /* @__PURE__ */ jsxs("option", {
+							disabled: !testMode,
+							onChange: (e) => {
+								if (testMode) onActingUser?.(e.target.value);
+							},
+							children: (testMode ? users : [{
+								id: "self",
+								name: actingUser,
+								level: actingLevel
+							}]).map((u) => /* @__PURE__ */ jsxs("option", {
 								value: u.name,
 								children: [
 									u.name,
@@ -24729,14 +26134,14 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 								children: [/* @__PURE__ */ jsx("b", { children: "Inbox" }), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
-									disabled: !(notifications || []).length,
+									disabled: !visibleNotices.length,
 									onClick: () => onClearAll?.(),
 									children: "Clear all"
 								})]
-							}), (notifications || []).length === 0 && /* @__PURE__ */ jsx("p", {
+							}), (visibleNotices || []).length === 0 && /* @__PURE__ */ jsx("p", {
 								className: "ce-empty",
 								children: "No notices yet."
-							}), (notifications || []).slice(0, 20).map((n) => /* @__PURE__ */ jsxs("button", {
+							}), visibleNotices.slice(0, 20).map((n) => /* @__PURE__ */ jsxs("button", {
 								type: "button",
 								className: "ce-bell-item" + (!n.read ? " unread" : ""),
 								onClick: () => {
@@ -24750,7 +26155,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 								]
 							}, n.id))]
 						})]
-					}), NAV_ITEMS.filter((item) => item.pinBottom).map((item) => {
+					}), NAV_ITEMS.filter((item) => item.pinBottom && (item.key !== "admin" || canAdmin)).map((item) => {
 						const Icon = item.icon;
 						const isActive = activeKey === item.key;
 						return /* @__PURE__ */ jsxs("button", {
@@ -24802,7 +26207,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		]
 	});
 }
-function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
+function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "" }) {
 	const workspace = initialWorkspace || {};
 	const extras = workspace.schemaConfig?.__app || {};
 	const [currentView, setCurrentView] = useState("dashboard");
@@ -24902,19 +26307,31 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		persistTick
 	]);
 	const [selectedRCE, setSelectedRCE] = useState(null);
+	const [rceSeed, setRceSeed] = useState(null);
 	const [editingUser, setEditingUser] = useState(currentUserName || null);
 	const activeUsers = (adminConfig.users || []).filter((u) => u.status !== "inactive");
+	const realLevel = ["admin", "head", "lead", "staff"].includes(String(accountRole || "").toLowerCase()) ? String(accountRole).toLowerCase() : "staff";
+	const isAdminAccount = realLevel === "admin" && !!accountUserId;
+	const lockedName = accountName || currentUserName || "";
 	useEffect(() => {
+		if (!isAdminAccount) {
+			if (lockedName && editingUser !== lockedName) setEditingUser(lockedName);
+			return;
+		}
 		const names = activeUsers.map((u) => u.name).filter(Boolean);
-		if (!names.length) return;
-		if (!names.includes(editingUser)) setEditingUser(names[0]);
-	}, [adminConfig, editingUser]);
+		if (lockedName && editingUser !== lockedName && !names.includes(editingUser)) setEditingUser(lockedName);
+	}, [adminConfig, editingUser, isAdminAccount, lockedName]);
 	const [isEditorLocked, setIsEditorLocked] = useState(false);
 	const [editorReturn, setEditorReturn] = useState("monitoring");
 	const [headerEditing, setHeaderEditing] = useState(false);
 	const [pendingLeave, setPendingLeave] = useState("");
-	const editorName = editingUser || currentUserName || "Estimator A";
-	const actingLevel = userLevel(adminConfig, editorName);
+	const editorName = editingUser || lockedName || "Estimator A";
+	const actingLevel = realLevel;
+	const impersonating = isAdminAccount && !!accountUserId && editorName !== lockedName;
+	noteSecurityActor(accountUserId, impersonating ? accountUserId : "");
+	useEffect(() => {
+		if (currentView === "admin" && !isAdminAccount) setCurrentView("dashboard");
+	}, [currentView, isAdminAccount]);
 	const notice = (partial) => {
 		setNotifications((prev) => pushNotice(prev, {
 			type: partial.type || NOTICE_EVENTS.APPROVAL,
@@ -25010,7 +26427,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		const id = newRCE.id || newRCE.rceNo;
 		const existing = rceList.find((r) => (r.id || r.rceNo) === id);
 		const approval = startApproval(adminConfig?.approvalFlows?.rce || [], editorName);
-		const rev = existing ? nextRevLabel(existing.revNo) : "0";
+		const rev = existing ? existing.revNo ?? "" : "0";
+		const revisionPending = existing ? !!existing.revisionPending || rceIsFinalAccepted(existing) : false;
 		let priorTimeline = existing?.timeline || [];
 		if (existing) {
 			const prevRev = monRevKey(existing.revNo || "0");
@@ -25039,6 +26457,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			approvedBy: "",
 			submittedBy: editorName,
 			revNo: rev,
+			revisionPending,
 			status: "For approval",
 			assignedTo: null,
 			isNew: true,
@@ -25072,7 +26491,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			actor: editorName,
 			level: actingLevel,
 			decision: "accept",
-			remarks
+			remarks,
+			createdBy: rce.preparedBy || rce.createdBy || "",
+			submittedBy: rce.submittedBy || "",
+			byUserId: accountUserId || "",
+			actedByUserId: impersonating ? accountUserId : ""
 		});
 		if (!result.ok) {
 			window.alert(result.reason);
@@ -25080,7 +26503,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		}
 		const nextStatus = result.final ? "Accepted" : "For approval";
 		const parties = partiesFromApproval(result.approval);
-		patchRce(id, (r) => ({
+		patchRce(id, (r) => {
+			const pending = !!r.revisionPending;
+			const assignRev = result.final && pending;
+			const revNo = assignRev ? nextRevLabel(r.revNo) : r.revNo;
+			return {
 			...r,
 			preparedBy: parties.preparedBy || r.preparedBy,
 			reviewedBy: parties.reviewedBy || r.reviewedBy,
@@ -25088,13 +26515,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			approval: result.approval,
 			status: nextStatus,
 			isNew: result.final,
+			revNo,
+			revisionPending: assignRev ? false : !!r.revisionPending,
 			timeline: appendTimeline(r.timeline, timelineEntry({
 				who: editorName,
 				action: result.final ? "Final accepted" : "Step approved",
 				remarks,
-				rev: r.revNo
+				rev: revNo
 			}))
-		}));
+		};
+		});
 		if (result.final) notice({
 			type: NOTICE_EVENTS.RCE_ACCEPTED,
 			title: "RCE accepted",
@@ -25118,7 +26548,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			actor: editorName,
 			level: actingLevel,
 			decision: "reject",
-			remarks
+			remarks,
+			createdBy: rce.preparedBy || rce.createdBy || "",
+			submittedBy: rce.submittedBy || "",
+			byUserId: accountUserId || "",
+			actedByUserId: impersonating ? accountUserId : ""
 		});
 		if (!result.ok) {
 			window.alert(result.reason);
@@ -25169,6 +26603,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			...r,
 			status: "For revision",
 			cancelPending: false,
+			revisionPending: !!r.revisionPending || rceIsFinalAccepted(r),
 			approval: {
 				...r.approval || {},
 				status: "paused"
@@ -25267,6 +26702,21 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		setSelectedRCE(rce);
 		setCurrentView("rce-detail");
 	};
+	const duplicateRce = (rce) => {
+		const seed = { ...rce || {} };
+		["id", "rceNo", "revNo", "approval", "timeline", "status", "submittedBy", "reviewedBy", "approvedBy", "attachments", "attachmentFiles", "remarksHistory", "infoRev", "cancelPending", "overrideReason", "isNew", "assignedTo", "ceId", "dateReceived"].forEach((key) => {
+			delete seed[key];
+		});
+		seed.rceDate = todayLocal();
+		seed.inquiryDate = "";
+		seed.ceDeadline = "";
+		seed.submissionDeadline = "";
+		seed.preparedBy = editorName;
+		seed.checklist = rce?.checklist ? JSON.parse(JSON.stringify(rce.checklist)) : void 0;
+		setSelectedRCE(null);
+		setRceSeed(seed);
+		setCurrentView("rce-form");
+	};
 	const openEditorForCE = (ce) => {
 		setEditorReturn(currentView === "dashboard" ? "dashboard" : "monitoring");
 		if (ce?.isNew) {
@@ -25314,7 +26764,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			return;
 		}
 		const id = nextCeNoForCompany(rce?.company || "", ceList, documents, rceList, adminConfig.documentControl);
-		const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+		const today = todayLocal();
 		const newCE = {
 			id,
 			client: payload.client,
@@ -25475,6 +26925,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						OIF: oifFiles
 					},
 					ceStatus: "Ongoing",
+					commercial: {
+						contingencyPct: defaultContingencyPct(adminConfig?.documentControl),
+						discountPct: 0,
+						validityDays: 30
+					},
 					projectInfo: {
 						docNo: id,
 						revNo: "",
@@ -25483,6 +26938,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						client: payload.client || rce?.customer || rce?.client || "",
 						location: payload.location || rce?.address || "",
 						date: today,
+						preparedBy: editorName,
 						electrical: !!rce?.electrical,
 						mechanical: !!rce?.mechanical,
 						days: rce?.estDurationDays || ""
@@ -25540,9 +26996,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			stayOnBoard: true
 		});
 	};
-	const handleSaveInspection = (form) => {
+	const handleSaveInspection = (form, opts = {}) => {
 		const id = form.id || nextDocNo("OIF", inspectionReports);
-		const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+		const today = todayLocal();
 		setInspectionReports((prev) => {
 			const idx = prev.findIndex((r) => r.id === id);
 			const prevRow = idx >= 0 ? prev[idx] : null;
@@ -25623,7 +27079,128 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			id,
 			oifNo: form.oifNo || id
 		}));
+		if (opts.andNew) {
+			setActiveOif({
+				oifNo: nextDocNo("OIF", [...inspectionReports, { id, oifNo: form.oifNo || id }]),
+				customerName: form.customerName || "",
+				customerAddress: form.customerAddress || "",
+				customerRep: form.customerRep || "",
+				contactNo: form.contactNo || ""
+			});
+			setCurrentView("inspection-form");
+			return;
+		}
 		setCurrentView(inspectionReturn || "dashboard");
+	};
+	const handleSendInspectionToCe = (form) => {
+		const ml = masterlistRef.current || {};
+		const bolList = ml.manpower || ml.BOL || [];
+		const matList = ml.consumables || ml.BOCM || [];
+		const days = num2(String(form.duration || "").replace(/[^0-9.]/g, "")) || 1;
+		const bolLines = (form.manpower || []).filter((row) => String(row.designation || "").trim()).map((row) => {
+			const filled = fillFromMasterlist("BOL", bolList, row.designation);
+			const hasRate = filled.masterlistId && num2(filled.rate) > 0;
+			return bolItem({
+				role: String(row.designation).trim(),
+				qty: num2(row.pax) || 1,
+				days,
+				rate: hasRate ? num2(filled.rate) : "",
+				masterlistId: filled.masterlistId || null,
+				perDiem: num2(filled.perDiem),
+				allowance: num2(filled.allowance),
+				otHrs: 0,
+				entryGap: !hasRate
+			});
+		});
+		const matLines = (form.materialRows || []).filter((row) => String(row.description || "").trim()).map((row) => {
+			const filled = fillFromMasterlist("BOCM", matList, row.description);
+			const hasRate = filled.masterlistId && num2(filled.unitCost) > 0;
+			return bocmItem({
+				description: String(row.description).trim(),
+				qty: num2(row.qty) || 1,
+				unit: filled.unit || "pc",
+				unitCost: hasRate ? num2(filled.unitCost) : "",
+				masterlistId: filled.masterlistId || null,
+				entryGap: !hasRate
+			});
+		});
+		const existing = form.ceId ? (ceList || []).find((ce) => ce.id === form.ceId) : null;
+		const DRAFT_STATUSES = ["Draft", "Ongoing", "On Park", "Waiting for information", "Sourcing", ""];
+		const editable = existing && DRAFT_STATUSES.includes(String(existing.status || ""));
+		if (editable && documents[existing.id]) {
+			setDocuments((prev) => {
+				const doc = prev[existing.id] || {};
+				const tasks = JSON.parse(JSON.stringify(doc.tasks || []));
+				let host = tasks[0];
+				if (!host) {
+					host = task(form.projectDescription || "From inspection", [subtask("From inspection", emptyItems())], "onsite");
+					tasks.push(host);
+				}
+				if (!host.subtasks?.length) host.subtasks = [subtask("From inspection", emptyItems())];
+				const sub = host.subtasks[0];
+				sub.items = { ...emptyItems(), ...sub.items || {} };
+				const exceptions = doc.rateExceptions || [];
+				sub.items.BOL = [...sub.items.BOL || [], ...bolLines.map((line) => priceFromException("BOL", line, exceptions))];
+				sub.items.BOCM = [...sub.items.BOCM || [], ...matLines.map((line) => priceFromException("BOCM", line, exceptions))];
+				return { ...prev, [existing.id]: { ...doc, tasks } };
+			});
+			return existing.id;
+		}
+		const id = nextDocNo("CE", ceNumberSources(ceList, documents));
+		const today = todayLocal();
+		const items = emptyItems();
+		items.BOL = bolLines;
+		items.BOCM = matLines;
+		const draftTask = task(form.projectDescription || "From inspection", [subtask("From inspection", items)], "onsite");
+		if (num2(days)) draftTask.duration = days;
+		const newCE = {
+			id,
+			client: form.customerName || "",
+			project: form.projectDescription || "Inspection draft",
+			location: form.customerAddress || "",
+			lastEdited: today,
+			lastEditedBy: editorName,
+			assignedTo: editorName,
+			status: "Ongoing",
+			isNew: true
+		};
+		setCeList((prev) => [...prev, newCE]);
+		setDocuments((prev) => ({
+			...prev,
+			[id]: {
+				...buildEmptyProject(),
+				meta: {
+					client: form.customerName || "",
+					title: form.projectDescription || "From inspection",
+					location: form.customerAddress || "",
+					date: today
+				},
+				tasks: [draftTask],
+				enabledWorkTypes: ["onsite"],
+				ceStatus: "Ongoing",
+				commercial: {
+					contingencyPct: defaultContingencyPct(adminConfig?.documentControl),
+					discountPct: 0,
+					validityDays: 30
+				},
+				projectInfo: {
+					docNo: id,
+					revNo: "",
+					revDate: "",
+					preparedBy: editorName,
+					date: today,
+					client: form.customerName || "",
+					description: form.projectDescription || ""
+				}
+			}
+		}));
+		if (form.id) handleUpdateInspection(form.id, { ceId: id });
+		setActiveOif((current) => ({
+			...current || {},
+			...form,
+			ceId: id
+		}));
+		return id;
 	};
 	const handleUpdateInspection = (id, patch) => {
 		setInspectionReports((prev) => prev.map((r) => r.id === id || r.oifNo === id ? {
@@ -25784,7 +27361,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 			actor: editorName,
 			level: actingLevel,
 			decision,
-			remarks
+			remarks,
+			createdBy: doc.projectInfo?.preparedBy || ce?.preparedBy || "",
+			submittedBy: ce?.submittedBy || doc.submittedBy || "",
+			byUserId: accountUserId || "",
+			actedByUserId: impersonating ? accountUserId : ""
 		});
 		if (!result.ok) {
 			window.alert(result.reason);
@@ -25810,6 +27391,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 				projectInfo.approvedStamp = stampText;
 				projectInfo.approvedTitle = projectInfo.approvedTitle || "Approver";
 			}
+		}
+		if (result.final && (projectInfo.revisionPending || doc.projectInfo?.revisionPending)) {
+			projectInfo.revNo = nextCeRevision(projectInfo.revNo || doc.projectInfo?.revNo || "");
+			projectInfo.revDate = todayLocal();
+			projectInfo.revisionPending = false;
 		}
 		const nextStatus = result.rejected ? "Ongoing" : result.final ? "Done" : "For approval";
 		const frozen = result.final ? freezeCeSnapshot({
@@ -25883,12 +27469,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 		const srcDoc = documents?.[ceId];
 		if (!source || !srcDoc || !(source.status === "Done" || ceFullySigned(srcDoc))) return;
 		if (source.status === "For revision") return;
-		const revNo = nextCeRevision(srcDoc.projectInfo?.revNo);
-		const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+		const today = todayLocal();
 		const info = {
 			...srcDoc.projectInfo || {},
-			revNo,
-			revDate: today,
+			revisionPending: true,
 			revisionNote: note
 		};
 		setCeList((prev) => prev.map((ce) => ce.id === ceId ? {
@@ -25910,7 +27494,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						who: editorName,
 						action: "Revision",
 						remarks: note,
-						rev: revNo
+						rev: srcDoc.projectInfo?.revNo || ""
 					}))
 				}
 			};
@@ -25932,10 +27516,21 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 				notifications,
 				actingUser: editorName,
 				actingLevel,
-				users: (adminConfig.users || []).filter((u) => u.status !== "inactive"),
-				onActingUser: (name) => setEditingUser(name),
-				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName)),
-				onClearAll: () => setNotifications([]),
+				users: isAdminAccount ? [
+					...lockedName && !(adminConfig.users || []).some((u) => u.name === lockedName) ? [{
+						id: accountUserId,
+						name: lockedName,
+						level: "admin"
+					}] : [],
+					...(adminConfig.users || []).filter((u) => u.status !== "inactive")
+				] : [],
+				onActingUser: (name) => {
+					if (isAdminAccount) setEditingUser(name);
+				},
+				testMode: isAdminAccount,
+				canAdmin: isAdminAccount,
+				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel)),
+				onClearAll: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
 				splitOpen: dockOpen,
 				onToggleSplit: () => setDockOpen((v) => !v),
 				saveState,
@@ -25991,14 +27586,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 								children: [/* @__PURE__ */ jsx("b", { children: "Inbox" }), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
-									disabled: !(notifications || []).length,
-									onClick: () => setNotifications([]),
+									disabled: !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)),
+									onClick: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
 									children: "Clear all"
 								})]
-							}), (notifications || []).length === 0 && /* @__PURE__ */ jsx("p", {
+							}), !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)) && /* @__PURE__ */ jsx("p", {
 								className: "ce-empty",
 								children: "No notices yet."
-							}), (notifications || []).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
+							}), (notifications || []).filter((n) => noticeVisible(n, editorName, actingLevel)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
 								type: "button",
 								className: "ce-bell-item",
 								onClick: () => {
@@ -26115,6 +27710,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						},
 						onNewRCE: () => {
 							setSelectedRCE(null);
+							setRceSeed(null);
 							setCurrentView("rce-form");
 						},
 						onOpenCE: openEditorForCE,
@@ -26160,6 +27756,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						documentControl: adminConfig.documentControl,
 						rceList,
 						taskTemplates,
+						onTaskTemplatesChange: setTaskTemplates,
 						adminConfig,
 						onBack: () => setPendingLeave(editorReturn),
 						onEditingChange: setHeaderEditing
@@ -26212,6 +27809,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 							documentControl: adminConfig.documentControl,
 							rceList,
 							taskTemplates,
+							onTaskTemplatesChange: setTaskTemplates,
 							adminConfig
 						}, tpl.id);
 					})(),
@@ -26319,7 +27917,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						},
 						onStartRevision: handleReviseArchivedCE,
 						onViewRCE: handleViewRCE,
-						onNewRCE: () => setCurrentView("rce-form"),
+						onNewRCE: () => {
+							setSelectedRCE(null);
+							setRceSeed(null);
+							setCurrentView("rce-form");
+						},
 						onOpenArchivedCE: openArchived,
 						onReviseArchivedCE: handleReviseArchivedCE,
 						inspectionReports,
@@ -26336,6 +27938,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 					}),
 					currentView === "inspection-form" && /* @__PURE__ */ jsx(InspectionFormView, {
 						initial: activeOif,
+						currentUserName: editorName,
+						priorReports: inspectionReports,
+						actingLevel,
+						checkTemplates: adminConfig.inspectionCheckTemplates || [],
+						onCheckTemplatesChange: (next) => {
+							if (!isAdminAccount) return;
+							setAdminConfig((prev) => normalizeAdminConfig({ ...prev, inspectionCheckTemplates: next }));
+						},
+						onSendToCe: handleSendInspectionToCe,
 						onBack: () => setCurrentView(inspectionReturn || "dashboard"),
 						onSave: handleSaveInspection
 					}),
@@ -26353,9 +27964,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						jobStatuses: JOB_STATUSES,
 						taskTemplates
 					}),
-					currentView === "admin" && /* @__PURE__ */ jsx(AdminHub, {
+					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsx(AdminHub, {
 						config: adminConfig,
-						onChange: (next) => setAdminConfig(normalizeAdminConfig(next))
+						onChange: (next) => {
+							if (!isAdminAccount) return;
+							setAdminConfig(normalizeAdminConfig(next));
+						}
 					}),
 					currentView === "scope" && /* @__PURE__ */ jsx(LibraryView, {
 						onCloneTemplate: (templateId) => console.log("Cloning template:", templateId),
@@ -26374,11 +27988,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						}
 					}),
 					currentView === "rce-form" && /* @__PURE__ */ jsx(SalesRCEForm, {
-						onSubmitRCE: handleSubmitRCE,
+						onSubmitRCE: (data) => {
+							setRceSeed(null);
+							handleSubmitRCE(data);
+						},
 						rceList,
 						documentControl: adminConfig.documentControl,
-						initialData: selectedRCE && (selectedRCE.status === "For revision" || selectedRCE.status === "Rejected") ? selectedRCE : null,
+						currentUserName: editorName,
+						initialData: rceSeed || (selectedRCE && (selectedRCE.status === "For revision" || selectedRCE.status === "Rejected") ? selectedRCE : null),
 						onBack: () => {
+							setRceSeed(null);
 							setMonitoringTab("rce");
 							setCurrentView("monitoring");
 						}
@@ -26394,6 +28013,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName }) {
 						onCancelRequest: handleCancelRequest,
 						onReplyInfo: handleReplyInfo,
 						onSubmitRevision: handleSubmitRCE,
+						onDuplicate: duplicateRce,
 						actingUser: editorName,
 						actingLevel,
 						liveCe: liveCeForRce(ceList, selectedRCE?.id || selectedRCE?.rceNo),
