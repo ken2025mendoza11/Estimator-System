@@ -54,3 +54,5 @@ Deploy the code before changing the database. The current database keeps working
 5. Sign in again. Saving, files, and roles now use the locked database. To make Ken an admin, edit the commented email line at the bottom of `apply-v2.sql` and run that line by itself.
 
 The undo block in that file is commented. Leave it commented unless the signed-in rules have to be reversed. It restores anonymous grants and the policies saved in `policy_backup_20261016`. It does not drop tables or delete rows.
+
+<!-- Deployed to Vercel project estimator-system on 2026-10-17. -->
