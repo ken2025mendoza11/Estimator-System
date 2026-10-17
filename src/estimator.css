@@ -1128,3 +1128,51 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
   .oif-checkline, .oif-mat-row { grid-template-columns: 1fr; }
   .oif-inline .ce-btn-ghost, .oif-sign .ce-btn-ghost { min-height: 44px; }
 }
+
+/* Summary sheets (BOL/BOTE/BOCM/PPE): frozen action column, pin, green plus, search */
+.ce-summary-block .ce-table.ce-sum-sheet th.ce-sum-actions,
+.ce-summary-block .ce-table.ce-sum-sheet td.ce-sum-actions { position: sticky; right: 0; z-index: 2; background: #fff; text-align: center; box-shadow: -1px 0 0 var(--border); padding-left: 0.1rem; padding-right: 0.1rem; white-space: nowrap; }
+.ce-summary-block .ce-table.ce-sum-sheet thead th.ce-sum-actions { z-index: 3; background: inherit; background-color: #fff; }
+.ce-summary-block .ce-table.ce-sum-sheet tr.ce-daytype-header td.ce-sum-actions,
+.ce-summary-block .ce-table.ce-sum-sheet tr.ce-sum-sub td.ce-sum-actions { background: inherit; }
+.ce-sum-actions-inner { display: inline-flex; align-items: center; gap: 0; }
+.ce-iconbtn.ce-iconbtn-add, .ce-iconbtn.ce-iconbtn-add:hover { color: #1f7a3a; }
+.ce-summary-block .ce-sum-sheet .ce-iconbtn { width: 1.3rem; height: 1.3rem; padding: 0; min-height: 0; }
+.ce-sum-name { display: inline-flex; align-items: center; gap: 0.15rem; max-width: 100%; }
+.ce-sum-name-text { overflow-wrap: anywhere; }
+.ce-where-wrap { position: relative; display: inline-flex; }
+.ce-where-pin { color: #1d4e89; }
+.ce-where-pop { position: absolute; top: calc(100% + 0.2rem); left: 0; z-index: 40; min-width: 26rem; max-width: 40rem; max-height: 18rem; overflow: auto; background: #fff; border: 1px solid var(--border); border-radius: 0.45rem; box-shadow: 0 8px 20px #00000022; padding: 0.4rem 0.5rem; text-align: left; font-weight: 400; }
+.ce-where-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.3rem; }
+.ce-where-table th, .ce-where-table td { padding: 0.15rem 0.35rem; font-size: 0.78rem; }
+.ce-scope-picker { min-width: min(36rem, 94vw); max-height: 85vh; overflow: auto; }
+.ce-scope-name { display: flex; flex-direction: column; gap: 0.45rem; }
+.ce-scope-name label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.8rem; }
+.ce-scope-table td { padding: 0.15rem 0.35rem; vertical-align: middle; }
+.ce-scope-qty { width: 5.5rem; }
+.ce-scope-status { white-space: nowrap; font-size: 0.78rem; color: var(--ink-soft); }
+.ce-scope-new { color: #1f7a3a; font-weight: 700; }
+.ce-sum-search { display: flex; align-items: center; gap: 0.35rem; margin: 0.3rem 0 0.45rem; color: var(--ink-soft); }
+.ce-sum-search input.ce-input { max-width: 22rem; text-align: left; padding-top: 0.2rem; padding-bottom: 0.2rem; }
+.ce-grouped-notes-group { margin-bottom: 0.5rem; }
+.ce-grouped-notes-title { margin: 0.35rem 0 0.15rem; font-size: 0.82rem; font-weight: 800; }
+/* BOL benefits */
+.ce-summary-block .ce-table.ce-sum-sheet th.ce-th-wrap { white-space: normal; line-height: 1.1; }
+.ce-summary-block .ce-table.ce-sum-sheet td.ce-benefit-cell { text-align: left; }
+.ce-summary-block .ce-table.ce-sum-sheet td.ce-benefit-cell input.ce-input { text-align: left; }
+.ce-calc-cell { position: relative; cursor: pointer; }
+.ce-calc-pop { position: absolute; top: calc(100% + 0.15rem); left: 0; z-index: 40; width: 18rem; white-space: normal; background: #fff; border: 1px solid var(--border); border-radius: 0.4rem; box-shadow: 0 6px 16px #00000022; padding: 0.35rem 0.5rem; font-family: var(--font-sans); font-size: 0.75rem; color: var(--ink); }
+.ce-summary-block .ce-table.ce-sum-sheet td.ce-perdiem-cell .ce-sum-peso,
+.ce-summary-block .ce-table.ce-sum-sheet td.ce-perdiem-cell input.ce-input { font-family: inherit; font-size: inherit; }
+/* Rows only as tall as their content (BOL/BOTE/BOCM/PPE/MISC) */
+.ce-summary-block .ce-table.ce-sum-sheet td,
+.ce-summary-block .ce-table td { vertical-align: middle; }
+.ce-summary-block .ce-table.ce-sum-sheet td input.ce-input { padding-top: 0; padding-bottom: 0; min-height: 0; height: auto; }
+.ce-summary-block .ce-iconbtn { min-height: 0; }
+.ce-sheet-notes.ce-sheet-notes-compact .ce-sheet-notes-list { padding-left: 0; margin-left: 0; list-style: none; }
+.ce-sheet-notes.ce-sheet-notes-compact .ce-sheet-notes-list li { margin-bottom: 0.1rem; padding: 0; }
+.ce-sheet-notes.ce-sheet-notes-compact textarea.ce-input { min-height: 0; height: auto; field-sizing: content; padding: 0.1rem 0.35rem; line-height: 1.25; resize: vertical; }
+.ce-sheet-notes.ce-sheet-notes-compact .ce-note-x, .ce-sheet-notes.ce-sheet-notes-compact .ce-btn-sm { padding-top: 0; padding-bottom: 0; }
+/* Notes start at the left edge of the Notes column */
+.ce-summary-block .ce-summary-notes-cell { text-align: left; padding-left: 0.35rem; white-space: pre-wrap; }
+.ce-sheet-notes.ce-sheet-notes-compact, .ce-sheet-notes.ce-sheet-notes-compact .ce-sheet-notes-head { text-align: left; padding-left: 0; margin-left: 0; }

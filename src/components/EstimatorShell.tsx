@@ -340,6 +340,20 @@ export function EstimatorShell() {
     };
   }, []);
 
+  // Offline-first (conservative): every change is already written to the local
+  // backup first. When the browser comes back online, push any unsaved change
+  // through the normal per-document save (same revisions / conflict handling).
+  const conflictOpenRef = useRef(false);
+  conflictOpenRef.current = conflictOpen;
+  useEffect(() => {
+    const onOnline = () => {
+      if (!hydrated.current || !dirty.current || conflictOpenRef.current) return;
+      write(latest.current);
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [write]);
+
   const reloadServer = useCallback(() => {
     setSaveState("saving");
     loadWorkspaceFromSupabase()

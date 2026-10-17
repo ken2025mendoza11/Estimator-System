@@ -1,6 +1,6 @@
 // @ts-nocheck
 'use client';
-import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { Activity, AlertCircle, Award, Bell, BookOpen, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsDownUp, ChevronsUpDown, ClipboardList, Clock, Copy, Database, Download, Eye, EyeOff, FileText, Filter, Flag, FolderPlus, GripVertical, HardHat, Layers, LayoutDashboard, Library, Package, Paperclip, Pencil, Pin, Plus, RefreshCw, Search, Settings, Shield, Tag, Trash2, Undo2, Upload, UploadCloud, Users, Wrench, X } from "lucide-react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -19,6 +19,7 @@ import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
 import { SystemManual } from "./SystemManual";
 import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
 import { checksumTotal, commercialNet, miscAmount, qtyUnitAmount, roundMoney } from "../lib/estimator/money";
+import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
 //#region src/components/CostEstimatorApp.jsx
 function interpolateDocTokens(template, vars) {
@@ -14602,7 +14603,7 @@ function summaryQueryMatch(label, query) {
 	if (!q) return true;
 	return String(label || "").toLowerCase().includes(q);
 }
-function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
+function BolShiftBlock({ label, rows, widths, updateWidth, onEdit, tools }) {
 	const limits = useLimitNotes();
 	const qtyTotal = rows.reduce((s, r) => s + num2(r.qty), 0);
 	const amount = roundMoney(rows.reduce((s, r) => s + num2(r.subtotal), 0));
@@ -14625,7 +14626,8 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.days}px` } }),
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.rate}px` } }),
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths.otHrs}px` } }),
-							/* @__PURE__ */ jsx("col", { style: { width: `${widths.subtotal}px` } })
+							/* @__PURE__ */ jsx("col", { style: { width: `${widths.subtotal}px` } }),
+							tools ? /* @__PURE__ */ jsx("col", { style: { width: "64px" } }) : null
 						] }),
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "itemNo", width: widths.itemNo, onResize: updateWidth, children: "Item No." }),
@@ -14634,11 +14636,12 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "days", width: widths.days, onResize: updateWidth, children: "Days" }),
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "rate", width: widths.rate, onResize: updateWidth, children: "Rate/Day" }),
 							/* @__PURE__ */ jsx(ResizableTh, { colKey: "otHrs", width: widths.otHrs, onResize: updateWidth, children: "OT Hrs" }),
-							/* @__PURE__ */ jsx(ResizableTh, { colKey: "subtotal", width: widths.subtotal, onResize: updateWidth, children: "Subtotal" })
+							/* @__PURE__ */ jsx(ResizableTh, { colKey: "subtotal", width: widths.subtotal, onResize: updateWidth, children: "Subtotal" }),
+							tools ? /* @__PURE__ */ jsx("th", { className: "ce-sum-actions", children: /* @__PURE__ */ jsx(SummaryAddBtn, { title: "Add a new item to this section", onClick: () => tools.onNew() }) }) : null
 						] }) }),
 						/* @__PURE__ */ jsx("tbody", { children: rows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center ce-sum-item", children: idx + 1 }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: r.role }),
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: tools ? /* @__PURE__ */ jsxs("span", { className: "ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: r.role }), /* @__PURE__ */ jsx(WhereBelongsPin, { tasks: tools.tasks, category: "BOL", rowKey: tools.keyOf(r.role), workType: tools.workType }), /* @__PURE__ */ jsx(SummaryAddBtn, { title: "Add this item to scopes", onClick: () => tools.onAddTo(r.role) })] }) : r.role }),
 							/* @__PURE__ */ jsx("td", { className: "ce-sum-center", children: /* @__PURE__ */ jsx("input", {
 								type: "number",
 								min: "0",
@@ -14667,7 +14670,8 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 								value: r.otHrs,
 								onChange: (e) => onEdit?.(r.role, { otHrs: e.target.value })
 							}) }),
-							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: [fmt(r.subtotal), limitNote(limits.rowNote(`${label}:${r.role}`))] })
+							/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono", children: [fmt(r.subtotal), limitNote(limits.rowNote(`${label}:${r.role}`))] }),
+							tools ? /* @__PURE__ */ jsx("td", { className: "ce-sum-actions", children: /* @__PURE__ */ jsxs("span", { className: "ce-sum-actions-inner", children: [/* @__PURE__ */ jsx(SummaryDeleteBtn, { label: r.role, onDelete: () => tools.onDelete(r.role) }), /* @__PURE__ */ jsx(SummaryAddBtn, { title: "Add a new item", onClick: () => tools.onNew() })] }) }) : null
 						] }, `${label}-${idx}`)) }),
 						/* @__PURE__ */ jsx("tfoot", { children: /* @__PURE__ */ jsxs("tr", {
 							className: "ce-sum-sub",
@@ -14678,7 +14682,8 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 								/* @__PURE__ */ jsx("td", {}),
 								/* @__PURE__ */ jsx("td", {}),
 								/* @__PURE__ */ jsx("td", {}),
-								/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono ce-sum-strong", children: fmt(amount) })
+								/* @__PURE__ */ jsx("td", { className: "ce-sum-money ce-mono ce-sum-strong", children: fmt(amount) }),
+								tools ? /* @__PURE__ */ jsx("td", { className: "ce-sum-actions" }) : null
 							]
 						}) })
 					]
@@ -14687,7 +14692,148 @@ function BolShiftBlock({ label, rows, widths, updateWidth, onEdit }) {
 		]
 	});
 }
-function BOLMasterSummary({ tasks, editsRef }) {
+function useDebouncedValue(value, delay = 220) {
+	const [out, setOut] = useState(value);
+	useEffect(() => {
+		const t = setTimeout(() => setOut(value), delay);
+		return () => clearTimeout(t);
+	}, [value, delay]);
+	return out;
+}
+function SummarySearchBox({ onChange, placeholder = "Search this sheet" }) {
+	const [text, setText] = useState("");
+	const debounced = useDebouncedValue(text, 220);
+	useEffect(() => {
+		onChange?.(debounced);
+	}, [debounced]);
+	return <div className="ce-sum-search">
+		<Search size={13} />
+		<input className="ce-input" type="search" value={text} placeholder={placeholder} aria-label="Search this sheet" onChange={(e) => setText(e.target.value)} />
+		{text ? <button type="button" className="ce-iconbtn" title="Clear search" onClick={() => setText("")}><X size={12} /></button> : null}
+	</div>;
+}
+function summaryWorkTypeOf(t) {
+	return taskWorkType(t);
+}
+function WhereBelongsPin({ tasks, category, rowKey, workType }) {
+	const [open, setOpen] = useState(false);
+	return <span className="ce-where-wrap">
+		<button type="button" className="ce-iconbtn ce-where-pin" title="Where it belongs" aria-expanded={open} onClick={(e) => {
+			e.stopPropagation();
+			setOpen((v) => !v);
+		}}><Pin size={12} /></button>
+		{open ? <WhereBelongsList tasks={tasks} category={category} rowKey={rowKey} workType={workType} onClose={() => setOpen(false)} /> : null}
+	</span>;
+}
+function WhereBelongsList({ tasks, category, rowKey, workType, onClose }) {
+	const scoped = workType && workType !== "all" ? tasksOfType(tasks, workType) : tasks;
+	const rows = itemLocations(scoped, category, rowKey, summaryWorkTypeOf);
+	const money = itemMoneyField(category);
+	return <div className="ce-where-pop" onClick={(e) => e.stopPropagation()}>
+		<div className="ce-where-head"><b>Where it belongs</b><button type="button" className="ce-iconbtn" title="Close" onClick={onClose}><X size={12} /></button></div>
+		{rows.length === 0 ? <p className="ce-empty">Not in any breakdown line.</p> : <table className="ce-table ce-where-table">
+			<thead><tr><th>Work type</th><th>Scope</th><th>Subtask</th>{category === "BOL" ? <><th>Day type</th><th>Shift</th></> : null}<th>Qty</th><th>Rate</th></tr></thead>
+			<tbody>{rows.map((r) => <tr key={`${r.subtaskId}-${r.item.id}`}>
+				<td>{workTypeMeta(r.workType).label}</td>
+				<td>{r.scope}</td>
+				<td>{r.subtask}</td>
+				{category === "BOL" ? <><td>{r.item.dayType || "Regular"}</td><td>{r.item.shift || "Day"}</td></> : null}
+				<td className="ce-right">{num2(r.item.qty)}</td>
+				<td className="ce-right ce-mono">{fmt(num2(r.item[money]))}</td>
+			</tr>)}</tbody>
+		</table>}
+	</div>;
+}
+function summaryScopes(tasks, workType) {
+	const { subtaskSchedule } = computeSchedule(tasks || []);
+	const list = [];
+	(tasks || []).forEach((t) => {
+		const wt = taskWorkType(t);
+		if (workType && workType !== "all" && wt !== workType) return;
+		flattenSubs(t).forEach((s) => list.push({ task: t, sub: s, workType: wt, sched: subtaskSchedule[`${t.id}:${s.id}`] }));
+	});
+	return list;
+}
+function ScopePicker({ category, tasks, workType, dispatch, preset, onClose }) {
+	const lists = useMasterlist();
+	const askName = !preset?.name;
+	const [name, setName] = useState(preset?.name || "");
+	const [dayType, setDayType] = useState(preset?.dayType || "Regular");
+	const [shift, setShift] = useState(preset?.shift || "Day");
+	const [named, setNamed] = useState(!askName);
+	const [picks, setPicks] = useState({});
+	const datalistId = useState(() => uid3("dl-pick"))[0];
+	const scopes = useMemo(() => summaryScopes(tasks, workType), [tasks, workType]);
+	const key = keyFor(category, name, dayType, shift);
+	const masterList = (lists?.[category] || []).filter(masterlistItemActive);
+	const hit = name.trim() ? databaseRateHit(category, category === "BOL" ? { role: name.trim() } : category === "PPE" ? { item: name.trim() } : { description: name.trim() }, lists?.[category]) : null;
+	const dbRate = hit ? category === "BOL" ? manpowerDailyRate(hit) : masterlistItemRate(hit) : 0;
+	const ticked = scopes.filter((s) => picks[s.sub.id]?.on && num2(picks[s.sub.id]?.qty) > 0);
+	function apply() {
+		const label = name.trim();
+		if (!label) return;
+		ticked.forEach((s) => {
+			const qty = num2(picks[s.sub.id].qty);
+			const plan = planMergeIntoScope(s.sub.items?.[category] || [], category, key, qty);
+			if (plan.mode === "add") dispatch({ type: "UPDATE_ITEM", taskId: s.task.id, subtaskId: s.sub.id, category, itemId: plan.itemId, patch: { qty: plan.to } });
+			else dispatch({ type: "ADD_ITEMS", taskId: s.task.id, subtaskId: s.sub.id, category, items: [newLineFor(category, { id: uid3(`${category.toLowerCase()}-item`), name: label, dayType, shift, qty, days: scheduleDays(s.sched), hit, rate: dbRate })] });
+		});
+		onClose?.();
+	}
+	return <div className="ce-modal-overlay" onClick={onClose}>
+		<div className="ce-modal-card ce-scope-picker" onClick={(e) => e.stopPropagation()}>
+			<div className="ce-where-head"><b>{askName ? "Add a new item" : `Add "${name}" to scopes`}</b><button type="button" className="ce-iconbtn" title="Close" onClick={onClose}><X size={14} /></button></div>
+			{!named ? <div className="ce-scope-name">
+				<label>Name<input className="ce-input" autoFocus list={datalistId} value={name} onChange={(e) => setName(e.target.value)} placeholder={category === "BOL" ? "Designation" : "Item description"} /></label>
+				<datalist id={datalistId}>{masterList.map((it) => <option key={it.id} value={masterlistItemLabel(category, it)} />)}</datalist>
+				{category === "BOL" ? <>
+					<label>Day type<select className="ce-input" value={dayType} onChange={(e) => setDayType(e.target.value)}>{DAY_TYPES.map((d) => <option key={d} value={d}>{d}</option>)}</select></label>
+					<label>Shift<select className="ce-input" value={shift} onChange={(e) => setShift(e.target.value)}><option value="Day">Day</option><option value="Night">Night</option></select></label>
+				</> : null}
+				<div className="ce-modal-actions"><button type="button" className="ce-btn-ghost ce-btn-sm" onClick={onClose}>Cancel</button><button type="button" className="ce-btn-primary ce-btn-sm" disabled={!name.trim()} onClick={() => setNamed(true)}>Next</button></div>
+			</div> : <div>
+				{category === "BOL" ? <p className="wiz-hint">{dayType} · {shift} shift</p> : null}
+				<p className="wiz-hint">Tick scopes and enter a qty. Matching lines get the qty added; others get a new line (days from the scope schedule, rate from the database{hit ? `: ${fmt(dbRate)}` : " — not found, rate 0"}). Nothing is split.</p>
+				{scopes.length === 0 ? <p className="ce-empty">No scopes in this section yet. Add one in Breakdown first.</p> : <table className="ce-table ce-scope-table"><tbody>{scopes.map((s) => {
+					const p = picks[s.sub.id] || {};
+					const plan = planMergeIntoScope(s.sub.items?.[category] || [], category, key, num2(p.qty));
+					return <tr key={s.sub.id}>
+						<td><input type="checkbox" checked={!!p.on} onChange={(e) => setPicks((prev) => ({ ...prev, [s.sub.id]: { ...prev[s.sub.id], on: e.target.checked } }))} /></td>
+						<td>{workType === "all" ? `${workTypeMeta(s.workType).label} · ` : ""}{s.task.title} / {s.sub.title}</td>
+						<td><input className="ce-input ce-scope-qty" type="number" min="0" value={p.qty ?? ""} placeholder="Qty" onChange={(e) => setPicks((prev) => ({ ...prev, [s.sub.id]: { ...prev[s.sub.id], qty: e.target.value, on: e.target.value !== "" ? true : prev[s.sub.id]?.on } }))} /></td>
+						<td className="ce-scope-status">{plan.mode === "add" ? `has ${plan.from} -> ${plan.to}` : <span className="ce-scope-new">new</span>}</td>
+					</tr>;
+				})}</tbody></table>}
+				<div className="ce-modal-actions">{askName ? <button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => setNamed(false)}>Back</button> : null}<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={onClose}>Cancel</button><button type="button" className="ce-btn-primary ce-btn-sm" disabled={!ticked.length} onClick={apply}>Add to {ticked.length} scope{ticked.length === 1 ? "" : "s"}</button></div>
+			</div>}
+		</div>
+	</div>;
+}
+function SummaryAddBtn({ title, onClick }) {
+	return <button type="button" className="ce-iconbtn ce-iconbtn-add" title={title} onClick={(e) => {
+		e.stopPropagation();
+		onClick?.();
+	}}><Plus size={13} /></button>;
+}
+function GroupedSummaryNotes({ tasks, wtFilter = "all" }) {
+	const groups = groupSortNotes(WORK_TYPES.filter((w) => wtFilter === "all" || wtFilter === w.id).map((w) => ({ id: w.id, label: w.label, rows: collectNotes(tasksOfType(tasks, w.id)) })));
+	if (!groups.length) return null;
+	return <div className="ce-summary-notes-block ce-grouped-notes">
+		<h4 className="ce-serif ce-summary-subheading">Breakdown notes</h4>
+		{groups.map((g) => <div key={g.id} className="ce-grouped-notes-group">
+			<h5 className="ce-grouped-notes-title">{g.label}</h5>
+			<table className="ce-table"><thead><tr><th>From</th><th>Notes</th></tr></thead><tbody>{g.rows.map((row) => <tr key={row.id}><td>{row.who}</td><td className="ce-summary-notes-cell">{row.notes}</td></tr>)}</tbody></table>
+		</div>)}
+	</div>;
+}
+function BenefitCalcCell({ value, explain, editable, onChange }) {
+	const [open, setOpen] = useState(false);
+	return <div className="ce-calc-cell" onClick={() => !editable && setOpen((v) => !v)}>
+		{editable ? <CommaMoneyInput value={value} onChange={onChange} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} /> : <span className="ce-calc-val">{fmt(value)}</span>}
+		{open ? <div className="ce-calc-pop">{explain}</div> : null}
+	</div>;
+}
+function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
 	const { widths, updateWidth } = useResizableColumns("bol-sum-col-widths", {
 		itemNo: 60,
 		role: 220,
@@ -14702,24 +14848,44 @@ function BOLMasterSummary({ tasks, editsRef }) {
 		role: 180,
 		qty: 70,
 		uom: 70,
-		days: 90,
+		days: 64,
 		monthly: 110,
-		thirteenth: 90,
-		sss: 80,
-		hdmf: 80,
-		phic: 80,
-		perDiem: 90,
+		thirteenth: 100,
+		sss: 100,
+		hdmf: 100,
+		phic: 100,
+		perDiem: 130,
 		allowance: 100,
 		total: 120
 	});
 	const [wtFilter, setWtFilter] = useState("all");
 	const [bolEdits, setBolEdits] = usePersistentEdits(editsRef, "bol");
 	const [benefitEdits, setBenefitEdits] = usePersistentEdits(editsRef, "bol-benefits");
-	const full = buildBolGroups(tasks);
+	const [search, setSearch] = useState("");
+	const [picker, setPicker] = useState(null);
+	const full = useMemo(() => buildBolGroups(tasks), [tasks]);
 	const allBOL = full.allBOL;
-	const scheduleMap = getScheduledItemMap(tasks, "BOL");
+	const scheduleMap = useMemo(() => getScheduledItemMap(tasks, "BOL"), [tasks]);
+	const typeModels = useMemo(() => {
+		const out = {};
+		WORK_TYPES.forEach((w) => {
+			const subset = tasksOfType(tasks, w.id);
+			out[w.id] = { subset, model: buildBolGroups(subset) };
+		});
+		return out;
+	}, [tasks]);
+	const toolsFor = (w, g) => dispatch ? {
+		tasks,
+		workType: w.id,
+		keyOf: (role) => keyFor("BOL", role, g.dt, g.shift),
+		onDelete: (role) => {
+			itemLocations(tasksOfType(tasks, w.id), "BOL", keyFor("BOL", role, g.dt, g.shift)).forEach((loc) => dispatch({ type: "DELETE_ITEM", taskId: loc.taskId, subtaskId: loc.subtaskId, category: "BOL", itemId: loc.item.id }));
+		},
+		onAddTo: (role) => setPicker({ workType: w.id, preset: { name: role, dayType: g.dt, shift: g.shift } }),
+		onNew: () => setPicker({ workType: w.id, preset: { dayType: g.dt, shift: g.shift } })
+	} : null;
 	const grandTotal = roundMoney(WORK_TYPES.reduce((sum, w) => {
-		const model = buildBolGroups(tasksOfType(tasks, w.id));
+		const model = typeModels[w.id].model;
 		return sum + BOL_SHIFT_GROUPS.reduce((block, g) => {
 			return block + Object.values(model.groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => {
 				return rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal);
@@ -14748,9 +14914,12 @@ function BOLMasterSummary({ tasks, editsRef }) {
 		const f = formulaNow();
 		const monthlyRate = b.rate * f.daysPerMonth;
 		const thirteenth = monthlyRate / (f.thirteenthDivisor || 12);
-		const sss = monthlyRate * f.sssPct / 100;
-		const hdmf = monthlyRate * f.hdmfPct / 100;
-		const phic = monthlyRate * f.phicPct / 100;
+		const sssFormula = monthlyRate * f.sssPct / 100;
+		const hdmfFormula = monthlyRate * f.hdmfPct / 100;
+		const phicFormula = monthlyRate * f.phicPct / 100;
+		const sss = overrideOr(sssFormula, benefitEdits[b.role]?.sss);
+		const hdmf = overrideOr(hdmfFormula, benefitEdits[b.role]?.hdmf);
+		const phic = overrideOr(phicFormula, benefitEdits[b.role]?.phic);
 		const perDiemBase = (() => {
 			let p = 0;
 			allBOL.forEach((it) => {
@@ -14774,6 +14943,14 @@ function BOLMasterSummary({ tasks, editsRef }) {
 			sss,
 			hdmf,
 			phic,
+			sssFormula,
+			hdmfFormula,
+			phicFormula,
+			sssPct: f.sssPct,
+			hdmfPct: f.hdmfPct,
+			phicPct: f.phicPct,
+			daysPerMonth: f.daysPerMonth,
+			thirteenthDivisor: f.thirteenthDivisor || 12,
 			perDiem,
 			allowance,
 			totalBenefits
@@ -14792,6 +14969,7 @@ function BOLMasterSummary({ tasks, editsRef }) {
 		allowance: 0,
 		totalBenefits: 0
 	}];
+	const shownBenefitsData = benefitsData.length > 0 ? filterRows(displayBenefitsData, search, (b) => b.role) : displayBenefitsData;
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-card ce-summary-block",
 		children: [
@@ -14815,11 +14993,17 @@ function BOLMasterSummary({ tasks, editsRef }) {
 				value: wtFilter,
 				onChange: setWtFilter
 			}),
+			/* @__PURE__ */ jsx(SummarySearchBox, { onChange: setSearch }),
+			picker && dispatch ? /* @__PURE__ */ jsx(ScopePicker, { category: "BOL", tasks, workType: picker.workType, preset: picker.preset, dispatch, onClose: () => setPicker(null) }) : null,
 			WORK_TYPES.filter((w) => wtFilter === "all" || wtFilter === w.id).map((w) => {
-				const subset = tasksOfType(tasks, w.id);
-				const model = buildBolGroups(subset);
+				const subset = typeModels[w.id].subset;
+				const model = typeModels[w.id].model;
 				if (wtFilter === "all" && model.allBOL.length === 0) return null;
 				const groups = model.groups;
+				const searching = String(search || "").trim() !== "";
+				const shownRows = (g) => filterRows(Object.values(groups[g.dt]?.[g.shift] || {}), search, (row) => row.role);
+				const shownCount = BOL_SHIFT_GROUPS.reduce((n, g) => n + shownRows(g).length, 0);
+				if (searching && shownCount === 0) return null;
 				return /* @__PURE__ */ jsxs("div", {
 					className: "ce-wt-block",
 					children: [
@@ -14828,11 +15012,12 @@ function BOLMasterSummary({ tasks, editsRef }) {
 							children: [
 								w.letter,
 								". ",
-								w.full
+								w.full,
+								dispatch ? /* @__PURE__ */ jsx(SummaryAddBtn, { title: `Add a new item to ${w.label}`, onClick: () => setPicker({ workType: w.id, preset: null }) }) : null
 							]
 						}),
 						...BOL_SHIFT_GROUPS.map((g) => {
-							const source = summarySort(Object.values(groups[g.dt]?.[g.shift] || {}), "BOL", (row) => row.role);
+							const source = summarySort(shownRows(g), "BOL", (row) => row.role);
 							if (!source.length) return null;
 							const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift));
 							return /* @__PURE__ */ jsx(BolShiftBlock, {
@@ -14840,6 +15025,7 @@ function BOLMasterSummary({ tasks, editsRef }) {
 								rows,
 								widths,
 								updateWidth,
+								tools: toolsFor(w, g),
 								onEdit: (role, patch) => setBolEdits(`${w.id}|${g.dt}|${g.shift}|${role}`, patch)
 							}, `${w.id}-${g.dt}-${g.shift}`);
 						}),
@@ -14851,12 +15037,11 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									className: "ce-subtotal-row",
 									children: [/* @__PURE__ */ jsxs("td", { children: ["Subtotal — ", w.label] }), /* @__PURE__ */ jsx("td", {
 										className: "ce-right ce-mono",
-										children: fmt(BOL_SHIFT_GROUPS.reduce((block, g) => block + Object.values(groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal), 0), 0))
+										children: fmt(BOL_SHIFT_GROUPS.reduce((block, g) => block + shownRows(g).reduce((rowSum, row) => rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal), 0), 0))
 									})]
 								}) })
 							})
 						}),
-						collectNotes(subset).length > 0 ? /* @__PURE__ */ jsx(SummaryNotesBlock, { tasks: subset }) : null
 					]
 				}, w.id);
 			}),
@@ -14893,7 +15078,6 @@ function BOLMasterSummary({ tasks, editsRef }) {
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.qty}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.uom}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.days}px` } }),
-								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.monthly}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.thirteenth}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.sss}px` } }),
 								/* @__PURE__ */ jsx("col", { style: { width: `${benWidths.hdmf}px` } }),
@@ -14933,37 +15117,35 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									colKey: "days",
 									width: benWidths.days,
 									onResize: updateBenWidth,
+									className: "ce-th-wrap",
 									children: "Total Days"
-								}),
-								/* @__PURE__ */ jsx(ResizableTh, {
-									colKey: "monthly",
-									width: benWidths.monthly,
-									onResize: updateBenWidth,
-									className: "ce-sum-left",
-									children: "Monthly Rate"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
 									colKey: "thirteenth",
 									width: benWidths.thirteenth,
 									onResize: updateBenWidth,
+									style: { textAlign: "center" },
 									children: "13th Pay"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
 									colKey: "sss",
 									width: benWidths.sss,
 									onResize: updateBenWidth,
+									style: { textAlign: "center" },
 									children: "SSS"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
 									colKey: "hdmf",
 									width: benWidths.hdmf,
 									onResize: updateBenWidth,
+									style: { textAlign: "center" },
 									children: "HDMF"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
 									colKey: "phic",
 									width: benWidths.phic,
 									onResize: updateBenWidth,
+									style: { textAlign: "center" },
 									children: "PHIC"
 								}),
 								/* @__PURE__ */ jsx(ResizableTh, {
@@ -14985,7 +15167,7 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									children: "Total"
 								})
 							] }) }),
-							/* @__PURE__ */ jsx("tbody", { children: displayBenefitsData.map((row, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+							/* @__PURE__ */ jsx("tbody", { children: shownBenefitsData.map((row, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-sum-center ce-sum-item",
 									children: idx + 1
@@ -15001,31 +15183,29 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									children: row.activeDays
 								}),
 								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.monthlyRate)
+									className: "ce-sum-left ce-mono ce-benefit-cell",
+									children: /* @__PURE__ */ jsx(BenefitCalcCell, {
+										value: row.thirteenth,
+										explain: `Monthly rate ${fmt(row.monthlyRate)} (${fmt(row.rate)}/day × ${row.daysPerMonth} days) ÷ ${row.thirteenthDivisor} = ${fmt(row.thirteenth)}`
+									})
 								}),
+								...["sss", "hdmf", "phic"].map((k) => /* @__PURE__ */ jsx("td", {
+									className: "ce-sum-left ce-benefit-cell",
+									children: row.role === "No manpower data" ? fmt(row[k]) : /* @__PURE__ */ jsx(BenefitCalcCell, {
+										editable: true,
+										value: benefitEdits[row.role] && Object.prototype.hasOwnProperty.call(benefitEdits[row.role], k) ? benefitEdits[row.role][k] : roundMoney(row[k]),
+										onChange: (next) => setBenefitEdits(row.role, { [k]: next === "" ? void 0 : next }),
+										explain: `Monthly rate ${fmt(row.monthlyRate)} (${fmt(row.rate)}/day × ${row.daysPerMonth} days) × ${row[`${k}Pct`]}% = ${fmt(row[`${k}Formula`])}${benefitEdits[row.role] && Object.prototype.hasOwnProperty.call(benefitEdits[row.role], k) ? " — overridden; clear the field to use the formula" : ""}`
+									})
+								}, k)),
 								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.thirteenth)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.sss)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.hdmf)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: fmt(row.phic)
-								}),
-								/* @__PURE__ */ jsx("td", {
-									className: "ce-sum-money ce-mono",
-									children: row.role === "No manpower data" ? fmt(row.perDiem) : /* @__PURE__ */ jsx(CommaMoneyInput, {
-										signed: true,
-										value: row.perDiem,
-										onChange: (next) => setBenefitEdits(row.role, { perDiem: next })
+									className: "ce-sum-money ce-perdiem-cell",
+									children: row.role === "No manpower data" ? fmt(row.perDiem) : /* @__PURE__ */ jsxs("span", {
+										className: "ce-sum-peso",
+										children: [/* @__PURE__ */ jsx("span", { children: "₱" }), /* @__PURE__ */ jsx(CommaMoneyInput, {
+											value: row.perDiem,
+											onChange: (next) => setBenefitEdits(row.role, { perDiem: next })
+										})]
 									})
 								}),
 								/* @__PURE__ */ jsx("td", {
@@ -15044,9 +15224,8 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: "Subtotal" }),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center ce-sum-strong",
-										children: displayBenefitsData.reduce((s, r) => s + num2(r.maxDailyQty), 0)
+										children: shownBenefitsData.reduce((s, r) => s + num2(r.maxDailyQty), 0)
 									}),
-									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {}),
@@ -15057,17 +15236,19 @@ function BOLMasterSummary({ tasks, editsRef }) {
 									/* @__PURE__ */ jsx("td", {}),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-money ce-mono ce-sum-strong",
-										children: fmt(displayBenefitsData.reduce((s, r) => s + num2(r.totalBenefits), 0))
+										children: fmt(shownBenefitsData.reduce((s, r) => s + num2(r.totalBenefits), 0))
 									})
 								]
 							}) }),
 													]
 					})
 				})]
-			})
+			}),
+			/* @__PURE__ */ jsx(GroupedSummaryNotes, { tasks, wtFilter })
 		]
 	});
 }
+const BOLMasterSummary = React.memo(BOLMasterSummaryImpl);
 function buildCategoryAutoRows(tasks, category, workType) {
 	const scheduleMap = getScheduledItemMap(tasks || [], category);
 	const rows = Object.entries(scheduleMap).map(([desc, data]) => {
@@ -15116,7 +15297,7 @@ function categoryEditedRow(category, row, edit, workType) {
 		subtotal
 	};
 }
-function AggregatedCategoryTab({ tasks, category, editsRef }) {
+function AggregatedCategoryTabImpl({ tasks, category, editsRef, dispatch }) {
 	const limits = useLimitNotes();
 	const [manualRows, setManualRows] = useState([]);
 	const [autoEdits, setAutoEdits] = usePersistentEdits(editsRef, `cat-${category}`);
@@ -15129,17 +15310,27 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 		rate: 130,
 		electricity: 120,
 		subtotal: 130,
-		action: 50
+		action: 64
 	});
+	const [search, setSearch] = useState("");
+	const [picker, setPicker] = useState(null);
 	const meta = CATEGORY_META[category];
 	const summaryHeaders = {
 		BOCM: "BILL OF CONSUMABLES & MATERIALS",
 		BOTE: "BILL OF TOOLS & EQUIPMENT",
 		PPE: "SAFETY & PERSONAL PROTECTIVE EQUIPMENT"
 	};
+	const autoByType = useMemo(() => {
+		const out = {};
+		WORK_TYPES.forEach((w) => {
+			const subset = tasksOfType(tasks, w.id);
+			out[w.id] = { subset, rows: buildCategoryAutoRows(subset, category, w.id) };
+		});
+		return out;
+	}, [tasks, category]);
 	const typeBlocks = WORK_TYPES.map((w) => {
-		const subset = tasksOfType(tasks, w.id);
-		const rows = buildCategoryAutoRows(subset, category, w.id).map((row) => categoryEditedRow(category, row, autoEdits[`${w.id}|${row.description}`], w.id));
+		const subset = autoByType[w.id].subset;
+		const rows = autoByType[w.id].rows.map((row) => categoryEditedRow(category, row, autoEdits[`${w.id}|${row.description}`], w.id));
 		return {
 			...w,
 			subset,
@@ -15187,6 +15378,16 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 		if (category === "BOTE") return roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate) + num2(r.qty) * num2(r.days) * num2(r.hoursPerDay) * num2(r.powerKw) * num2(r.kwhRate));
 		return roundMoney(num2(r.qty) * (category === "BOCM" || category === "PPE" ? num2(r.unitCost) : 1));
 	}
+	const searching = String(search || "").trim() !== "";
+	const shownBlocks = typeBlocks.map((b) => {
+		if (!searching) return { ...b, shownRows: b.rows, shownTotal: b.total };
+		const shownRows = filterRows(b.rows, search, (r) => r.description);
+		return { ...b, shownRows, shownTotal: roundMoney(shownRows.reduce((s2, r) => s2 + r.subtotal, 0)) };
+	});
+	const deleteRow = (workType, key) => {
+		if (!dispatch) return;
+		itemLocations(tasksOfType(tasks, workType), category, key).forEach((loc) => dispatch({ type: "DELETE_ITEM", taskId: loc.taskId, subtaskId: loc.subtaskId, category, itemId: loc.item.id }));
+	};
 	const showElec = category === "BOTE" && wtFilter !== "onsite";
 	const colCount = category === "BOTE" ? showElec ? 11 : 7 : 6;
 	const labelSpan = colCount - 2;
@@ -15213,13 +15414,15 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 				value: wtFilter,
 				onChange: setWtFilter
 			}),
+			/* @__PURE__ */ jsx(SummarySearchBox, { onChange: setSearch }),
+			picker && dispatch ? /* @__PURE__ */ jsx(ScopePicker, { category, tasks, workType: picker.workType, preset: picker.preset, dispatch, onClose: () => setPicker(null) }) : null,
 			/* @__PURE__ */ jsxs("p", {
 				className: "ce-qty-legend",
 				children: [
-					"Auto rows are read-only from Breakdown.",
-					category === "BOTE" ? " Qty = peak concurrent tools. Days = schedule window." : " Qty = total units from the breakdown.",
+					"Rows roll up from Breakdown.",
+					category === "BOTE" ? " Qty = peak concurrent tools. Days = schedule window." : " Qty = total units across the schedule.",
 					" ",
-					"Manual extras are labelled and need a note. Filter is for working; export uses All."
+					"Use the green + to add items to scopes. Filter and search are for working; export uses All."
 				]
 			}),
 			/* @__PURE__ */ jsx("div", {
@@ -15309,29 +15512,34 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 							/* @__PURE__ */ jsx(ResizableTh, {
 								colKey: "action",
 								width: widths.action,
-								onResize: updateWidth
+								onResize: updateWidth,
+								className: "ce-sum-actions",
+								children: dispatch ? /* @__PURE__ */ jsx(SummaryAddBtn, { title: "Add a new item", onClick: () => setPicker({ workType: wtFilter, preset: null }) }) : null
 							})
 						] }) }),
-						/* @__PURE__ */ jsxs("tbody", { children: [typeBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && (wtFilter !== "all" || b.rows.length > 0)).map((b) => {
-							const blockElec = category === "BOTE" && chargesPower(b.id) ? b.rows.reduce((s, r) => s + num2(r.electricity), 0) : 0;
+						/* @__PURE__ */ jsxs("tbody", { children: [shownBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && (wtFilter !== "all" || b.rows.length > 0) && (!searching || b.shownRows.length > 0)).map((b) => {
+							const blockElec = category === "BOTE" && chargesPower(b.id) ? b.shownRows.reduce((s, r) => s + num2(r.electricity), 0) : 0;
 							return /* @__PURE__ */ jsxs(React.Fragment, { children: [
-								/* @__PURE__ */ jsx("tr", {
+								/* @__PURE__ */ jsxs("tr", {
 									className: "ce-daytype-header",
-									children: /* @__PURE__ */ jsxs("td", {
-										colSpan: colCount,
+									children: [/* @__PURE__ */ jsxs("td", {
+										colSpan: colCount - 1,
 										children: [
 											b.letter,
 											". ",
 											b.full
 										]
-									})
+									}), /* @__PURE__ */ jsx("td", {
+										className: "ce-sum-actions",
+										children: dispatch ? /* @__PURE__ */ jsx(SummaryAddBtn, { title: `Add a new item to ${b.label}`, onClick: () => setPicker({ workType: b.id, preset: null }) }) : null
+									})]
 								}),
-								b.rows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+								b.shownRows.map((r, idx) => /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center ce-sum-item",
 										children: idx + 1
 									}),
-									/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: r.description }),
+									/* @__PURE__ */ jsx("td", { className: "ce-sum-left", children: dispatch ? /* @__PURE__ */ jsxs("span", { className: "ce-sum-name", children: [/* @__PURE__ */ jsx("span", { className: "ce-sum-name-text", children: r.description }), /* @__PURE__ */ jsx(WhereBelongsPin, { tasks, category, rowKey: r.description, workType: b.id }), /* @__PURE__ */ jsx(SummaryAddBtn, { title: "Add this item to scopes", onClick: () => setPicker({ workType: b.id, preset: { name: r.description } }) })] }) : r.description }),
 									category === "BOTE" ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("td", {
 										className: "ce-sum-center",
 										children: /* @__PURE__ */ jsx("input", {
@@ -15402,7 +15610,10 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 										className: "ce-sum-money ce-mono",
 										children: [fmt(r.subtotal), limitNote(limits.rowNote(`${b.id}|${r.description}`))]
 									}),
-									/* @__PURE__ */ jsx("td", {})
+									/* @__PURE__ */ jsx("td", {
+										className: "ce-sum-actions",
+										children: dispatch ? /* @__PURE__ */ jsxs("span", { className: "ce-sum-actions-inner", children: [/* @__PURE__ */ jsx(SummaryDeleteBtn, { label: r.description, onDelete: () => deleteRow(b.id, r.description) }), /* @__PURE__ */ jsx(SummaryAddBtn, { title: "Add a new item", onClick: () => setPicker({ workType: b.id, preset: null }) })] }) : null
+									})
 								] }, `${b.id}-auto-${idx}`)),
 								blockElec > 0 && /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
@@ -15424,7 +15635,7 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 										}),
 										/* @__PURE__ */ jsx("td", {
 											className: "ce-sum-money ce-mono",
-											children: fmt(b.total)
+											children: fmt(b.shownTotal)
 										}),
 										/* @__PURE__ */ jsx("td", {})
 									]
@@ -15536,27 +15747,11 @@ function AggregatedCategoryTab({ tasks, category, editsRef }) {
 					]
 				})
 			}),
-			/* @__PURE__ */ jsxs("button", {
-				className: "ce-add-row",
-				onClick: addManualRow,
-				type: "button",
-				children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manual extra row"]
-			}),
-			/* @__PURE__ */ jsx("p", {
-				className: "ce-empty",
-				style: {
-					textAlign: "left",
-					padding: "0 0 0.5rem"
-				},
-				children: "Auto rows come from Breakdown. Manual extra rows are extras only and are flagged on Submit."
-			}),
-			typeBlocks.filter((b) => (wtFilter === "all" || wtFilter === b.id) && collectNotes(b.subset).length > 0).map((b) => /* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsxs("h4", {
-				className: "ce-serif ce-summary-subheading",
-				children: ["Notes — ", b.label]
-			}), /* @__PURE__ */ jsx(SummaryNotesBlock, { tasks: b.subset })] }, `notes-${b.id}`))
+			/* @__PURE__ */ jsx(GroupedSummaryNotes, { tasks, wtFilter })
 		]
 	});
 }
+const AggregatedCategoryTab = React.memo(AggregatedCategoryTabImpl);
 function MISCSheet({ tasks = [] }) {
 	const { MISC: miscList } = useMasterlist();
 	const limits = useLimitNotes();
@@ -18204,6 +18399,9 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		label: "BOTE electricity",
 		amount: officialBase.elec
 	}, ...officialBase.taskLines].filter((c) => !(state.summaryIncludes || []).some((r) => r.source === c.key));
+	const summaryDispatchRef = useRef(dispatch);
+	summaryDispatchRef.current = dispatch;
+	const summaryDispatch = useCallback((action) => summaryDispatchRef.current?.(action), []);
 	const noteNode = (sheet, title, compact = false, icons = false) => /* @__PURE__ */ jsx(SheetNotesEditor, {
 		title,
 		compact,
@@ -18723,21 +18921,24 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								sowText,
 								setSowText
 							}),
-							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef }), noteNode("BOL", "Notes", true)] }),
+							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch: isEditorLocked ? null : summaryDispatch }), noteNode("BOL", "Notes", true)] }),
 							tab === "BOTE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOTE",
-								editsRef: summaryEditsRef
+								editsRef: summaryEditsRef,
+								dispatch: isEditorLocked ? null : summaryDispatch
 							}), noteNode("BOTE", "Notes", true)] }),
 							tab === "PPE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "PPE",
-								editsRef: summaryEditsRef
+								editsRef: summaryEditsRef,
+								dispatch: isEditorLocked ? null : summaryDispatch
 							}), noteNode("PPE", "Notes", true)] }),
 							tab === "BOCM" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOCM",
-								editsRef: summaryEditsRef
+								editsRef: summaryEditsRef,
+								dispatch: isEditorLocked ? null : summaryDispatch
 							}), noteNode("BOCM", "Notes", true)] }),
 							tab === "MISC" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(MISCSheet, { tasks: state.tasks }), noteNode("MISC", "Notes", true)] }),
 							tab === "MOB/DEMOB" && (() => {
