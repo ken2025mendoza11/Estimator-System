@@ -9,7 +9,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 1 | Phase 0: test sign-in, seed, guardrail files | done | `grok/phase-0` | https://github.com/ken2025mendoza11/Estimator-System/pull/1 |
 | 2 | GOLD: computation map + golden lock | done | `grok/phase-gold` | https://github.com/ken2025mendoza11/Estimator-System/pull/2 |
 | 3 | Phase 1A: data safety | done | `grok/phase-1a` | https://github.com/ken2025mendoza11/Estimator-System/pull/3 |
-| 4 | Phase 1B: access control and sign-in | pending | | |
+| 4 | Phase 1B: access control and sign-in | done | `grok/phase-1b` | https://github.com/ken2025mendoza11/Estimator-System/pull/4 |
 | 5 | Phase 1C: stable IDs and clone remap | pending | | |
 | 6 | CE-COMP: CE computation | pending | | |
 | 7 | Phase 4: calculator fixes | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 3 is done on `grok/phase-1a`, stacked on `grok/phase-gold`. Do not start Step 4 until Ken says `continue`.
+Item in progress: none. Step 3 is done on `grok/phase-1a`, stacked on `grok/phase-gold`. Step 4 is done on `grok/phase-1b`. Do not start Step 5 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -103,6 +103,49 @@ Risks:
 - A backup saved before this step has no revision map, so its first push uses the version just loaded.
 - The Excel cover no longer reads other sheets for the work-type columns. MOB is 0 unless a task has MOB lines.
 - `save_workspace_doc` is replaced in full (same signature) so the exists check can ship. Apply the new file, not both the old and the new.
+
+## Step 4 done
+
+Stacked on `grok/phase-1a` (https://github.com/ken2025mendoza11/Estimator-System/pull/3 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/4. Do not merge to `main`.
+
+Baseline before the first Step 4 edit (same tree as Step 3): `npm test` 225 + 88, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok.
+
+- `fedac25` Add pending accounts and stop direct document writes.
+- `0a051b6` Register a new account as pending and list access for admins.
+- `346f75d` Offer Microsoft sign-in beside Google when it is configured.
+- `167e3f9` Send attachment and import writes through the save function.
+- `912c66a` Hold a pending account off the records and gate acting-as.
+
+After Step 4: `npm test` 225 + 91, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Import, attachment migrate, and the OIF fold write through `save_workspace_doc`. A direct `workspace_docs` write remains only when that function is missing. A `forbidden` result is an error, not a version conflict.
+- SQL (not run) revokes authenticated insert, update, and delete on `workspace_docs`. Select stays. Signed approval steps must have `byUserId = auth.uid()` and a matching role (admin allowed). Done is allowed only when the approval is accepted. Task changes are refused on an accepted estimate. A non-admin `kind='admin'` write returns `ok: false`, "Only an admin can change settings.", not `skipped: true`.
+- `app_user_roles` gains `status` (default active), `requested_at`, `profile`, `decided_by`, `decided_at`. Helpers: `is_active_user`, `register_pending`, `grant_role`, `decline_user`, `disable_user`, `list_user_access`.
+- A signed-in account with no row is registered pending and sees "Waiting for admin approval" with no records. Existing rows stay active, so the current admin stays admin. If the new columns or functions are missing, accounts stay active and the app still loads.
+- The admin view lists the access queue and can grant staff, lead, head, or admin, or decline or disable. `AdminHub.jsx` was not edited.
+- Microsoft is offered beside Google only when both Microsoft env vars are set and the mode is not the Grok broker. It is not a trusted linking provider.
+- "Acting as" shows only for an admin on a test deployment (`isTestDeployment`).
+
+### R1
+
+`public.email_allowlist` and `email_is_allowed()`. An empty table allows everyone, the same rule as an empty `ESTIMATOR_ALLOWED_EMAILS`, so the current admin is not locked out. `issue-access.server.ts` was not edited. The env allowlist still gates tokens. JWT mint is unchanged.
+
+SQL written, not run: `supabase/p1b-access-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after the app is deployed and after the Step 3 numbering file. The rollback restores the Step 3 `save_workspace_doc` and the old `is_admin()`. It does not delete documents or role rows.
+
+Flags: none. These fixes ship on.
+
+Questions: none new. The Step 1 questions are still open.
+
+Risks:
+
+- After the SQL is applied, authenticated cannot insert, update, or delete `workspace_docs`. Staff with an active role can still save a CE through the function. Pending users cannot.
+- An empty `email_allowlist` allows every email at the database. The env allowlist still gates who receives a token.
+- A new Google account with no role row is inserted as staff/pending and sees no data.
+- Microsoft is not auto-linked to an existing Google account.
+- `is_admin()` now also requires status active. The rollback restores the previous function.
+- The PASS checks in the SQL file were not executed here.
 
 ### Golden table (today)
 
