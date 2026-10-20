@@ -9,6 +9,7 @@ import {
 } from "@/lib/estimator/supabase-workspace";
 import { docKey, changedDocKeys, mergeServerWithDirty, revisionsForDirtyPush, WorkspaceSaveError, type RevisionMap } from "@/lib/estimator/workspace-docs";
 import { loadAccountAccess, type AccountAccess } from "@/lib/supabase/account-role";
+import { getSignInOptions } from "@/lib/auth/sign-in-options";
 import { supabaseConfigError } from "@/lib/supabase/client";
 import { ensureSupabaseAccess } from "@/lib/supabase/session";
 import CostEstimatorApp from "@/components/CostEstimatorApp";
@@ -104,7 +105,10 @@ export function EstimatorShell() {
     userId: "",
     role: "staff",
     name: "",
+    status: "active",
+    note: "",
   });
+  const [testDeployment, setTestDeployment] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspacePayload>(() => defaultWorkspace());
@@ -227,6 +231,24 @@ export function EstimatorShell() {
   }, [signedInId]);
 
   useEffect(() => {
+    if (!signedInId) {
+      setTestDeployment(false);
+      return;
+    }
+    let cancelled = false;
+    getSignInOptions()
+      .then((options) => {
+        if (!cancelled) setTestDeployment(Boolean(options.testLogin));
+      })
+      .catch(() => {
+        if (!cancelled) setTestDeployment(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedInId]);
+
+  useEffect(() => {
     if (supabaseConfigError || isPending || !signedInId) return;
     let cancelled = false;
     ensureSupabaseAccess()
@@ -234,6 +256,11 @@ export function EstimatorShell() {
       .then((row) => {
         if (cancelled) return;
         setAccount(row);
+        if (row.status !== "active") {
+          setSessionReady(false);
+          setReady(true);
+          return;
+        }
         setSessionError(null);
         setSessionReady(true);
       })
@@ -435,6 +462,27 @@ export function EstimatorShell() {
     );
   }
 
+  if (account.status !== "active") {
+    const heading = account.status === "pending"
+      ? "Waiting for admin approval"
+      : "This account cannot open the estimator";
+    const copy = account.note
+      || (account.status === "pending"
+        ? "An administrator has to grant your role before any records are loaded."
+        : account.status === "declined"
+          ? "An administrator declined this account."
+          : "An administrator disabled this account.");
+    return (
+      <main className="ce-app ce-login">
+        <div className="ce-login-card">
+          <p className="ce-login-kicker">Estimator System</p>
+          <h1 className="ce-serif ce-login-title">{heading}</h1>
+          <p className="ce-login-copy">{copy}</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <>
       {(conflictOpen || saveNotice) && (
@@ -480,6 +528,7 @@ export function EstimatorShell() {
       accountUserId={account.userId}
       accountRole={account.role}
       accountName={account.name}
+      testDeployment={testDeployment}
     />
     </>
   );

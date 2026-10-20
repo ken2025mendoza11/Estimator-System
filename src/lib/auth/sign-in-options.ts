@@ -24,13 +24,14 @@ export const getSignInOptions = createServerFn({ method: "GET" }).handler(
   async (): Promise<SignInOptions> => {
     const { resolveAuthMode } = await import("./auth-mode");
     const { GROK_PROVIDERS } = await import("./providers");
-    const { mode, setupError } = resolveAuthMode(process.env);
+    const { mode, setupError, microsoft } = resolveAuthMode(process.env);
     const providers: SignInOption[] =
       mode === "grok"
         ? GROK_PROVIDERS.map((p) => ({ providerId: p.providerId, label: p.label, kind: "grok" as const }))
         : mode === "google"
           ? [{ providerId: "google", label: "Google", kind: "social" }]
           : [];
+    if (microsoft) providers.push({ providerId: "microsoft", label: "Microsoft", kind: "social" });
     const testLogin = isTestDeployment(process.env)
       ? {
           users: TEST_USERS.map((user) => ({

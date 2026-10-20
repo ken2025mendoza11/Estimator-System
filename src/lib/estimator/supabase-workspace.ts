@@ -265,6 +265,69 @@ async function readAllDocs(): Promise<StoredDoc[]> {
   return rows;
 }
 
+function missingSaveRpc(error: { message?: string; code?: string } | null): boolean {
+  const message = String(error?.message || "");
+  const code = String(error?.code || "");
+  if (code === "PGRST202" || code === "42883") return true;
+  return /save_workspace_doc/i.test(message) && /does not exist|could not find|schema cache/i.test(message);
+}
+
+/** Prefer the save function. A direct write is only the fallback when that function is not deployed. */
+async function writeWorkspaceDoc(input: {
+  kind: string;
+  id: string;
+  payload: Json;
+  ord: number;
+  expectedVersion: number | null;
+  ignoreExists?: boolean;
+}): Promise<void> {
+  const { data, error } = await supabase.rpc("save_workspace_doc", {
+    p_kind: input.kind,
+    p_doc_id: input.id,
+    p_payload: input.payload,
+    p_ord: input.ord,
+    p_expected: input.expectedVersion,
+    p_force: false,
+    p_delete: false,
+    p_mirror: null,
+  });
+  if (error) {
+    if (!missingSaveRpc(error)) throw error;
+    if (input.expectedVersion == null) {
+      const { error: writeError } = await supabase.from("workspace_docs").upsert(
+        {
+          kind: input.kind,
+          doc_id: input.id,
+          payload: input.payload,
+          version: 1,
+          ord: input.ord,
+          deleted_at: null,
+        },
+        { onConflict: "kind,doc_id", ignoreDuplicates: true },
+      );
+      if (writeError) throw writeError;
+      return;
+    }
+    const { data: updated, error: writeError } = await supabase
+      .from("workspace_docs")
+      .update({ payload: input.payload })
+      .eq("kind", input.kind)
+      .eq("doc_id", input.id)
+      .eq("version", input.expectedVersion)
+      .select("version");
+    if (writeError) throw writeError;
+    if (!updated?.length) {
+      throw new Error("A record changed while attachments were being moved. Reload before editing.");
+    }
+    return;
+  }
+  const result = (data || {}) as RpcResult;
+  if (input.ignoreExists && result.conflict === "exists") return;
+  if (result.forbidden || result.ok === false) {
+    throw new Error(result.reason || "The document could not be saved.");
+  }
+}
+
 async function importBlobDocs(payload: WorkspacePayload): Promise<void> {
   const docs = splitWorkspace(jsonSafe(payload));
   for (const doc of docs) {
@@ -276,18 +339,14 @@ async function importBlobDocs(payload: WorkspacePayload): Promise<void> {
         stored = doc.payload;
       }
     }
-    const { error } = await supabase.from("workspace_docs").upsert(
-      {
-        kind: doc.kind,
-        doc_id: doc.id,
-        payload: stored,
-        version: 1,
-        ord: doc.ord,
-        deleted_at: null,
-      },
-      { onConflict: "kind,doc_id", ignoreDuplicates: true },
-    );
-    if (error) throw error;
+    await writeWorkspaceDoc({
+      kind: doc.kind,
+      id: doc.id,
+      payload: stored as Json,
+      ord: doc.ord,
+      expectedVersion: null,
+      ignoreExists: true,
+    });
   }
 }
 
@@ -295,19 +354,13 @@ async function migrateFilePayloads(rows: StoredDoc[]): Promise<void> {
   for (const row of rows) {
     if (row.deleted || !payloadHasFileBodies(row.payload)) continue;
     const next = await rewritePayloadFiles(row.kind, row.id, row.payload);
-    const { data, error } = await supabase
-      .from("workspace_docs")
-      .update({ payload: next })
-      .eq("kind", row.kind)
-      .eq("doc_id", row.id)
-      .eq("version", row.version)
-      .select("version");
-    if (error) throw error;
-    if (!data?.length) {
-      throw new Error(
-        "A record changed while attachments were being moved. Reload before editing.",
-      );
-    }
+    await writeWorkspaceDoc({
+      kind: row.kind,
+      id: row.id,
+      payload: next,
+      ord: row.ord,
+      expectedVersion: row.version,
+    });
     row.payload = next;
   }
 }
@@ -411,19 +464,18 @@ async function foldOifBlob(rows: StoredDoc[]): Promise<void> {
     const storedPayload = payloadHasFileBodies(nextPayload)
       ? await rewritePayloadFiles("inspection", id, nextPayload as Json)
       : (nextPayload as Json);
-    const { data: updated, error: updateError } = await supabase
-      .from("workspace_docs")
-      .update({ payload: storedPayload })
-      .eq("kind", "inspection")
-      .eq("doc_id", id)
-      .eq("version", row.version)
-      .select("version");
-    if (updateError) throw updateError;
-    if (!updated?.length) {
+    try {
+      await writeWorkspaceDoc({
+        kind: "inspection",
+        id,
+        payload: storedPayload,
+        ord: row.ord,
+        expectedVersion: row.version,
+      });
+      row.payload = storedPayload;
+    } catch {
       remaining[id] = groups[id];
-      continue;
     }
-    row.payload = storedPayload;
   }
   const { error: writeError } = await supabase.from("app_settings").upsert(
     {
@@ -804,6 +856,8 @@ type SaveOptions = {
 type RpcResult = {
   ok?: boolean;
   skipped?: boolean;
+  forbidden?: boolean;
+  reason?: string;
   conflict?: "version" | "deleted" | "exists";
   version?: number;
 };
@@ -1107,6 +1161,13 @@ export async function saveWorkspaceToSupabase(
       const current = revisions[docKey(write.kind, write.id)];
       if (current) remember(revisions, write.kind, write.id, current.version, current.hash, true);
       continue;
+    }
+    if (result.forbidden) {
+      throw new WorkspaceSaveError(
+        result.reason || "You cannot save that change.",
+        conflicts,
+        revisions,
+      );
     }
     if (!result.ok || result.conflict) {
       const reason = result.conflict === "deleted"
