@@ -15,6 +15,7 @@ import {
 	screenOfficialTotal
 } from "./ceTotals.js";
 import { roundMoney } from "./money.js";
+import { phase8Findings } from "./phase8.js";
 
 export const CHECKER_RULES = [
 	{ id: "zero-missing", label: "Zero and empty amounts", severity: "error" },
@@ -40,7 +41,12 @@ export const CHECKER_RULES = [
 	{ id: "spelling", label: "Spelling", severity: "warning" },
 	{ id: "duplicate", label: "Same item and specs", severity: "error" },
 	{ id: "activity", label: "Same activity and day type", severity: "warning" },
-	{ id: "near-name", label: "Name close to a database item", severity: "warning" }
+	{ id: "near-name", label: "Name close to a database item", severity: "warning" },
+	{ id: "quote-over-db", label: "Quote price while a database price exists", severity: "error" },
+	{ id: "quote-missing", label: "Quotation reference missing from the library", severity: "warning" },
+	{ id: "availability", label: "Availability key", severity: "info" },
+	{ id: "client-location", label: "Client location", severity: "info" },
+	{ id: "pending-open", label: "Pending record still open", severity: "warning" }
 ];
 
 const CATS = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
@@ -465,6 +471,7 @@ export function runChecker(input) {
 			emit("direct-mismatch", "error", `Direct summary ${summary} does not match the breakdown ${breakdown}.`, { tab: "SUMMARY" });
 		}
 	}
+	phase8Findings(opts).forEach((row) => emit(row.id, row.severity, row.message, row.extra));
 	return {
 		findings,
 		errors: findings.filter((row) => row.severity === "error"),
