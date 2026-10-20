@@ -18,7 +18,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 10 | Phase 2c: signatures, DRAFT watermark, inspection | done | `grok/phase-2c` | https://github.com/ken2025mendoza11/Estimator-System/pull/10 |
 | 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | done | `grok/phase-5` | https://github.com/ken2025mendoza11/Estimator-System/pull/11 |
 | 12 | Phase 6: Equipment rates, reports, mobile viewer | done | `grok/phase-6` | https://github.com/ken2025mendoza11/Estimator-System/pull/12 |
-| 13 | Phase 7: Pre-submit checker | pending | | |
+| 13 | Phase 7: Pre-submit checker | done | `grok/phase-7` | https://github.com/ken2025mendoza11/Estimator-System/pull/13 |
 | 14 | Phase 8: Quotations, availability, locations, pending records | pending | | |
 | 15 | Phase 9: Route and fuel calculator | pending | | |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 12 is done on `grok/phase-6`, stacked on `grok/phase-5`. Do not start Step 13 until Ken says `continue`.
+Item in progress: none. Step 13 is done on `grok/phase-7`, stacked on `grok/phase-6`. Do not start Step 14 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -515,6 +515,46 @@ Risks:
 - `package.json` gained `phase6.test.mjs`. `workflow.js` only re-exports. `CostEstimatorApp.d.ts` gained an optional `mobileView` prop so the shell typechecks.
 - A formula that divides by zero, or an hour or project rate with hours or days missing, does not invent a line rate.
 - The mobile route is registered. With the flag off, that route still opens the normal app and does not show the viewer.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
+## Step 13 done
+
+Stacked on `grok/phase-6` (https://github.com/ken2025mendoza11/Estimator-System/pull/12 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/13. Do not merge to `main`.
+
+Baseline before the first Step 13 edit (same tree as Step 12, `7c64909`): `npm test` 288 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 182 warnings. Build ok. `npm ci` was not repeated.
+
+- `c028685` Add a pre-submit checker behind a flag that stays off.
+
+After Step 13: `npm test` 292 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 187 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- One flag, off unless it is exactly `true`: `checkerV2`. Off, Submit CE still calls `saveVersion()` immediately and the old dialog still uses `buildCePreflight`.
+- On, Submit CE opens the checker and does not save until there are no errors and every warning has a checkbox plus a reason. The report is stored on the version and on `document.checkerReports` (new key only) and shown to approvers. Final approval is blocked while errors remain. Request edit is not blocked. Export stays on the old preflight.
+- Existing zero/empty, tool kW, ad-hoc, override, stale rate, special rate, no priced line, no-quote reason, linked RCE, manual extras, SOW, drawing, electricity, and entry-gap messages stay. Nested subtasks are walked.
+- New rules: an unpriced line is an Error, unit sanity, onsite days with no per diem, out-of-range values, and a `direct-v1` summary that does not match the breakdown is an Error. Step 6 warnings (blank work type, onsite power, missing per diem rate, MISC blank days, non-numeric) are included. `ceTotals.js` was not rewritten.
+- Spelling is a Warning. Ignore once is this session. Ignore in this CE writes `spellIgnore`. Add writes `adminConfig.checker.words`. Database names are treated as correct. Same item and specs in one subtask is an Error with Merge. Same activity and day type is a Warning. A near name is a Warning with Use DB item.
+- Admin Phase 7 can turn rules off, change severity, set ranges, and add dictionary words. Missing config uses the defaults.
+
+SQL written: none.
+
+Flags: `checkerV2` ships off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The code commit is 975 lines because the checker, the panel, the admin tab, the pinned dictionary, and the App wiring shipped together. It builds.
+- `eslint` is 187 warnings: the Step 12 count of 182 plus one `@ts-nocheck` warning on each of `checker.js`, `spellBrowser.js`, `phase7.test.mjs`, `Phase7Admin.jsx`, and `CheckerPanel.jsx`. The App warning count stayed 111.
+- `package.json` gained `phase7.test.mjs` plus pinned `nspell@2.1.5` and `dictionary-en@4.0.0`. `workflow.js` only re-exports. `calcBOTE` was not edited.
+- The English dictionary is about 552KB and is bundled in the client. The build still succeeds. The client chunk is larger.
+- Flag off is source-asserted: `if (!checkerOn) saveVersion()` and `buildCePreflight(...)` remain.
+- Quotations, availability, locations, and pending records are not in this step.
 
 ### Questions still open
 
