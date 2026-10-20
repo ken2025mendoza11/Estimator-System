@@ -470,6 +470,8 @@ export {
   inspectionNotingSteps,
   isOwnSignaturePath,
   needsDraftWatermark,
+  shouldLoadExportSignatures,
   signatureObjectPath,
+  signaturePeople,
   signatureUserKey,
 } from "./signatures.js";

@@ -1,65 +1,60 @@
--- Purpose: own-path policy for signature images in the private estimator-files bucket.
+-- Purpose: keep signature writes on the signer's own object. Reads stay open.
 -- Step: 10 / Phase 2c
--- Apply order: after supabase/p1b-access-2026-10-20.sql. Apply on the TEST project first.
--- App code ships first. If this policy is missing, a signature upload fails and the PDF uses the bundled script font.
--- Does not change save_workspace_doc. Other files in the bucket stay open to every signed-in user.
+-- Apply order: after supabase/0003_document_safety.sql. Apply on the TEST project first.
+-- Additive only. Does not drop or replace estimator_files_select, estimator_files_insert,
+-- estimator_files_update, or estimator_files_delete. Those still let any signed-in user
+-- read and write every other path in the bucket, including reading signatures/*.
+-- The new policies are RESTRICTIVE, so a write under signatures/ must also be
+-- signatures/<auth.uid>.png. auth.uid() is stableUserUuid(user id).
+-- App code ships first. If these policies are missing, the old open policies still apply.
+-- Does not change save_workspace_doc. Does not delete files.
 
 insert into storage.buckets (id, name, public)
 values ('estimator-files', 'estimator-files', false)
 on conflict (id) do update set public = false;
 
-drop policy if exists estimator_files_select on storage.objects;
-drop policy if exists estimator_files_insert on storage.objects;
-drop policy if exists estimator_files_update on storage.objects;
-drop policy if exists estimator_files_delete on storage.objects;
+drop policy if exists estimator_files_signatures_insert on storage.objects;
+drop policy if exists estimator_files_signatures_update on storage.objects;
+drop policy if exists estimator_files_signatures_delete on storage.objects;
 
-create policy estimator_files_select on storage.objects
-  for select to authenticated
-  using (
-    bucket_id = 'estimator-files'
-    and (
-      name not like 'signatures/%'
-      or name = 'signatures/' || auth.uid()::text || '.png'
-    )
-  );
-
-create policy estimator_files_insert on storage.objects
-  for insert to authenticated
+create policy estimator_files_signatures_insert on storage.objects
+  as restrictive
+  for insert
+  to authenticated
   with check (
-    bucket_id = 'estimator-files'
-    and (
-      name not like 'signatures/%'
-      or name = 'signatures/' || auth.uid()::text || '.png'
-    )
+    coalesce(bucket_id, '') <> 'estimator-files'
+    or coalesce(name, '') not like 'signatures/%'
+    or name = 'signatures/' || auth.uid()::text || '.png'
   );
 
-create policy estimator_files_update on storage.objects
-  for update to authenticated
+create policy estimator_files_signatures_update on storage.objects
+  as restrictive
+  for update
+  to authenticated
   using (
-    bucket_id = 'estimator-files'
-    and (
-      name not like 'signatures/%'
-      or name = 'signatures/' || auth.uid()::text || '.png'
-    )
+    coalesce(bucket_id, '') <> 'estimator-files'
+    or coalesce(name, '') not like 'signatures/%'
+    or name = 'signatures/' || auth.uid()::text || '.png'
   )
   with check (
-    bucket_id = 'estimator-files'
-    and (
-      name not like 'signatures/%'
-      or name = 'signatures/' || auth.uid()::text || '.png'
-    )
+    coalesce(bucket_id, '') <> 'estimator-files'
+    or coalesce(name, '') not like 'signatures/%'
+    or name = 'signatures/' || auth.uid()::text || '.png'
   );
 
-create policy estimator_files_delete on storage.objects
-  for delete to authenticated
+create policy estimator_files_signatures_delete on storage.objects
+  as restrictive
+  for delete
+  to authenticated
   using (
-    bucket_id = 'estimator-files'
-    and (
-      name not like 'signatures/%'
-      or name = 'signatures/' || auth.uid()::text || '.png'
-    )
+    coalesce(bucket_id, '') <> 'estimator-files'
+    or coalesce(name, '') not like 'signatures/%'
+    or name = 'signatures/' || auth.uid()::text || '.png'
   );
 
--- PASS: estimator_files_select, estimator_files_insert, estimator_files_update, and estimator_files_delete exist,
---       and each one allows signatures/<auth.uid>.png only.
--- FAIL: a signed-in user can read or write signatures/<someone else>.png, or the bucket is public.
+-- PASS: estimator_files_select, estimator_files_insert, estimator_files_update, and estimator_files_delete
+--       are still the open policies. A signed-in user can read signatures/<someone else>.png.
+--       estimator_files_signatures_insert, estimator_files_signatures_update, and estimator_files_signatures_delete
+--       are RESTRICTIVE and allow a write of signatures/<auth.uid>.png only.
+-- FAIL: one of the four estimator_files_* policies was dropped, a signed-in user can write
+--       signatures/<someone else>.png, or a signed-in user cannot read another user's signature.

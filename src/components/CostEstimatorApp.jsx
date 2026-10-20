@@ -22,7 +22,7 @@ import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, n
 import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
 import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
 import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatrix";
-import { cachedSignature, ceBlocksInspectionLines, loadSignatureImage, needsDraftWatermark, rememberSignature, signatureUserKey, storeSignatureImage } from "../lib/estimator/signatures";
+import { cachedSignature, ceBlocksInspectionLines, loadSignatureImage, needsDraftWatermark, rememberSignature, shouldLoadExportSignatures, signaturePeople, storeSignatureImage } from "../lib/estimator/signatures";
 import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
 import { phStamp, phYear } from "../lib/estimator/phTime";
 import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
@@ -355,7 +355,7 @@ function drawExportSigns(doc, signs, y, margin) {
 		const scriptY = yy + 8.2;
 		let drewImage = false;
 		if (exportEngineOn) {
-			const image = cachedSignature(signatureUserKey({ name: slot.name }));
+			const image = cachedSignature({ name: slot.name });
 			if (image) try {
 				const imgW = Math.min(32, Math.max(12, colW - stampW - 4));
 				doc.addImage(image, "PNG", x + (colW - stampW - imgW) / 2, scriptY - 6, imgW, 8);
@@ -793,16 +793,21 @@ function stampDraftWatermark(doc) {
 		doc.setFontSize(8);
 	}
 }
-async function warmExportSignatures(names) {
-	if (!exportEngineOn) return;
+async function warmExportSignatures(names, extra) {
+	if (!shouldLoadExportSignatures(exportEngineOn)) return;
+	const people = signaturePeople({
+		names,
+		users: exportUsers,
+		approval: extra?.approval || null,
+		approvals: extra?.approvals || []
+	});
 	const seen = new Set();
-	for (const name of names || []) {
-		const person = (exportUsers || []).find((user) => String(user?.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
-		const key = signatureUserKey(person?.id ? { id: person.id, name } : { name });
-		if (!key || seen.has(key) || cachedSignature(key) || cachedSignature(signatureUserKey({ name }))) continue;
+	for (const person of people) {
+		const key = person.userId;
+		if (!key || seen.has(key) || cachedSignature(key) || cachedSignature({ name: person.name })) continue;
 		seen.add(key);
 		const image = await loadSignatureImage(key);
-		if (image) rememberSignature(key, image, name);
+		if (image) rememberSignature(key, image, person.name);
 	}
 }
 async function renderCostEstimatePdf(data) {
@@ -811,11 +816,19 @@ async function renderCostEstimatePdf(data) {
 	} catch {
 		exportFontReady = false;
 	}
-	if (data?.draftWatermark) {
+	if (shouldLoadExportSignatures(exportEngineOn)) {
 		const names = [];
-		(data.sections || []).forEach((section) => (section.signs || []).forEach((slot) => slot?.name && names.push(slot.name)));
+		const approvals = [];
+		(data.sections || []).forEach((section) => {
+			(section.signs || []).forEach((slot) => slot?.name && names.push(slot.name));
+			if (section.rceForm) {
+				names.push(section.rceForm.preparedBy, section.rceForm.reviewedBy, section.rceForm.approvedBy);
+				if (section.rceForm.approval) approvals.push(section.rceForm.approval);
+			}
+		});
 		["preparedBy", "reviewedBy", "approvedBy"].forEach((key) => data.cover?.[key] && names.push(data.cover[key]));
-		await warmExportSignatures(names);
+		if (data.approval) approvals.push(data.approval);
+		await warmExportSignatures(names, { approval: data.approval, approvals });
 	}
 	const sections = data.sections || [];
 	const doc = new jsPDF({
@@ -1396,7 +1409,7 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		doc.text(label, m + i * sigW + 2, y2 + 4);
 		doc.setFont(void 0, "normal");
 		doc.setFontSize(8);
-		const sigImage = exportEngineOn ? cachedSignature(signatureUserKey({ name: sigNames[i] })) : "";
+		const sigImage = exportEngineOn ? cachedSignature({ name: sigNames[i] }) : "";
 		if (sigImage) {
 			try {
 				doc.addImage(sigImage, "PNG", m + i * sigW + 2, y2 + (hasSigStamp ? 5 : 6), 28, 8);
@@ -18687,7 +18700,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				flagOn: engineOn,
 				status: ceStatus,
 				approvalStatus: approvalNow?.status
-			})
+			}),
+			...(engineOn ? { approval: approvalNow || null } : {})
 		};
 		let url = "";
 		try {
@@ -20437,7 +20451,7 @@ function exportOifToPDF(form = {}, hostDoc) {
 	line("Representative", form.customerRep);
 	line("Inspector", form.onsiteInspector || form.createdBy);
 	if (exportEngineOn) {
-		const inspectorImage = cachedSignature(signatureUserKey({ name: form.onsiteInspector || form.createdBy }));
+		const inspectorImage = cachedSignature({ name: form.onsiteInspector || form.createdBy });
 		if (inspectorImage) {
 			y = room(y, 16);
 			try {
@@ -20562,7 +20576,7 @@ function exportRceExcel(rce, documentControl) {
 }
 async function previewRcePdf(rce, documentControl) {
 	const src = rceForExport(rce, documentControl);
-	if (exportEngineOn) await warmExportSignatures([src.preparedBy, src.reviewedBy, src.approvedBy]);
+	if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([src.preparedBy, src.reviewedBy, src.approvedBy], { approval: src.approval });
 	const doc = exportRceToPDF(src, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
@@ -20572,7 +20586,7 @@ async function previewRcePdf(rce, documentControl) {
 	return doc.output("bloburl");
 }
 async function previewOifPdf(form) {
-	if (exportEngineOn) await warmExportSignatures([form?.onsiteInspector, form?.createdBy, form?.notedBy]);
+	if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([form?.onsiteInspector, form?.createdBy, form?.notedBy], { approval: form?.approval });
 	const doc = exportOifToPDF(form, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
@@ -20876,6 +20890,7 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 		const data = buildMonitoringExportData(version, documentControl, users, row);
 		const payload = !engineOn ? data : {
 			...data,
+			approval: version?.approval || row?.approval || null,
 			draftWatermark: needsDraftWatermark({ flagOn: true, status: row?.status, approvalStatus: version?.approval?.status })
 		};
 		(async () => {
@@ -20899,6 +20914,7 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 		if (!engineOn) return data;
 		return {
 			...data,
+			approval: version?.approval || row?.approval || null,
 			draftWatermark: needsDraftWatermark({ flagOn: true, status: row?.status, approvalStatus: version?.approval?.status })
 		};
 	};
@@ -25533,7 +25549,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		onSubmitRCE?.(rceData);
 	};
 	async function handleExport() {
-		if (exportEngineOn) await warmExportSignatures([form.preparedBy, form.reviewedBy, form.approvedBy]);
+		if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([form.preparedBy, form.reviewedBy, form.approvedBy], { approval: form.approval });
 		exportRceToPDF({
 			...form,
 			company,
@@ -27364,7 +27380,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const engineFlag = approvalEngineOn(adminConfig);
 	exportEngineOn = engineFlag;
-	exportUsers = adminConfig?.users || [];
+	exportUsers = [
+		...(adminConfig?.users || []),
+		...(!impersonating && accountUserId && editorName ? [{ name: editorName, userId: accountUserId }] : [])
+	];
 	useEffect(() => {
 		if (!engineFlag) return;
 		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
@@ -28340,7 +28359,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const handleStoreSignature = async (dataUrl) => {
 		if (!engineFlag) return { ok: false, stored: false };
-		const saved = await storeSignatureImage(accountUserId || editorName, dataUrl, editorName);
+		const saved = await storeSignatureImage(accountUserId, dataUrl, editorName);
 		if (!saved.stored) return saved;
 		return saved;
 	};
