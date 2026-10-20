@@ -16,7 +16,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 8 | Phase 2a: approval engine + change types | done | `grok/phase-2a` | https://github.com/ken2025mendoza11/Estimator-System/pull/8 |
 | 9 | Phase 2b: take-over, closing, reminders, notifications | done | `grok/phase-2b` | https://github.com/ken2025mendoza11/Estimator-System/pull/9 |
 | 10 | Phase 2c: signatures, DRAFT watermark, inspection | done | `grok/phase-2c` | https://github.com/ken2025mendoza11/Estimator-System/pull/10 |
-| 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | pending | | |
+| 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | done | `grok/phase-5` | https://github.com/ken2025mendoza11/Estimator-System/pull/11 |
 | 12 | Phase 6: Equipment rates, reports, mobile viewer | pending | | |
 | 13 | Phase 7: Pre-submit checker | pending | | |
 | 14 | Phase 8: Quotations, availability, locations, pending records | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 10 is done on `grok/phase-2c`, stacked on `grok/phase-2b`. Do not start Step 11 until Ken says `continue`.
+Item in progress: none. Step 11 is done on `grok/phase-5`, stacked on `grok/phase-2c`. Do not start Step 12 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -439,3 +439,47 @@ Risks:
 - The BOL sheet is not the sum of the labour lines. Same role, day type, and shift are merged onto the schedule rectangle, and the first line's OT hours are used. The golden test locks that number.
 - Benefits are not in the grand. A blank per diem becomes ₱500 per active day.
 - The approval preview ignores `summaryOverrides`. The screen official total and the export total both honour them. On these fixtures the screen and the export match to the centavo.
+
+## Step 11 done
+
+Stacked on `grok/phase-2c` (https://github.com/ken2025mendoza11/Estimator-System/pull/10 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/11. Do not merge to `main`.
+
+Baseline before the first Step 11 edit (same tree as the Step 10 correction, `a5fb57e`): `npm test` 272 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 166 warnings. Build ok. `npm ci` was not repeated.
+
+- `8cd7fb7` Add Phase 5 suffix, calendar, price, and scope helpers.
+- `2a61ecc` Wire Phase 5 behind flags that stay off.
+
+After Step 11: `npm test` 283 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 174 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Five flags, each off unless it is exactly `true`: `monitoringFamilies`, `docSuffixes`, `scopeLibraryV2`, `priceCheck`, `branding`. Off, monitoring rows, document numbers, award writes, prebuilt templates, clone behavior, and CSS variables stay as they are.
+- On, active monitoring shows one row per CE family, with tags and an expandable member list. `foldMonitoringRows` is still the flag-off path.
+- Alternates are `-A` to `-D`. A lead, head, or admin must give a reason. Admin is included so the test admin can mint one. Staff cannot. A non-empty admin reason list must contain the reason. Addendum is only when the CE award field is Awarded: the original gets `-AD1`, alternate B gets `-B-AD1`. An update copy is `-U1` on the same stem and does not take a new serial. Urgent is the next normal number plus the tag "RCE to follow". There is no CE-M series.
+- Awarded / Lost and a job-order number are copied onto the linked RCE. Monitoring still reads the CE field.
+- Combined total is a display sum of the original amount plus approved addendums. It does not call `projectTotal`. Alternates and update copies are not added.
+- Admin Phase 5 holds the reason list, the existing `authorisations.takeover` key, the PH holiday list, and branding colors. Branding paints `--bg`, `--card`, `--ink`, `--ledger`, and `--brass` only when the flag is on.
+- `phCalendar.js` treats YYYY-MM-DD as a Manila date. Sunday is not a working day. Saturday is, unless that date is on the holiday list. `computeSchedule` is not changed.
+- Scope library records owner, an Official tag, and a usage count, and Save as scope stores a snapshot. A prebuilt "with resources" template seeds labor, tools, and PPE (a supply line for trading) only when `scopeLibraryV2` is on. Rates on those seeds are 0.
+- Price check runs after `remapCloneIds` when `priceCheck` is on. It uses `clonedFrom.idMap`. Resync all, resync selected, or keep is logged. Constant drift is listed and not written into the total.
+
+SQL written, not run: `supabase/p5-numbering-suffixes-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after `p1a-numbering-2026-10-20.sql`. `next_ce_suffix` issues the next letter, addendum, or update under an advisory lock and also skips numbers already stored on `workspace_docs`. It does not replace `next_doc_no` and it does not touch `estimator_files_*`. The rollback drops only `next_ce_suffix` and `ce_suffix_alloc`. If the function is missing, the app scans the numbers it already has.
+
+Flags: all five ship off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The helper commit is about 1,100 lines because the modules, tests, and SQL shipped together. The App wiring is 372 lines. Both build.
+- `eslint` is 174 warnings: the Step 10 count of 166 plus one `@ts-nocheck` warning on each new Phase 5 file. The App warning count stayed 111.
+- `package.json` gained `phase5.test.mjs`. `workflow.js` only re-exports.
+- Family folding runs on the active monitoring board. The executive table is still one row per cost estimate.
+- A suffix number taken from the server can differ from the local scan if another user took the letter first. The server id is the one saved.
+- Equipment rates, reports, and the mobile viewer are not in this step.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
