@@ -329,17 +329,18 @@ Baseline before the first Step 10 edit (same tree as Step 9, `41aad09`): `npm te
 
 - `f3db1ca` Add signature paths, the DRAFT rule, and inspection noting rules.
 - `c5e24fb` Draw signatures and the DRAFT mark, and note inspections, when the flag is on.
+- `ee53e2c` Use the Supabase user key for signature images and load them on final PDFs.
 
-After Step 10: `npm test` 270 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 166 warnings. Build ok. Golden totals unchanged.
+After Step 10: `npm test` 272 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 166 warnings. Build ok. Golden totals unchanged.
 
 ### What shipped
 
 - Same flag `approvalEngineV2`, still off. Off, the PDF bytes, the Excel cover header, the inspection form, and send-to-CE stay as they are. No second flag.
-- On, a PNG signature is kept for the session and uploaded to `signatures/<user key>.png` in the private `estimator-files` bucket. A missing bucket or a refused upload keeps the image for this session and later exports fall back to the bundled Great Vibes script font. The SIL OFL text is `public/fonts/OFL-GreatVibes.txt`. The font file was already in `public/fonts`.
-- On, CE, RCE, and OIF PDFs, including their previews, stamp DRAFT until the document is final. Done, accepted, approved, Noted, Cancelled, No quote, and Close bid are clean. A pending closing is still a draft. The Excel cover writes DRAFT in the existing middle header cell. No cover row is inserted, so the formulas stay on the same rows. An RCE page inside a CE pack is not stamped on its own; the CE stamp covers the pack.
+- On, a PNG signature is kept for the session and uploaded to `signatures/<auth.uid>.png`. That key is `stableUserUuid(user id)`, the same value the JWT uses for `auth.uid()`. A UUID id is kept. Any other id is hashed, so it matches for the test users and for every other account. Export lookup uses that same key from the approval step's `byUserId` or from `userId` / `userKey`. It does not use `adminConfig.users` id. A missing bucket or a refused upload keeps the image for this session and later exports fall back to the bundled Great Vibes script font. The SIL OFL text is `public/fonts/OFL-GreatVibes.txt`. The font file was already in `public/fonts`.
+- On, CE, RCE, and OIF PDFs, including their previews, stamp DRAFT until the document is final. Signature images are loaded whenever the flag is on, including a final approval. Done, accepted, approved, Noted, Cancelled, No quote, and Close bid are clean of the watermark. A pending closing is still a draft. The Excel cover writes DRAFT in the existing middle header cell. No cover row is inserted, so the formulas stay on the same rows. An RCE page inside a CE pack is not stamped on its own; the CE stamp covers the pack.
 - Inspection noting uses the stored oif flow (Prepared by, then Noted by). Submit sets For approval. The lead's Noted writes status Noted, not Done. Request edit restores For revision. A report with no id must be saved first. Linked RCE and linked CE selects appear only while the flag is on. Sending lines to a For approval, Done, accepted, approved, pending-approval, Cancelled, No quote, or Close bid cost estimate is blocked. Ongoing and For revision still accept lines.
 
-SQL written, not run: `supabase/p2-approvals-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after the app is deployed. The four `estimator_files_*` policies are replaced so `signatures/` is own-path only (`signatures/<auth.uid>.png`). Other paths in the bucket stay open to signed-in users. The rollback restores the previous open policies and does not delete signature files. The app keeps working when the policy is missing: the script font is used.
+SQL written, not run: `supabase/p2-approvals-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after the app is deployed. The four `estimator_files_*` policies are left as they are. Three new RESTRICTIVE policies (`estimator_files_signatures_insert`, `_update`, and `_delete`) limit a write under `signatures/` to `signatures/<auth.uid>.png`. Any signed-in user can still read `signatures/*`. The rollback drops only those three policies and does not delete signature files. The app keeps working when the policies are missing.
 
 Flags: `approvalEngineV2` ships off.
 
@@ -350,7 +351,8 @@ Risks:
 - The rules, tests, SQL, and license text are one commit of about 290 lines. The App wiring is one commit of about 290 lines.
 - `eslint` is 166 warnings: the Step 9 count of 164 plus one `@ts-nocheck` warning on each of `signatures.js` and `signatures.test.mjs`. The App warning count stayed 111.
 - `package.json` gained `signatures.test.mjs`. `workflow.js` only re-exports.
-- The storage key is `auth.uid()`. The app also remembers the image under the person's display name so a PDF slot that only has a name can draw it in this session. Another user's image is not readable once the own-path policy is applied, and that slot falls back to the script font.
+- The storage key is `auth.uid()`. The app also remembers the image under the person's display name so a PDF slot that only has a name can draw it in this session. Another signed-in user can read that object once the new policies are applied. A name with no auth id still falls back to the script font.
+- `ee53e2c` corrected the first upload path, which used the raw account id and the admin roster id, and it loads signature images on a final PDF as well as a draft. The SQL file no longer drops the existing bucket policies.
 - Monitoring, suffixes, award, Admin, Scope Library, and Price check are not in this step.
 
 ### Golden table (today)
