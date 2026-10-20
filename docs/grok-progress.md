@@ -14,7 +14,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 6 | CE-COMP: CE computation | done | `grok/phase-ce-comp` | https://github.com/ken2025mendoza11/Estimator-System/pull/6 |
 | 7 | Phase 4: calculator fixes | done | `grok/phase-4` | https://github.com/ken2025mendoza11/Estimator-System/pull/7 |
 | 8 | Phase 2a: approval engine + change types | done | `grok/phase-2a` | https://github.com/ken2025mendoza11/Estimator-System/pull/8 |
-| 9 | Phase 2b: take-over, closing, reminders, notifications | pending | | |
+| 9 | Phase 2b: take-over, closing, reminders, notifications | done | `grok/phase-2b` | https://github.com/ken2025mendoza11/Estimator-System/pull/9 |
 | 10 | Phase 2c: signatures, DRAFT watermark, inspection | pending | | |
 | 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | pending | | |
 | 12 | Phase 6: Equipment rates, reports, mobile viewer | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 8 is done on `grok/phase-2a`, stacked on `grok/phase-4`. Do not start Step 9 until Ken says `continue`.
+Item in progress: none. Step 9 is done on `grok/phase-2b`, stacked on `grok/phase-2a`. Do not start Step 10 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -285,6 +285,41 @@ Risks:
 - A head can still sign an unnamed lead step. That is the same ladder as today, except admin no longer can. Naming the reviewer limits the step to that person.
 - An in-progress legacy approval is not rewritten when the flag is turned on. Reject is hidden for every document while the flag is on, so a legacy in-flight document can still be approved and cannot be rejected from the button.
 - Take-over, reminders, the notification matrix, closing statuses, signatures, and the DRAFT watermark are not in this step.
+
+## Step 9 done
+
+Stacked on `grok/phase-2a` (https://github.com/ken2025mendoza11/Estimator-System/pull/8 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/9. Do not merge to `main`.
+
+Baseline before the first Step 9 edit (same tree as Step 8): `npm test` 261 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 161 warnings. Build ok. `npm ci` was not repeated.
+
+- `dd9f272` Add reminder, closing, take-over, and notification rules.
+- `2f80484` Use take-over, closing, reminders, and the notification matrix when the flag is on.
+
+After Step 9: `npm test` 267 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 164 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Same flag `approvalEngineV2`, still off. Off, Assist, Transfer, a direct No quote, and the wizard (lead, head, and admin can still open a cost estimate from an RCE that is not accepted) stay as they are. Reject stays hidden while the flag is on, from Step 8.
+- Take-over asks for a reason and stays pending on the cost estimate. The owner, or a name listed under Admin → Approval flow → “Authorised to approve a take-over”, can approve or decline. Admin is not automatic. Approve moves `assignedTo` to the person who asked and unlocks the editor. Decline leaves the owner. Both are timeline rows. Assist is still there.
+- Cancelled, No quote, and Close bid go through `Pending Cancelled approval`, `Pending No quote approval`, or `Pending Close bid approval`. A blank reason is refused. The approval engine runs with `changeKind: "closing"`. A final signature writes the requested status, not Done, and does not freeze an approved snapshot. Request edit restores the status the request left. The new pending statuses seal the sheet the same way For approval does.
+- Notify, and a check while the estimate list is open, sends one in-app reminder per slot. Slots are 08:00, 11:00, 14:00, 17:00, and 20:00 Asia/Manila. Nothing before 08:00 and nothing at 23:00. The first look sends only the latest open slot. After that, each missed slot is sent once, from `reminderAt`. Notify sets `reminderAt` to now so the open slot is not sent again. There is no cron and no Vercel schedule.
+- The notification matrix lists the in-app events. A missing row stays on. Only an explicit off drops that event, and only while the flag is on. Off, every notice is sent as before.
+- A new cost estimate can be created only from an accepted RCE while the flag is on. Opening a live cost estimate is unchanged. The new cost estimate stores `rceStamp`. If that RCE later changes, Monitoring and the editor show “RCE changed” and the cost estimate is not edited.
+
+SQL: none. The shared `supabase/p2-approvals-<date>.sql` file is still left for Step 10 if a table is required. The app does not need one for this step.
+
+Flags: `approvalEngineV2` ships off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The rules and their tests are one commit of about 300 lines. The App wiring is one commit of about 360 lines.
+- `eslint` is 164 warnings: the Step 8 count of 161 plus one `@ts-nocheck` warning on each of `reminders.js`, `notifyMatrix.js`, and `reminders.test.mjs`. The App warning count stayed 111.
+- `package.json` gained `reminders.test.mjs`. `workflow.js` only re-exports.
+- A reminder is computed when the app is open. A closed browser does not catch up until the next time that list is loaded.
+- A cost estimate created while the flag was off has no stamp, so it is not tagged when an RCE changes.
+- Signatures, the DRAFT watermark, and the inspection flow are not in this step.
 
 ### Golden table (today)
 
