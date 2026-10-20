@@ -99,7 +99,7 @@ function keepUploaded(
   return mergeServerWithDirty(server, local, dirtyKeys);
 }
 
-export function EstimatorShell() {
+export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: string; id: string } | null }) {
   const { user: currentUser, isPending } = useCurrentUserState();
   const [account, setAccount] = useState<AccountAccess>({
     userId: "",
@@ -522,6 +522,7 @@ export function EstimatorShell() {
       initialWorkspace={workspace}
       onPersist={persist}
       saveState={saveState}
+      mobileView={mobileView}
       currentUserName={
         currentUser?.displayName ?? currentUser?.primaryEmail ?? "Estimator"
       }

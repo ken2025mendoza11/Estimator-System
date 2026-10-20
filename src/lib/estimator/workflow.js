@@ -494,3 +494,8 @@ export { foldFamilyRows } from "./monitoringFamilies.js";
 export { constantDrift, priceDrifts, resyncPlan } from "./priceCheck.js";
 export { bumpScopeUsage, resourceSeed, saveAsScope } from "./scopeLibrary.js";
 export { brandingVars } from "./branding.js";
+
+export { boteLineSnapshot, equipmentRateCard, perDayRate } from "./equipmentRates.js";
+export { evaluateFormula } from "./rateFormula.js";
+export { buildReport, winRate } from "./reports.js";
+export { mobileApprove, mobileSummary } from "./mobileView.js";
