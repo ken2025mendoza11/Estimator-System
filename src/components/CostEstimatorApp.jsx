@@ -38,7 +38,11 @@ import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
 import { Phase6Admin } from "./Phase6Admin";
 import { Phase6Reports } from "./Phase6Reports";
 import { MobileDocScreen } from "./MobileDocScreen";
+import { Phase7Admin } from "./Phase7Admin";
+import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
 import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
+import { blocksFinalApproval, canSubmit, normalizeCheckerConfig, runChecker, versionWithReport } from "../lib/estimator/checker";
+import { browserSpell } from "../lib/estimator/spellBrowser";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
@@ -4752,7 +4756,8 @@ function defaultAdminConfig() {
 			branding: false,
 			equipmentRates: false,
 			reports: false,
-			mobileViewer: false
+			mobileViewer: false,
+			checkerV2: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4762,6 +4767,7 @@ function defaultAdminConfig() {
 		branding: {},
 		equipmentFormula: normalizeEquipmentFormula(null),
 		equipmentItems: [],
+		checker: normalizeCheckerConfig(null),
 		notifyMatrix: normalizeNotifyMatrix(null),
 		directRates: directFormula({}),
 		calcConstants: defaultCalcConstants(),
@@ -4852,7 +4858,8 @@ function normalizeAdminConfig(raw) {
 			branding: src.features?.branding === true,
 			equipmentRates: src.features?.equipmentRates === true,
 			reports: src.features?.reports === true,
-			mobileViewer: src.features?.mobileViewer === true
+			mobileViewer: src.features?.mobileViewer === true,
+			checkerV2: src.features?.checkerV2 === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -4864,6 +4871,7 @@ function normalizeAdminConfig(raw) {
 		branding: cleanBranding(src.branding),
 		equipmentFormula: normalizeEquipmentFormula(src.equipmentFormula),
 		equipmentItems: Array.isArray(src.equipmentItems) ? src.equipmentItems.map((item) => normalizeEquipmentItem(item)) : [],
+		checker: normalizeCheckerConfig(src.checker),
 		notifyMatrix: normalizeNotifyMatrix(src.notifyMatrix),
 		directRates: directFormula(src.directRates),
 		calcConstants: normalizeCalcConstants(src.calcConstants),
@@ -5178,7 +5186,8 @@ function AdminHub({ config, onChange }) {
 					["calc", "Calculator"],
 					["colors", "Board colors"],
 					["phase5", "Phase 5"],
-					["phase6", "Phase 6"]
+					["phase6", "Phase 6"],
+					["phase7", "Phase 7"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -5221,6 +5230,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "phase6" && /* @__PURE__ */ jsx(Phase6Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase7" && /* @__PURE__ */ jsx(Phase7Admin, {
 				cfg,
 				patch
 			})
@@ -18251,7 +18264,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "" }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -18352,6 +18365,9 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [ceStatus, setCeStatus] = useState(() => ceData?.ceStatus || status || "Draft");
 	const [checkerOpen, setCheckerOpen] = useState(false);
 	const [ackWarnings, setAckWarnings] = useState(false);
+	const [warnReason, setWarnReason] = useState("");
+	const [ignoreOnce, setIgnoreOnce] = useState([]);
+	const masterlist = useMasterlist();
 	const [waitInfoOpen, setWaitInfoOpen] = useState(false);
 	const [infoGaps, setInfoGaps] = useState({});
 	const [infoNote, setInfoNote] = useState("");
@@ -18408,6 +18424,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const approvalNow = ceData?.approval || state.approval;
 	const approvalV2 = approvalNow?.engine === "v2";
 	const engineOn = adminConfig?.features?.approvalEngineV2 === true;
+	const checkerOn = adminConfig?.features?.checkerV2 === true;
 	const grand = projectTotal(state.tasks, state.pricing);
 	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat, state.pricing), 0);
 	const benefitSum = directOn ? directColumnTotals(state.tasks, state.pricing).A1 : 0;
@@ -18434,12 +18451,23 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			remarks: `Direct cost totals ${fmt(from)} → ${fmt(to)}`
 		});
 	};
-	const saveVersion = () => {
+	const saveVersion = (report) => {
 		const snapshot = {
 			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 			ceStatus,
 			tasks: JSON.parse(JSON.stringify(state.tasks))
 		};
+		if (checkerOn && report?.findings) {
+			const stored = versionWithReport(snapshot, report, { reason: warnReason });
+			setVersionHistory((prev) => [...prev, stored]);
+			if (ceData?.id) onDocumentChange?.(ceData.id, {
+				...state,
+				sowText,
+				ceStatus,
+				checkerReports: [...(Array.isArray(ceData.checkerReports) ? ceData.checkerReports : []), stored.checker]
+			});
+			return;
+		}
 		setVersionHistory((prev) => [...prev, snapshot]);
 	};
 	const restoreVersion = (version) => {
@@ -18965,6 +18993,31 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		notes: seededNotes(sheet),
 		onChange: (notes) => saveSheetNotes(sheet, notes)
 	});
+	const makeCheckerReport = () => {
+		const db = {};
+		["BOL", "BOTE", "BOCM", "PPE", "MISC"].forEach((cat) => {
+			db[cat] = (masterlist[cat] || []).map((item) => ({
+				id: item.id,
+				label: cat === "BOL" ? item.role || item.name || "" : cat === "PPE" ? item.item || item.description || item.name || "" : item.description || item.name || item.item || ""
+			})).filter((item) => item.label);
+		});
+		return runChecker({
+			tasks: state.tasks,
+			...preflightOpts,
+			pricing: state.pricing,
+			summaryOverrides: state.summaryOverrides,
+			checker: adminConfig?.checker,
+			dictionary: [...(adminConfig?.checker?.words || []), ...(Array.isArray(ceData?.spellIgnore) ? ceData.spellIgnore : []), ...ignoreOnce],
+			db,
+			spell: browserSpell()
+		});
+	};
+	const blockFinal = () => {
+		if (!checkerOn) return false;
+		const finalStep = approvalV2 ? openStepIndexes(approvalNow).some((index) => approvalNow?.steps?.[index]?.isFinal) : !!currentApprovalStep(approvalNow)?.isFinal;
+		if (!finalStep) return false;
+		return blocksFinalApproval(makeCheckerReport());
+	};
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-editor-root",
 		children: [
@@ -19166,6 +19219,9 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								href: `/view/ce/${encodeURIComponent(ceData.id)}`,
 								children: "Mobile view"
 							}),
+							checkerOn && /* @__PURE__ */ jsx(CheckerReportList, {
+								report: (ceData?.checkerReports || []).slice(-1)[0]
+							}),
 							/* @__PURE__ */ jsxs("label", {
 								className: "ce-font-ctl",
 								children: [
@@ -19209,6 +19265,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									type: "button",
 									className: "ce-btn-primary ce-btn-sm",
 									onClick: () => {
+										if (blockFinal()) {
+											window.alert("Checker errors block final approval.");
+											return;
+										}
 										const remarks = window.prompt("Approval remarks") || "";
 										const step = currentApprovalStep(approvalNow);
 										const finalStep = !!step?.isFinal;
@@ -19237,6 +19297,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										type: "button",
 										className: "ce-btn-primary ce-btn-sm",
 										onClick: () => {
+											if (blockFinal()) {
+												window.alert("Checker errors block final approval.");
+												return;
+											}
 											const remarks = window.prompt("Approval remarks") || "";
 											const result = onApprovalDecision?.(ceData?.id, "approve", remarks);
 											if (!result?.ok) return;
@@ -19249,6 +19313,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
+											if (blockFinal()) {
+												window.alert("Checker errors block final approval.");
+												return;
+											}
 											const remarks = window.prompt("Comment") || "";
 											if (!remarks.trim()) return;
 											const result = onApprovalDecision?.(ceData?.id, "approve-comment", remarks);
@@ -19416,8 +19484,9 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								className: "ce-btn-primary ce-btn-sm",
 								onClick: () => {
 									setAckWarnings(false);
+									setWarnReason("");
 									setCheckerOpen(true);
-									saveVersion();
+									if (!checkerOn) saveVersion();
 								},
 								children: "Submit CE"
 							})
@@ -19748,7 +19817,63 @@ ${names.join(", ")}`, editingUser) : editingUser;
 					})
 				]
 			}),
-			checkerOpen && (() => {
+			checkerOpen && checkerOn && /* @__PURE__ */ jsx(CheckerPanel, {
+				report: makeCheckerReport(),
+				ackChecked: ackWarnings,
+				reason: warnReason,
+				readOnly,
+				onAck: setAckWarnings,
+				onReason: setWarnReason,
+				onClose: () => setCheckerOpen(false),
+				onSubmit: () => {
+					const report = makeCheckerReport();
+					if (!canSubmit(report, { checked: ackWarnings, reason: warnReason }).ok || readOnly) return;
+					setCeStatus("For approval");
+					onStatusChange?.("For approval");
+					onSubmitApproval?.(ceData?.id, state.meta?.statusNote || "");
+					saveVersion(report);
+					setCheckerOpen(false);
+				},
+				onMerge: (finding) => {
+					dispatch({
+						type: "UPDATE_ITEM",
+						taskId: finding.taskId,
+						subtaskId: finding.subtaskId,
+						category: finding.category,
+						itemId: finding.keepId,
+						patch: { qty: finding.nextQty }
+					});
+					dispatch({
+						type: "DELETE_ITEM",
+						taskId: finding.taskId,
+						subtaskId: finding.subtaskId,
+						category: finding.category,
+						itemId: finding.dropId
+					});
+				},
+				onUseDb: (finding) => {
+					dispatch({
+						type: "UPDATE_ITEM",
+						taskId: finding.taskId,
+						subtaskId: finding.subtaskId,
+						category: finding.category,
+						itemId: finding.itemId,
+						patch: {
+							masterlistId: finding.dbId,
+							[finding.nameField]: finding.dbLabel
+						}
+					});
+				},
+				onIgnoreOnce: (word) => setIgnoreOnce((prev) => prev.includes(word) ? prev : [...prev, word]),
+				onIgnoreCe: (word) => {
+					if (!ceData?.id || !word) return;
+					const spellIgnore = [...(Array.isArray(ceData.spellIgnore) ? ceData.spellIgnore : [])];
+					if (!spellIgnore.some((item) => item.toLowerCase() === word.toLowerCase())) spellIgnore.push(word);
+					onDocumentChange?.(ceData.id, { ...state, sowText, ceStatus, spellIgnore });
+				},
+				onAddWord: (word) => onAddCheckerWord?.(word)
+			}),
+			checkerOpen && !checkerOn && (() => {
 				const { failures, warnings } = buildCePreflight(state.tasks, preflightOpts);
 				const canPass = failures.length === 0 && (warnings.length === 0 || ackWarnings);
 				return /* @__PURE__ */ jsx("div", {
@@ -29753,6 +29878,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 								total: 0
 							}, ...prev || []]);
 							window.alert("Saved to Scope Library.");
+						},
+						onAddCheckerWord: (word) => {
+							const text = String(word || "").trim();
+							if (!text) return;
+							setAdminConfig((prev) => {
+								const cfg = normalizeAdminConfig(prev);
+								const words = [...(cfg.checker?.words || [])];
+								if (!words.some((item) => item.toLowerCase() === text.toLowerCase())) words.push(text);
+								return normalizeAdminConfig({ ...cfg, checker: { ...cfg.checker, words } });
+							});
 						},
 						combinedLabel: adminConfig.features?.docSuffixes === true ? combinedLabelFor(activeCE?.id, ceList, documents) : ""
 					}, activeCE?.id || "new"),
