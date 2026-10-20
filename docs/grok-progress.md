@@ -11,7 +11,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 3 | Phase 1A: data safety | done | `grok/phase-1a` | https://github.com/ken2025mendoza11/Estimator-System/pull/3 |
 | 4 | Phase 1B: access control and sign-in | done | `grok/phase-1b` | https://github.com/ken2025mendoza11/Estimator-System/pull/4 |
 | 5 | Phase 1C: stable IDs and clone remap | done | `grok/phase-1c` | https://github.com/ken2025mendoza11/Estimator-System/pull/5 |
-| 6 | CE-COMP: CE computation | pending | | |
+| 6 | CE-COMP: CE computation | done | `grok/phase-ce-comp` | https://github.com/ken2025mendoza11/Estimator-System/pull/6 |
 | 7 | Phase 4: calculator fixes | pending | | |
 | 8 | Phase 2a: approval engine + change types | pending | | |
 | 9 | Phase 2b: take-over, closing, reminders, notifications | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 4 is done on `grok/phase-1b`. Step 5 is done on `grok/phase-1c`, stacked on `grok/phase-1b`. Do not start Step 6 until Ken says `continue`.
+Item in progress: none. Step 6 is done on `grok/phase-ce-comp`, stacked on `grok/phase-1c`. Do not start Step 7 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -176,6 +176,43 @@ Risks:
 - Attachment file ids are not remapped.
 - `clonedFrom.sourceId` is the source `projectInfo.docNo` when that is set. The wizard then puts the new CE number in `docNo`. The stored source id stays the old number.
 
+## Step 6 done
+
+Stacked on `grok/phase-1c` (https://github.com/ken2025mendoza11/Estimator-System/pull/5 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/6. Do not merge to `main`.
+
+Baseline before the first Step 6 edit (same tree as Step 5): `npm test` 225 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. `npm ci` was not repeated.
+
+- `bf91405` Move cost-estimate totals into ceTotals and add direct-v1 math.
+- `0fe09d6` Use direct-v1 totals on a marked estimate and offer the switch.
+
+After Step 6: `npm test` 233 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 157 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- `calcBOL` through `projectTotal` now live in `src/lib/estimator/ceTotals.js`. A missing `pricing.model` still runs the legacy bodies. The golden test locks those bodies.
+- Direct-v1 (only when `pricing.model` is `direct-v1`) uses the DOLE helper. Premiums do not stack. Night is +10% on the scaled rate. OT uses 1.25 on a regular day and 1.3 on a rest day or holiday. Row A.1 is statutory benefits at the regular rate, no premium and no OT, rounded per BOL line then summed. The grand is one total: A + A.1 + B + C + D + E.
+- The four section D cases as direct-v1, to the centavo: Shop 27,362.51 (BOL sheet 12,800.00). Onsite 95,682.28 (BOL sheet 43,961.13, which is A minus per diem). Trading 31,692.31. Hybrid 154,737.10. Contingency and a stored override are ignored. Generator power is not costed on onsite.
+- `directCostTotalsForNew` defaults off. It only offers the switch. A CE that is already direct-v1 keeps that math if the flag is later turned off. The banner shows only when the flag is on, the status is Draft or Ongoing, the CE is not already direct, and the editor is not read-only. Confirm writes `pricing.model`, snapshots `directFormula` of the admin rates, and logs the old total and the new one.
+- Screen grand, official total, sticky bar, PDF and Excel cover, list amount, monitoring export, approval preview, and the scope-library total use that one total when the model is direct-v1. The Excel cover adds an A.1 row and omits Contingency, Discount, and Net. The cover payload writes 0% for those fields. Stored `commercial.*` is not rewritten.
+- Official amount cells on a direct-v1 estimate are read-only because the rows are passed with `group: true`. `CeOfficialSummary.jsx` was not edited. Summary overrides stay stored and are ignored while the model is direct-v1.
+- The admin panel can edit the direct rates when the flag is on, and it refuses an out-of-range value. `directFormula` still falls back to the default if a stored value is out of range. Flag off, the preview and the BOL legend stay the old text.
+
+SQL: none. Rates live in `adminConfig`. The flag ships off. The math ships for a CE that is already marked direct-v1.
+
+Questions: none new. The Step 1 questions are still open.
+
+Risks:
+
+- `package.json` gained one test-script entry so `ceTotals.direct.test.mjs` runs.
+- The move and the direct-v1 math are one commit. They were written into the same uncommitted file. The golden test locks the legacy path.
+- A stored direct rate that is out of range falls back inside `directFormula`. The admin screen refuses it on edit.
+- A night regular day at ₱900 is `990.0000000000001` before rounding. Line money goes through `roundMoney`. The unit test allows `1e-6`. The section D cents match.
+- The old benefits table (SSS 4.5% of monthly, ₱500 per-diem fallback) is unchanged and still not in the legacy grand. It is hidden on a direct-v1 BOL sheet. Direct-v1 A.1 is a different formula and is in the grand.
+- An approved or sealed CE never sees the switch. A CE already marked direct-v1 keeps computing that way if the flag is turned off.
+- BOL groups use the max line qty and the sum of line days. The footer is `directBolSheet` (A minus per diem), not the schedule rectangle. A group subtotal is rounded on its own and can differ from that footer by a centavo.
+- `activeCePricing` and `bolLegendFlag` are module lets set while the estimate editor renders, so a breakdown line matches the model without a new prop on every grid.
+- `eslint` is 157 warnings: the 156 baseline plus two `@ts-nocheck` warnings on the two new files. The App warning count fell by one.
+
 ### Golden table (today)
 
 Section D's today column. The BOL sheet and benefits are today's functions, not the direct-v1 columns.
@@ -194,7 +231,9 @@ Schedule used for the sheet (grand does not use it): shop welders are sequential
 
 ## Computation map
 
-Line numbers are `src/components/CostEstimatorApp.jsx` on this branch unless noted. No formula was moved.
+Step 6 moved `calcBOL` through `projectTotal`, plus `buildBolGroups`, `bolLineAmount`, `withBolEdit`, and `categoryOnTask`, into `src/lib/estimator/ceTotals.js`. The line numbers below are the Step 2 snapshot, before that move. `formulaNow` and `dayTypeMultiplier` stayed in the App. `money.js` and `computeSchedule` were not edited.
+
+Line numbers are `src/components/CostEstimatorApp.jsx` on the Step 2 branch unless noted. No formula was moved in Step 2.
 
 **Formula**
 
