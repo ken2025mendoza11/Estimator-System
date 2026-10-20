@@ -13,7 +13,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 5 | Phase 1C: stable IDs and clone remap | done | `grok/phase-1c` | https://github.com/ken2025mendoza11/Estimator-System/pull/5 |
 | 6 | CE-COMP: CE computation | done | `grok/phase-ce-comp` | https://github.com/ken2025mendoza11/Estimator-System/pull/6 |
 | 7 | Phase 4: calculator fixes | done | `grok/phase-4` | https://github.com/ken2025mendoza11/Estimator-System/pull/7 |
-| 8 | Phase 2a: approval engine + change types | pending | | |
+| 8 | Phase 2a: approval engine + change types | done | `grok/phase-2a` | https://github.com/ken2025mendoza11/Estimator-System/pull/8 |
 | 9 | Phase 2b: take-over, closing, reminders, notifications | pending | | |
 | 10 | Phase 2c: signatures, DRAFT watermark, inspection | pending | | |
 | 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 7 is done on `grok/phase-4`, stacked on `grok/phase-ce-comp`. Do not start Step 8 until Ken says `continue`.
+Item in progress: none. Step 8 is done on `grok/phase-2a`, stacked on `grok/phase-4`. Do not start Step 9 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -249,6 +249,42 @@ Risks:
 - `eslint` is 160 warnings: the Step 6 count of 157 plus one `@ts-nocheck` warning on each of `elCalcs.js`, its test, and `AddToCeDialog.jsx`.
 - `package.json` gained `elCalcs.test.mjs`.
 - The SQL table is not read. Turning the Admin version is what the badge compares.
+
+## Step 8 done
+
+Stacked on `grok/phase-4` (https://github.com/ken2025mendoza11/Estimator-System/pull/7 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/8. Do not merge to `main`.
+
+Baseline before the first Step 8 edit (same tree as Step 7): `npm test` 248 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 160 warnings. Build ok. `npm ci` was not repeated.
+
+- `05c923b` Add the approval engine and lock each routing path.
+- `e664853` Use the approval engine when the flag is on.
+
+After Step 8: `npm test` 261 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 161 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- `approvalEngine.js` is the new path for RCE, CE, inspection, addendum, Update, and closing. `workflow.js` only re-exports it. `startApproval` and `applyApprovalDecision` are unchanged. A document that is not `engine: "v2"` still finishes on the old object.
+- `approvalEngineV2` defaults off. Missing or any value other than `true` stays off. Off, submit and approve/reject are today's path. On, a new submit copies `flowSnapshot` (mode, steps, final, backup) so a later Admin edit does not change that approval.
+- Mixed: reviewers in parallel, final only after every reviewer has signed and every comment is Fixed. Sequential: one open step. Parallel: every step is open, including final, but an open comment still blocks the final signature. A missing mode is mixed.
+- The owner is dropped when they are named on a step. If the named final person is the owner, the backup is used. If the backup is missing or is also the owner, start refuses: "The owner cannot approve this document, and no backup is set." Admin does not satisfy staff, lead, or head.
+- Actions are Approve, Approve with comment, and Request edit. Comments are Open or Fixed. Reject is hidden while the flag is on. An old `reject` decision still shows. Request edit sets `edit-requested` and the CE status `For revision`. It does not advance the step.
+- Edit keeps the same number and rev, clears signatures, and routes again from the snapshot. Revise stores the next rev on the in-progress approval. The issued rev stays until that rev is approved, then the previous snapshot is `Superseded`. Update writes `Rev 0 - Update 1`, status `Internal`, and is not issued.
+- Admin → Approval flow can turn the engine on. Mode, final, and backup show only then. A blank role cannot be saved while the flag is on.
+
+SQL: none. The running approval and the flow live on the document and in `adminConfig`. The shared `supabase/p2-approvals-<date>.sql` file is left for Steps 9–10 if a table is required. The app does not need one for this step.
+
+Flags: `approvalEngineV2` ships off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The engine and its tests are one commit of about 700 lines.
+- `eslint` is 161 warnings: the Step 7 count of 160 plus one `@ts-nocheck` warning on each new file, and the App warning count fell by one.
+- `package.json` gained `approvalEngine.test.mjs`.
+- A head can still sign an unnamed lead step. That is the same ladder as today, except admin no longer can. Naming the reviewer limits the step to that person.
+- An in-progress legacy approval is not rewritten when the flag is turned on. Reject is hidden for every document while the flag is on, so a legacy in-flight document can still be approved and cannot be rejected from the button.
+- Take-over, reminders, the notification matrix, closing statuses, signatures, and the DRAFT watermark are not in this step.
 
 ### Golden table (today)
 
