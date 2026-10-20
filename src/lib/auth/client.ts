@@ -143,10 +143,10 @@ export async function signIn(
     return;
   }
 
-  // better-auth built-in Google provider (used when Grok broker vars are absent).
-  if (providerId === "google") {
+  // better-auth built-in Google or Microsoft (used when Grok broker vars are absent).
+  if (providerId === "google" || providerId === "microsoft") {
     const { data, error } = await authClient.signIn.social({
-      provider: "google",
+      provider: providerId,
       callbackURL,
       errorCallbackURL,
     });

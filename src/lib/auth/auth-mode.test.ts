@@ -42,4 +42,37 @@ describe("resolveAuthMode", () => {
   it("honours VITE_AUTH_ENABLED=false", () => {
     assert.equal(resolveAuthMode({ ...deployedBase, VITE_AUTH_ENABLED: "false", GOOGLE_CLIENT_ID: "g", GOOGLE_CLIENT_SECRET: "h" }).mode, "none");
   });
+  it("offers Microsoft beside Google without changing the mode", () => {
+    const r = resolveAuthMode({
+      ...deployedBase,
+      GOOGLE_CLIENT_ID: "g",
+      GOOGLE_CLIENT_SECRET: "h",
+      MICROSOFT_CLIENT_ID: "m",
+      MICROSOFT_CLIENT_SECRET: "s",
+    });
+    assert.equal(r.mode, "google");
+    assert.equal(r.microsoft, true);
+    assert.equal(r.setupError, null);
+  });
+  it("does not offer Microsoft on the Grok path", () => {
+    const r = resolveAuthMode({
+      ...deployedBase,
+      GROK_AUTH_CLIENT_ID: "a",
+      GROK_AUTH_CLIENT_SECRET: "b",
+      MICROSOFT_CLIENT_ID: "m",
+      MICROSOFT_CLIENT_SECRET: "s",
+    });
+    assert.equal(r.mode, "grok");
+    assert.equal(r.microsoft, false);
+  });
+  it("lets Microsoft stand in when Google is not configured", () => {
+    const r = resolveAuthMode({
+      ...deployedBase,
+      MICROSOFT_CLIENT_ID: "m",
+      MICROSOFT_CLIENT_SECRET: "s",
+    });
+    assert.equal(r.mode, "none");
+    assert.equal(r.microsoft, true);
+    assert.equal(r.setupError, null);
+  });
 });
