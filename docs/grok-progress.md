@@ -8,7 +8,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | --- | --- | --- | --- | --- |
 | 1 | Phase 0: test sign-in, seed, guardrail files | done | `grok/phase-0` | https://github.com/ken2025mendoza11/Estimator-System/pull/1 |
 | 2 | GOLD: computation map + golden lock | done | `grok/phase-gold` | https://github.com/ken2025mendoza11/Estimator-System/pull/2 |
-| 3 | Phase 1A: data safety | pending | | |
+| 3 | Phase 1A: data safety | done | `grok/phase-1a` | https://github.com/ken2025mendoza11/Estimator-System/pull/3 |
 | 4 | Phase 1B: access control and sign-in | pending | | |
 | 5 | Phase 1C: stable IDs and clone remap | pending | | |
 | 6 | CE-COMP: CE computation | pending | | |
@@ -44,7 +44,65 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Next action for Step 3: data safety (B1, B4, B2, B7, B5, B10, R7/R8, PH time). Do not start until Ken says `continue`.
+Item in progress: none. Step 3 is done on `grok/phase-1a`, stacked on `grok/phase-gold`. Do not start Step 4 until Ken says `continue`.
+
+## Step 3 done
+
+Stacked on `grok/phase-gold` (https://github.com/ken2025mendoza11/Estimator-System/pull/2 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/3. Do not merge to `main`.
+
+Baseline before the first Step 3 edit (same tree as Step 2): `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok.
+
+- `f7dffdf` Use Asia/Manila for the calendar default and approval stamps.
+- `ace2b37` Keep the document-number format and cap new numeric input.
+- `ab75fad` Add document counters and an exists conflict for new ids.
+- `50a6a74` Merge server lists with only the documents edited locally.
+- `c5705d4` Allocate document numbers and report an exists conflict.
+- `600ec57` Key the local backup per user and skip tombstones while hydrating.
+- `e0801a8` Seal approved estimates and take document numbers from the server.
+
+After Step 3: `npm test` 225 + 88, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Local backup is keyed per user and cleared on sign-out. Hydration keeps every server document and copies over only dirty ones. That save sends the version the edit started from, and it does not tombstone during hydration.
+- `next_doc_no` (SQL, not run) has separate CE / RCE / OIF counters, seeded from the current max. A new id that already exists returns conflict `exists`. The six create sites call it and fall back to today's format when the function is missing. Offline, New is disabled: "Connect to the internet to get a document number".
+- Approval changes status and Rev only when `result.ok`. The approve button no longer bumps Rev itself.
+- For approval, Done, and accepted estimates do not take line edits. Restore does not set the status. Award and the approval buttons still work. Revise on a Done estimate still records the note.
+- Excel cover writes real onsite / shop / trading numbers, numeric percent cells, and `ROUND(...,2)`.
+- Login buttons use the `ce-login-btn` rules (44px, full width).
+- New qty and days stop above 1,000,000. New rates and unit costs stop above 1,000,000,000. Negatives are refused. Stored rows are not rewritten.
+- `phTime.js` is the Manila clock. `todayLocal` / `addDaysLocal` default to Asia/Manila. The approval stamp is Manila. 16:30 UTC is the next Philippine day.
+
+### Calendar sites still on UTC or the browser zone
+
+Not switched in this step. The approval stamp and the document-number year are the ones this step changes.
+
+1. `src/lib/estimator/workflow.js` `todayIso` — UTC date. Nothing calls it.
+2. `CostEstimatorApp.jsx` pending registration `requestedAt`.
+3. `CostEstimatorApp.jsx` document-control sample date.
+4. `CostEstimatorApp.jsx` masterlist `lastReviewed` on add.
+5. `CostEstimatorApp.jsx` masterlist modal save date.
+6. `CostEstimatorApp.jsx` item form default `lastReviewed`.
+7. `CostEstimatorApp.jsx` scope template created date.
+8. `CostEstimatorApp.jsx` scope template job-type `updatedAt`.
+9. `CostEstimatorApp.jsx` scope template duplicate `updatedAt`.
+10. `CostEstimatorApp.jsx` CE list `lastEdited` after a document save.
+11. `CostEstimatorApp.jsx` archived CE `lastEdited`.
+12. `CostEstimatorApp.jsx` scope-library template `updatedAt`.
+
+Also, not in that twelve: `AdminHub.jsx` `requestedAt` and a panel date (file not on this step's allowed list); `toLocaleString` / `toLocaleTimeString` for the draft-offer clock, the idle auto-save log, and grouped number formatting.
+
+SQL written, not run: `supabase/p1a-numbering-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after the app is deployed. The app keeps working when `next_doc_no` is missing.
+
+Flags: none. These fixes ship on.
+
+Questions: none new. The Step 1 questions are still open.
+
+Risks:
+
+- A backup saved before this step has no revision map, so its first push uses the version just loaded.
+- The Excel cover no longer reads other sheets for the work-type columns. MOB is 0 unless a task has MOB lines.
+- `save_workspace_doc` is replaced in full (same signature) so the exists check can ship. Apply the new file, not both the old and the new.
 
 ### Golden table (today)
 
