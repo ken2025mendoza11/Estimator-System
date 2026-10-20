@@ -20,6 +20,8 @@ import { AddToCeDialog } from "./AddToCeDialog";
 import { SystemManual } from "./SystemManual";
 import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
 import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
+import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
+import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatrix";
 import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
 import { phStamp, phYear } from "../lib/estimator/phTime";
 import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
@@ -3109,7 +3111,7 @@ function ceIsSealed(status, doc) {
 	const values = [status, doc?.ceStatus, doc?.status, doc?.approval?.status];
 	return values.some((value) => {
 		const key = String(value || "").trim().toLowerCase();
-		return key === "for approval" || key === "done" || key === "accepted";
+		return key === "for approval" || key === "done" || key === "accepted" || key.startsWith("pending ") && key.endsWith(" approval");
 	});
 }
 function shortPersonName(name) {
@@ -4550,6 +4552,8 @@ function defaultAdminConfig() {
 		features: { directCostTotalsForNew: false, approvalEngineV2: false },
 		approvalModes: {},
 		approvalFinal: {},
+		authorisations: { takeover: [] },
+		notifyMatrix: normalizeNotifyMatrix(null),
 		directRates: directFormula({}),
 		calcConstants: defaultCalcConstants(),
 		boardColors: defaultBoardColors()
@@ -4635,6 +4639,10 @@ function normalizeAdminConfig(raw) {
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
+		authorisations: {
+			takeover: Array.isArray(src.authorisations?.takeover) ? src.authorisations.takeover.map((name) => String(name || "").trim()).filter(Boolean) : []
+		},
+		notifyMatrix: normalizeNotifyMatrix(src.notifyMatrix),
 		directRates: directFormula(src.directRates),
 		calcConstants: normalizeCalcConstants(src.calcConstants),
 		boardColors: normalizeBoardColors(src.boardColors),
@@ -5532,6 +5540,32 @@ function ApprovalFlowPanel({ cfg, patch }) {
 			flowError ? /* @__PURE__ */ jsx("p", {
 				className: "rce-field-error",
 				children: flowError
+			}) : null,
+			engineOn ? /* @__PURE__ */ jsxs("div", {
+				style: { margin: "0.6rem 0" },
+				children: [
+					/* @__PURE__ */ jsxs("label", { children: ["Authorised to approve a take-over ", /* @__PURE__ */ jsx("input", {
+						className: "ce-input",
+						value: (cfg.authorisations?.takeover || []).join(", "),
+						placeholder: "Names, comma separated",
+						onChange: (e) => patch({ authorisations: {
+							...cfg.authorisations,
+							takeover: e.target.value.split(",").map((name) => name.trim()).filter(Boolean)
+						} })
+					})] }),
+					/* @__PURE__ */ jsx("p", {
+						className: "wiz-hint",
+						children: "Notifications stay on unless a row is turned off. The owner can always approve their own take-over."
+					}),
+					(cfg.notifyMatrix || []).map((row) => /* @__PURE__ */ jsxs("label", {
+						className: "ce-picker-row",
+						children: [/* @__PURE__ */ jsx("input", {
+							type: "checkbox",
+							checked: row.enabled !== false,
+							onChange: (e) => patch({ notifyMatrix: (cfg.notifyMatrix || []).map((item) => item.event === row.event ? { ...item, enabled: e.target.checked } : item) })
+						}), /* @__PURE__ */ jsx("span", { children: row.event })]
+					}, row.event))
+				]
 			}) : null,
 			/* @__PURE__ */ jsx("ol", {
 				className: "admin-flow-list",
@@ -7768,6 +7802,10 @@ function reducer(state, action) {
 				action: "Pricing switched",
 				remarks: action.remarks || ""
 			}))
+		};
+		case "SET_APPROVAL": return {
+			...state,
+			approval: action.approval
 		};
 		case "SET_SUMMARY_HIGHLIGHT": return {
 			...state,
@@ -17124,7 +17162,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 		})]
 	});
 }
-function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setCeStatus, versionHistory, onSaveVersion, onRestoreVersion, onBack, editLocked, onEditingChange }) {
+function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setCeStatus, versionHistory, onSaveVersion, onRestoreVersion, onBack, editLocked, onEditingChange, engineOn = false, onRequestClosing = null }) {
 	const [editing, setEditing] = useState(false);
 	const [isParked, setIsParked] = useState(false);
 	const [draft, setDraft] = useState(meta);
@@ -17221,6 +17259,18 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							onChange: (e) => {
 								const v = e.target.value;
 								if (v === ceStatus) return;
+								if (engineOn && (v === "No quote" || v === "Cancelled" || v === "Close bid")) {
+									const note = window.prompt("Reason (required)");
+									if (!note || !String(note).trim()) return;
+									const begun = onRequestClosing?.(v, String(note).trim());
+									if (!begun?.ok) return;
+									dispatch({
+										type: "SET_APPROVAL",
+										approval: begun.approval
+									});
+									setCeStatus(begun.pendingStatus);
+									return;
+								}
 								if (!PEOPLE_SETTABLE.includes(v) && v !== ceStatus) {
 									window.alert("Only Park, Waiting for information, Sourcing, and No quote can be set here. Other statuses follow Submit / approval / generate.");
 									return;
@@ -17248,7 +17298,13 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							}), PEOPLE_SETTABLE.map((s) => /* @__PURE__ */ jsx("option", {
 								value: s,
 								children: s
-							}, s))]
+							}, s)), engineOn ? /* @__PURE__ */ jsx("option", {
+								value: "Cancelled",
+								children: "Cancelled"
+							}) : null, engineOn ? /* @__PURE__ */ jsx("option", {
+								value: "Close bid",
+								children: "Close bid"
+							}) : null]
 						}),
 						/* @__PURE__ */ jsx("button", {
 							className: `ce-btn-ghost ce-btn-sm ${isParked ? "ce-btn-active" : ""}`,
@@ -17910,7 +17966,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -17971,7 +18027,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const dispatch = (action) => {
 		const patchKeys = action?.patch && typeof action.patch === "object" ? Object.keys(action.patch) : [];
 		const revisionStart = action?.type === "PATCH_PROJECT_INFO" && patchKeys.length > 0 && patchKeys.every((key) => key === "revisionPending" || key === "revisionNote");
-		if (readOnly && !revisionStart) return;
+		if (readOnly && !revisionStart && action?.type !== "SET_APPROVAL") return;
 		if (!action || action.type === "REPLACE_STATE") {
 			baseDispatch(action);
 			return;
@@ -18636,6 +18692,31 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			/* @__PURE__ */ jsxs("div", {
 				style: { position: "relative" },
 				children: [
+			engineOn && ceData?.takeover?.status === "pending" && /* @__PURE__ */ jsxs("div", {
+				className: "scope-edit-banner",
+				children: [
+					`Take-over requested by ${ceData.takeover.by}: ${ceData.takeover.reason}`,
+					canDecideTakeover({
+						owner: ceData.takeover.owner || ceData.assignedTo,
+						actor: editingUser,
+						authorisedNames: adminConfig?.authorisations?.takeover
+					}) ? /* @__PURE__ */ jsxs("span", { children: [" ", /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => onDecideTakeover?.("approve"),
+						children: "Approve take-over"
+					}), " ", /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => onDecideTakeover?.("decline"),
+						children: "Decline"
+					})] }) : " Waiting for the owner or an authorised person."
+				]
+			}),
+			engineOn && rceWasChanged(ceData, (rceList || []).find((rce) => (rce.id || rce.rceNo) === (ceData?.rceId || ceData?.rceNo))) && /* @__PURE__ */ jsx("p", {
+				className: "scope-edit-banner",
+				children: "RCE changed. This cost estimate was not updated."
+			}),
 			isEditorLocked && /* @__PURE__ */ jsx("div", {
 				className: "editor-lock-overlay",
 				children: /* @__PURE__ */ jsxs("div", {
@@ -18655,7 +18736,16 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 							type: "button",
 							onClick: onAssist || onTakeOver,
 							children: "Assist"
-						}), /* @__PURE__ */ jsx("button", {
+						}), engineOn ? /* @__PURE__ */ jsx("button", {
+							className: "ce-btn-primary",
+							type: "button",
+							onClick: () => {
+								const reason = window.prompt("Reason for taking over (required)");
+								if (!reason || !String(reason).trim()) return;
+								onTakeOver?.(String(reason).trim());
+							},
+							children: "Take over"
+						}) : null, /* @__PURE__ */ jsx("button", {
 							className: "ce-btn-ghost",
 							type: "button",
 							onClick: () => {
@@ -18703,7 +18793,9 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						onEditingChange: (value) => {
 							setHeaderEditing(value);
 							onEditingChange?.(value);
-						}
+						},
+						engineOn,
+						onRequestClosing
 					}),
 					exportPreview && /* @__PURE__ */ jsx("div", {
 						className: "ce-modal-overlay",
@@ -18806,6 +18898,12 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								onClick: undoEdit,
 								children: "Undo"
 							}),
+							engineOn && (ceStatus === "For approval" || String(ceStatus || "").startsWith("Pending ")) && /* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost ce-btn-sm",
+								type: "button",
+								onClick: () => onNotify?.(ceData?.id),
+								children: "Notify"
+							}),
 							ceStatus === "For approval" && !approvalV2 && canActOnStep(currentApprovalStep(approvalNow), actingLevel) && /* @__PURE__ */ jsxs("span", {
 								className: "ce-award-box",
 								children: [/* @__PURE__ */ jsx("button", {
@@ -18843,7 +18941,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 											const remarks = window.prompt("Approval remarks") || "";
 											const result = onApprovalDecision?.(ceData?.id, "approve", remarks);
 											if (!result?.ok) return;
-											if (result.final) setCeStatus("Done");
+											if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+											if (result.final) setCeStatus(result.nextStatus || "Done");
 										},
 										children: "Approve"
 									}),
@@ -18855,7 +18954,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 											if (!remarks.trim()) return;
 											const result = onApprovalDecision?.(ceData?.id, "approve-comment", remarks);
 											if (!result?.ok) return;
-											if (result.final) setCeStatus("Done");
+											if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+											if (result.final) setCeStatus(result.nextStatus || "Done");
 										},
 										children: "Approve with comment"
 									}),
@@ -18867,7 +18967,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 											if (!remarks || !remarks.trim()) return;
 											const result = onApprovalDecision?.(ceData?.id, "request-edit", remarks.trim());
 											if (!result?.ok) return;
-											setCeStatus("For revision");
+											if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+											setCeStatus(result.nextStatus || "For revision");
 										},
 										children: "Request edit"
 									}),
@@ -18884,7 +18985,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									] }, item.id))
 								]
 							}),
-							engineOn && onEngineUpdate && ceStatus !== "For approval" && /* @__PURE__ */ jsx("button", {
+							engineOn && onEngineUpdate && ceStatus !== "For approval" && !String(ceStatus || "").startsWith("Pending ") && /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm",
 								onClick: () => {
@@ -19790,7 +19891,7 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 		]
 	});
 }
-function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspectionReports = [], onOpenInspection, onUpdateInspection, schemaConfig, onSchemaConfigChange, ceList = [], documents = {}, onOpenCE, actingLevel = "staff", documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors, onGeneratePending, onAssignPending }) {
+function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspectionReports = [], onOpenInspection, onUpdateInspection, schemaConfig, onSchemaConfigChange, ceList = [], documents = {}, onOpenCE, actingLevel = "staff", documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors, onGeneratePending, onAssignPending, engineOn = false }) {
 	const view = tab === "archive" ? "active" : tab;
 	useEffect(() => {
 		if (tab === "archive") onTabChange?.("active");
@@ -19826,7 +19927,8 @@ function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspect
 				onStartRevision,
 				actingLevel,
 				onGeneratePending,
-				onAssignPending
+				onAssignPending,
+				engineOn
 			}),
 			tab === "inspection" && /* @__PURE__ */ jsx(InspectionMonitoringView, {
 				reports: inspectionReports,
@@ -19856,7 +19958,8 @@ function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspect
 				rceList,
 				documents,
 				documentControl,
-				onOpenCE
+				onOpenCE,
+				engineOn
 			})
 		]
 	});
@@ -21031,6 +21134,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 		if (variant === "executive") return true;
 		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === ce.rceId);
 		if (!rce) return true;
+		if (profile === "user") return true;
 		if (rceIsFinalAccepted(rce)) return true;
 		return lead;
 	}).map((ce) => {
@@ -21075,6 +21179,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			awardStatus: ce.status === "Done" ? doc.awardStatus || ce.awardStatus || "" : "",
 			awardRemarks: ce.status === "Done" ? doc.awardJo || ce.awardJo || "" : "",
 			isNew: !!ce.isNew,
+			rceChanged: !!engineOn && rceWasChanged(ce, rce),
 			overdue: deadline ? Date.parse(deadline) < Date.now() && ce.status !== "Done" && ce.status !== "Cancelled" : false,
 			baseKey: ceBaseId(ce),
 			revRank: ceRevRank(ce, doc),
@@ -21372,6 +21477,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							const ceCell = /* @__PURE__ */ jsxs("td", { className: "ce-mono mon-ce", children: [
 								row.ceDisplay || "—",
 								row.rceNo && row.rceNo !== "—" ? /* @__PURE__ */ jsx("span", { className: "mon-rce-under", children: row.rceNo }) : null,
+								row.rceChanged ? /* @__PURE__ */ jsx("span", { className: "mon-rce-under", children: "RCE changed" }) : null,
 								row.revOpen ? /* @__PURE__ */ jsx("span", { className: "mon-rev-under", children: `Rev ${row.revNo || "01"} in progress` }) : monRevKey(row.revNo) !== "0" ? /* @__PURE__ */ jsx("span", { className: "mon-rev-under", children: `Rev ${row.revNo}` }) : null
 							] });
 							const estimatorCell = /* @__PURE__ */ jsx("td", { className: "mon-estimator", children: row.estimator || "—" });
@@ -23943,7 +24049,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					variant: "active",
 					profile: "user",
 					ceList: mine,
-					rceList: [],
+					rceList: engineOn ? rceList : [],
 					documents,
 					documentControl,
 					users,
@@ -23955,7 +24061,8 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					onReceivedBy,
 					onStampSubmitted,
 					onStartRevision,
-					actingLevel
+					actingLevel,
+					engineOn
 				})]
 			}),
 			showApprovals && /* @__PURE__ */ jsxs("section", {
@@ -26982,8 +27089,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (currentView === "admin" && !isAdminAccount) setCurrentView("dashboard");
 	}, [currentView, isAdminAccount]);
 	const notice = (partial) => {
+		const event = partial.type || NOTICE_EVENTS.APPROVAL;
+		if (approvalEngineOn(adminConfig) && !matrixAllows(adminConfig?.notifyMatrix, event)) return;
 		setNotifications((prev) => pushNotice(prev, {
-			type: partial.type || NOTICE_EVENTS.APPROVAL,
+			type: event,
 			title: partial.title || partial.type,
 			body: partial.body || "",
 			to: partial.to || "*",
@@ -27073,6 +27182,40 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 	};
 	const engineFlag = approvalEngineOn(adminConfig);
+	useEffect(() => {
+		if (!engineFlag) return;
+		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
+		const now = new Date();
+		const hits = [];
+		(ceList || []).forEach((ce) => {
+			const status = String(ce.status || "");
+			if (status !== "For approval" && !status.startsWith("Pending ")) return;
+			const slots = dueReminderSlots({ now, lastNotifiedAt: ce.reminderAt || "" });
+			if (slots.length) hits.push({ id: ce.id, slots });
+		});
+		if (!hits.length) return;
+		setNotifications((prev) => {
+			let next = prev;
+			hits.forEach(({ id, slots }) => {
+				slots.forEach((slot) => {
+					next = pushNotice(next, {
+						type: "Reminder",
+						title: "Approval reminder",
+						body: `${id} is still waiting · ${slot.label} PH`,
+						toRole: "lead",
+						ceId: id,
+						view: "editor"
+					});
+				});
+			});
+			return next;
+		});
+		setCeList((prev) => prev.map((ce) => {
+			const hit = hits.find((item) => item.id === ce.id);
+			if (!hit) return ce;
+			return { ...ce, reminderAt: hit.slots[hit.slots.length - 1].at };
+		}));
+	}, [engineFlag, ceList, adminConfig?.notifyMatrix]);
 	const approvalFlowInput = (docType) => {
 		const party = adminConfig?.approvalFinal?.[docType] || {};
 		return {
@@ -27503,6 +27646,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			openEditorForCE(live);
 			return;
 		}
+		if (engineFlag && !ceCreateAllowed(rce, true)) {
+			window.alert("An accepted RCE is required before a cost estimate can be created.");
+			return;
+		}
 		setWizardReturnTab(returnTab || "rce");
 		setWizardRce(rce);
 		setCurrentView("ce-wizard");
@@ -27523,6 +27670,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				setMonitoringTab("active");
 				setCurrentView("monitoring");
 			}
+			return;
+		}
+		if (engineFlag && !ceCreateAllowed(rce, true)) {
+			window.alert("An accepted RCE is required before a cost estimate can be created.");
 			return;
 		}
 		let id;
@@ -27547,7 +27698,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			templateKind: payload.templateKind || "standard",
 			sourceCeId: payload.sourceCeId || null,
 			isNew: true,
-			status: "Ongoing"
+			status: "Ongoing",
+			...(engineFlag && rce ? { rceStamp: rceStamp(rce) } : {})
 		};
 		setCeList([...ceList, newCE]);
 		if (payload.rceId) setRceList((prev) => prev.map((r) => {
@@ -28180,8 +28332,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				projectInfo.revDate = todayLocal();
 				projectInfo.revisionPending = false;
 			}
-			const nextStatus = result.editRequested || result.approval?.status === "edit-requested" ? "For revision" : result.final ? "Done" : "For approval";
-			const frozen = result.final ? freezeCeSnapshot({
+			const closing = approval.closing || null;
+			const editRequested = result.editRequested || result.approval?.status === "edit-requested";
+			let nextStatus = editRequested ? "For revision" : result.final ? "Done" : "For approval";
+			if (closing?.target) {
+				if (editRequested) nextStatus = closing.from || "Ongoing";
+				else if (result.final) nextStatus = closing.target;
+				else nextStatus = pendingClosingStatus(closing.target);
+			}
+			const frozen = result.final && !closing?.target ? freezeCeSnapshot({
 				...doc,
 				projectInfo
 			}, {
@@ -28213,7 +28372,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				}
 			}));
 			if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: nextStatus } : cur);
-			return result;
+			return { ...result, nextStatus };
 		}
 		const step = currentApprovalStep(approval);
 		const result = applyApprovalDecision(approval, {
@@ -28336,8 +28495,175 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: "Internal" } : cur);
 		return planned;
 	};
-	const handleTakeOver = () => {
-		handleAssist();
+	const handleRequestClosing = (target, reason) => {
+		if (!engineFlag || !activeCE) return { ok: false };
+		const planned = planClosing({ fromStatus: activeCE.status, target, reason });
+		if (!planned.ok) {
+			window.alert(planned.message || "Closing could not start.");
+			return { ok: false };
+		}
+		const doc = documents[activeCE.id] || {};
+		const begun = beginEngineApproval({
+			docType: "ce",
+			docNo: activeCE.id,
+			rev: doc.projectInfo?.revNo || "",
+			owner: doc.projectInfo?.preparedBy || activeCE.assignedTo || editorName,
+			actor: editorName,
+			userId: accountUserId || "",
+			now: nowIso(),
+			flow: approvalFlowInput("ce"),
+			changeKind: "closing"
+		});
+		if (!begun.ok) {
+			window.alert(begun.message || "Approval could not start.");
+			return { ok: false };
+		}
+		const approval = {
+			...begun.approval,
+			closing: { target: planned.target, from: planned.fromStatus, reason: planned.reason }
+		};
+		const pendingStatus = planned.pendingStatus;
+		setCeList((prev) => prev.map((ce) => ce.id === activeCE.id ? {
+			...ce,
+			status: pendingStatus,
+			approval
+		} : ce));
+		setActiveCE((cur) => cur ? { ...cur, status: pendingStatus, approval } : cur);
+		setDocuments((prev) => {
+			const current = prev[activeCE.id] || {};
+			return {
+				...prev,
+				[activeCE.id]: {
+					...current,
+					ceStatus: pendingStatus,
+					approval,
+					timeline: appendTimeline(current.timeline, timelineEntry({
+						who: editorName,
+						action: "Closing requested",
+						remarks: `${planned.target}: ${planned.reason}`
+					}))
+				}
+			};
+		});
+		notice({
+			type: "Closing requested",
+			title: "Closing requested",
+			body: `${activeCE.id} → ${pendingStatus}. ${planned.reason}`,
+			ceId: activeCE.id,
+			toRole: noticeRoleFor(approval),
+			view: "editor"
+		});
+		return { ok: true, approval, pendingStatus };
+	};
+	const handleTakeOver = (reason) => {
+		if (!activeCE) return;
+		if (!engineFlag || !String(reason || "").trim()) {
+			handleAssist();
+			return;
+		}
+		const planned = planTakeover({
+			owner: activeCE.assignedTo || "",
+			actor: editorName,
+			reason,
+			now: nowIso()
+		});
+		if (!planned.ok) {
+			window.alert(planned.message || "A reason is required.");
+			return;
+		}
+		const takeover = planned.takeover;
+		setCeList((prev) => prev.map((ce) => ce.id === activeCE.id ? { ...ce, takeover } : ce));
+		setActiveCE((cur) => cur ? { ...cur, takeover } : cur);
+		setDocuments((prev) => {
+			const doc = prev[activeCE.id];
+			if (!doc) return prev;
+			return {
+				...prev,
+				[activeCE.id]: {
+					...doc,
+					timeline: appendTimeline(doc.timeline, timelineEntry({
+						who: editorName,
+						action: planned.timeline.action,
+						remarks: planned.timeline.remarks
+					}))
+				}
+			};
+		});
+		notice({
+			type: "Take-over requested",
+			title: "Take-over requested",
+			body: `${editorName} asked to take over ${activeCE.id}: ${takeover.reason}`,
+			ceId: activeCE.id,
+			to: takeover.owner || activeCE.assignedTo
+		});
+	};
+	const handleDecideTakeover = (decision) => {
+		if (!engineFlag || !activeCE?.takeover) return;
+		const result = decideTakeover({
+			takeover: activeCE.takeover,
+			actor: editorName,
+			authorisedNames: adminConfig?.authorisations?.takeover || [],
+			decision,
+			now: nowIso()
+		});
+		if (!result.ok) {
+			window.alert(result.message || "Take-over could not be recorded.");
+			return;
+		}
+		const approved = decision === "approve";
+		setActiveCE((cur) => cur ? {
+			...cur,
+			takeover: result.takeover,
+			...(approved ? { assignedTo: result.assignedTo, assisting: "" } : {})
+		} : cur);
+		setCeList((prev) => prev.map((ce) => ce.id === activeCE.id ? {
+			...ce,
+			takeover: result.takeover,
+			...(approved ? { assignedTo: result.assignedTo, assisting: "" } : {})
+		} : ce));
+		if (approved) {
+			setIsEditorLocked(false);
+			setEditingUser(result.assignedTo);
+		}
+		setDocuments((prev) => {
+			const doc = prev[activeCE.id];
+			if (!doc) return prev;
+			return {
+				...prev,
+				[activeCE.id]: {
+					...doc,
+					timeline: appendTimeline(doc.timeline, timelineEntry({
+						who: editorName,
+						action: result.timeline.action,
+						remarks: result.timeline.remarks
+					}))
+				}
+			};
+		});
+		notice({
+			type: approved ? "Take-over approved" : "Take-over declined",
+			title: result.timeline.action,
+			body: `${activeCE.id}: ${result.timeline.remarks}`,
+			ceId: activeCE.id,
+			to: approved ? result.assignedTo : activeCE.takeover.by
+		});
+	};
+	const handleNotify = (ceId) => {
+		if (!engineFlag) return;
+		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
+		const ce = (ceList || []).find((row) => row.id === ceId) || activeCE;
+		if (!ce?.id) return;
+		const now = nowIso();
+		notice({
+			type: "Reminder",
+			title: "Approval reminder",
+			body: `${ce.id} is still waiting`,
+			ceId: ce.id,
+			toRole: "lead",
+			view: "editor"
+		});
+		setCeList((prev) => prev.map((row) => row.id === ce.id ? { ...row, reminderAt: now } : row));
+		if (activeCE?.id === ce.id) setActiveCE((cur) => cur ? { ...cur, reminderAt: now } : cur);
 	};
 	const editorPayload = activeCE && documents[activeCE.id] ? {
 		...activeCE,
@@ -28633,7 +28959,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						engineOn: engineFlag
 					}),
 					currentView === "ce-wizard" && /* @__PURE__ */ jsx(NewCostEstimateWizard, {
-						rceList: rceList.filter((r) => rceIsFinalAccepted(r) || actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin"),
+						rceList: rceList.filter((r) => rceIsFinalAccepted(r) || (!engineFlag && (actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin"))),
 						ceList,
 						initialRce: wizardRce,
 						currentUserName: editorName,
@@ -28676,7 +29002,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						adminConfig,
 						onBack: () => setPendingLeave(editorReturn),
 						onEditingChange: setHeaderEditing,
-						onEngineUpdate: handleEngineUpdate
+						onEngineUpdate: handleEngineUpdate,
+						onRequestClosing: handleRequestClosing,
+						onDecideTakeover: handleDecideTakeover,
+						onNotify: handleNotify
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);
@@ -28855,7 +29184,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onUpdateInspection: handleUpdateInspection,
 						schemaConfig,
 						onSchemaConfigChange: setSchemaConfig,
-						actingLevel
+						actingLevel,
+						engineOn: engineFlag
 					}),
 					currentView === "inspection-form" && /* @__PURE__ */ jsx(InspectionFormView, {
 						initial: activeOif,
