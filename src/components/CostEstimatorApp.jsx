@@ -22,6 +22,7 @@ import { checksumTotal, commercialNet, miscAmount, qtyUnitAmount, roundMoney } f
 import { phStamp, phYear } from "../lib/estimator/phTime";
 import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
 import { allocateDocNumber } from "../lib/estimator/supabase-workspace";
+import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
 //#region src/components/CostEstimatorApp.jsx
@@ -23151,6 +23152,64 @@ Import anyway? Cancel skips the whole file.`)) return;
 		]
 	});
 }
+function AccountAccessQueue() {
+	const [rows, setRows] = useState([]);
+	const [note, setNote] = useState("");
+	const [busy, setBusy] = useState("");
+	const reload = useCallback(() => {
+		listUserAccess().then((next) => {
+			setRows(Array.isArray(next) ? next : []);
+			setNote(next.length ? "" : "No accounts yet. If the access SQL is not applied, this list stays empty and everyone already signed in stays active.");
+		}).catch((err) => setNote(err instanceof Error ? err.message : "The account list could not be loaded."));
+	}, []);
+	useEffect(() => {
+		reload();
+	}, [reload]);
+	const run = (key, action) => {
+		setBusy(key);
+		setNote("");
+		action().then((result) => {
+			if (result && result.ok === false) setNote(result.reason || "That change was not saved.");
+			reload();
+		}).catch((err) => setNote(err instanceof Error ? err.message : "That change was not saved.")).finally(() => setBusy(""));
+	};
+	return /* @__PURE__ */ jsxs("section", {
+		className: "ce-card",
+		style: { margin: "1rem", padding: "1rem" },
+		children: [
+			/* @__PURE__ */ jsx("h2", { className: "ce-serif", children: "Account access" }),
+			/* @__PURE__ */ jsx("p", { children: "Grant a role to a pending account, or decline and disable one. Staff, lead, and head can save after a role is granted." }),
+			note ? /* @__PURE__ */ jsx("p", { className: "wiz-hint", children: note }) : null,
+			/* @__PURE__ */ jsx("ul", { children: rows.map((row) => /* @__PURE__ */ jsxs("li", {
+				children: [
+					`${row.email || row.userKey} · ${row.role || "staff"} · ${row.status || "pending"}`,
+					" ",
+					["staff", "lead", "head", "admin"].map((role) => /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost",
+						disabled: busy === row.userKey,
+						onClick: () => run(row.userKey, () => grantUserRole(row.userKey, role)),
+						children: `Grant ${role}`
+					}, role)),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost",
+						disabled: busy === row.userKey,
+						onClick: () => run(row.userKey, () => declineUser(row.userKey)),
+						children: "Decline"
+					}),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost",
+						disabled: busy === row.userKey,
+						onClick: () => run(row.userKey, () => disableUser(row.userKey)),
+						children: "Disable"
+					})
+				]
+			}, row.userKey || row.email)) })
+		]
+	});
+}
 function Modal({ title, onClose, children }) {
 	return /* @__PURE__ */ jsx("div", {
 		className: "modal-overlay",
@@ -26470,7 +26529,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		]
 	});
 }
-function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "" }) {
+function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "", testDeployment = false }) {
 	const workspace = initialWorkspace || {};
 	const extras = workspace.schemaConfig?.__app || {};
 	const [currentView, setCurrentView] = useState("dashboard");
@@ -27828,9 +27887,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					...(adminConfig.users || []).filter((u) => u.status !== "inactive")
 				] : [],
 				onActingUser: (name) => {
-					if (isAdminAccount) setEditingUser(name);
+					if (isAdminAccount && testDeployment) setEditingUser(name);
 				},
-				testMode: isAdminAccount,
+				testMode: Boolean(testDeployment) && isAdminAccount,
 				canAdmin: isAdminAccount,
 				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel)),
 				onClearAll: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
@@ -28292,13 +28351,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						jobStatuses: JOB_STATUSES,
 						taskTemplates
 					}),
-					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsx(AdminHub, {
-						config: adminConfig,
-						onChange: (next) => {
-							if (!isAdminAccount) return;
-							setAdminConfig(normalizeAdminConfig(next));
-						}
-					}),
+					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsxs(Fragment, { children: [
+						/* @__PURE__ */ jsx(AccountAccessQueue, {}),
+						/* @__PURE__ */ jsx(AdminHub, {
+							config: adminConfig,
+							onChange: (next) => {
+								if (!isAdminAccount) return;
+								setAdminConfig(normalizeAdminConfig(next));
+							}
+						})
+					] }),
 					currentView === "scope" && /* @__PURE__ */ jsx(LibraryView, {
 						onCloneTemplate: (templateId) => console.log("Cloning template:", templateId),
 						onOpenArchivedCE: openArchived,
