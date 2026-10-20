@@ -12,7 +12,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 4 | Phase 1B: access control and sign-in | done | `grok/phase-1b` | https://github.com/ken2025mendoza11/Estimator-System/pull/4 |
 | 5 | Phase 1C: stable IDs and clone remap | done | `grok/phase-1c` | https://github.com/ken2025mendoza11/Estimator-System/pull/5 |
 | 6 | CE-COMP: CE computation | done | `grok/phase-ce-comp` | https://github.com/ken2025mendoza11/Estimator-System/pull/6 |
-| 7 | Phase 4: calculator fixes | pending | | |
+| 7 | Phase 4: calculator fixes | done | `grok/phase-4` | https://github.com/ken2025mendoza11/Estimator-System/pull/7 |
 | 8 | Phase 2a: approval engine + change types | pending | | |
 | 9 | Phase 2b: take-over, closing, reminders, notifications | pending | | |
 | 10 | Phase 2c: signatures, DRAFT watermark, inspection | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 6 is done on `grok/phase-ce-comp`, stacked on `grok/phase-1c`. Do not start Step 7 until Ken says `continue`.
+Item in progress: none. Step 7 is done on `grok/phase-4`, stacked on `grok/phase-ce-comp`. Do not start Step 8 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -213,6 +213,43 @@ Risks:
 - `activeCePricing` and `bolLegendFlag` are module lets set while the estimate editor renders, so a breakdown line matches the model without a new prop on every grid.
 - `eslint` is 157 warnings: the 156 baseline plus two `@ts-nocheck` warnings on the two new files. The App warning count fell by one.
 
+## Step 7 done
+
+Stacked on `grok/phase-ce-comp` (https://github.com/ken2025mendoza11/Estimator-System/pull/6 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/7. Do not merge to `main`.
+
+Baseline before the first Step 7 edit (same tree as Step 6): `npm test` 233 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 157 warnings. Build ok. `npm ci` was not repeated.
+
+- `6bffbb5` Move the EL formulas into elCalcs and lock the check numbers.
+- `e0e32a0` Use the EL formulas in the calculator and reject bad input.
+- `b8346bf` Add a calculator line from a dialog, with versioned constants.
+- `90313b5` Add a calculator-constants table and its rollback.
+
+After Step 7: `npm test` 248 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 160 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Paint coverage is volume-solids percent × 10 / DFT. 100 m², 1 coat, 200 µm, 75%, 0% waste = 26.67 L.
+- Fillet 6 mm × 10 m SMAW 65% = 2.174 kg. Plate 2.4 × 1.2 m × 6 mm = 135.65 kg. Pipe 60.3 × 3.91 × 6 m = 32.62 kg. Cutting waste defaults to 0.
+- Air cargo 20 kg, 50×40×30, declared ₱10,000 = ₱1,724.80. A blank declared value is a zero valuation, and the total still computes. Chargeable weight rounds up to the next 0.5 kg.
+- A zero DFT, deposition efficiency, or volumetric divisor is an inline message. Those values are not silently replaced.
+- Groove uses a 60° included angle, a 2 mm gap, and reinforcement on the weld-metal area. The fillet size is labelled Leg. The plate note says length and width are in metres.
+- Add to cost estimate picks the estimate, task, subtask, and category. Only Draft, Ongoing, On Park, Waiting for information, Sourcing, and For revision. A matching database description supplies the unit cost for material categories. Air cargo stays 1 × the freight total in MISC section B. Merge is shown and happens only if it is ticked. `line.calc` stores the inputs. ⓘ re-opens them. The alert runs after the update, not inside it.
+- Admin → Calculator edits the constants and bumps the version. An out-of-range value is refused. A saved line shows “constants changed” when the version differs. A missing constants object uses the built-in rates.
+
+SQL written, not run: `supabase/p4-calc-constants-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after the app is deployed and after the Step 4 access file. The app does not call the new functions. The Supabase client is not on this step’s allowed list.
+
+Flags: none. These fixes ship on. There was no separate OT calculator to rewire. Step 6 `dolePay` stays the OT helper.
+
+Questions: one new, below. The Step 1 questions are still open.
+
+Risks:
+
+- `elCalcs.js` is one commit of about 500 lines. The formulas and the insert planner were written together.
+- Groove 10 mm, 60°, 2 mm gap, density 7.85 is 0.610 kg/m of weld metal before reinforcement and 0.671 kg/m after the stated 10%. The screen applies the 10%.
+- `eslint` is 160 warnings: the Step 6 count of 157 plus one `@ts-nocheck` warning on each of `elCalcs.js`, its test, and `AddToCeDialog.jsx`.
+- `package.json` gained `elCalcs.test.mjs`.
+- The SQL table is not read. Turning the Admin version is what the badge compares.
+
 ### Golden table (today)
 
 Section D's today column. The BOL sheet and benefits are today's functions, not the direct-v1 columns.
@@ -288,6 +325,7 @@ Questions:
 
 1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY` (signed-in users have no insert policy). Confirm that env name.
 2. The seed loads one RCE, one legacy CE, and one inspection. Say if you want more than one of each.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
 
 Risks:
 
