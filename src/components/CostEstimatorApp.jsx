@@ -22,6 +22,7 @@ import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, n
 import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
 import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
 import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatrix";
+import { cachedSignature, ceBlocksInspectionLines, loadSignatureImage, needsDraftWatermark, rememberSignature, signatureUserKey, storeSignatureImage } from "../lib/estimator/signatures";
 import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
 import { phStamp, phYear } from "../lib/estimator/phTime";
 import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
@@ -253,6 +254,8 @@ var PDF_FONT_FILES = [
 ];
 var exportFontCache = null;
 var exportFontReady = false;
+var exportEngineOn = false;
+var exportUsers = [];
 async function ensureExportFonts() {
 	if (exportFontReady) return;
 	const cache = {};
@@ -350,7 +353,16 @@ function drawExportSigns(doc, signs, y, margin) {
 		const script = (slot.stamp && (parts.who || String(slot.name || "").replace(/^(mr|mrs|ms|miss)\.?\s+/i, "").trim())) || "";
 		const stampW = parts.date ? 15 : 0;
 		const scriptY = yy + 8.2;
-		if (script) {
+		let drewImage = false;
+		if (exportEngineOn) {
+			const image = cachedSignature(signatureUserKey({ name: slot.name }));
+			if (image) try {
+				const imgW = Math.min(32, Math.max(12, colW - stampW - 4));
+				doc.addImage(image, "PNG", x + (colW - stampW - imgW) / 2, scriptY - 6, imgW, 8);
+				drewImage = true;
+			} catch { /* script font if the image cannot be drawn */ }
+		}
+		if (script && !drewImage) {
 			const maxW = Math.max(12, colW - stampW - 2);
 			try {
 				doc.setFont(hasScript ? "Signature" : bodyFont, hasScript ? "normal" : "italic");
@@ -747,11 +759,63 @@ function pdfHandle(blob) {
 		}
 	};
 }
+function stampDraftWatermark(doc) {
+	if (!doc || typeof doc.getNumberOfPages !== "function") return;
+	const total = doc.getNumberOfPages();
+	for (let i = 1; i <= total; i++) {
+		doc.setPage(i);
+		const pageW = doc.internal.pageSize.getWidth();
+		const pageH = doc.internal.pageSize.getHeight();
+		const body = doc.getFont()?.fontName || "helvetica";
+		let pushed = false;
+		try {
+			if (typeof doc.saveGraphicsState === "function") {
+				doc.saveGraphicsState();
+				pushed = true;
+			}
+			if (typeof doc.GState === "function" && typeof doc.setGState === "function") doc.setGState(new doc.GState({ opacity: 0.16 }));
+		} catch { /* draw the mark even if opacity is unavailable */ }
+		try {
+			doc.setFont(body, "bold");
+		} catch {
+			try { doc.setFont(body, "normal"); } catch { /* keep the current font */ }
+		}
+		doc.setFontSize(52);
+		doc.setTextColor(170, 170, 170);
+		try {
+			doc.text("DRAFT", pageW / 2, pageH / 2, { align: "center", angle: 32 });
+		} catch {
+			doc.text("DRAFT", pageW / 2, pageH / 2, { align: "center" });
+		}
+		if (pushed) try { doc.restoreGraphicsState(); } catch { /* page state already restored */ }
+		doc.setTextColor(0, 0, 0);
+		try { doc.setFont(body, "normal"); } catch { /* keep the current font */ }
+		doc.setFontSize(8);
+	}
+}
+async function warmExportSignatures(names) {
+	if (!exportEngineOn) return;
+	const seen = new Set();
+	for (const name of names || []) {
+		const person = (exportUsers || []).find((user) => String(user?.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
+		const key = signatureUserKey(person?.id ? { id: person.id, name } : { name });
+		if (!key || seen.has(key) || cachedSignature(key) || cachedSignature(signatureUserKey({ name }))) continue;
+		seen.add(key);
+		const image = await loadSignatureImage(key);
+		if (image) rememberSignature(key, image, name);
+	}
+}
 async function renderCostEstimatePdf(data) {
 	try {
 		await ensureExportFonts();
 	} catch {
 		exportFontReady = false;
+	}
+	if (data?.draftWatermark) {
+		const names = [];
+		(data.sections || []).forEach((section) => (section.signs || []).forEach((slot) => slot?.name && names.push(slot.name)));
+		["preparedBy", "reviewedBy", "approvedBy"].forEach((key) => data.cover?.[key] && names.push(data.cover[key]));
+		await warmExportSignatures(names);
 	}
 	const sections = data.sections || [];
 	const doc = new jsPDF({
@@ -868,6 +932,7 @@ async function renderCostEstimatePdf(data) {
 		doc.setTextColor(0, 0, 0);
 		doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 11, { align: "right" });
 	}
+	if (data?.draftWatermark) stampDraftWatermark(doc);
 	return pdfHandle(await stitchPdfAttachments(doc, inserts));
 }
 function sheetName(title) {
@@ -970,7 +1035,7 @@ function exportIssueExcel(data = {}) {
 	const coverAoA = [
 		[
 			letter.headerLeft,
-			"",
+			data.draftWatermark ? "DRAFT" : "",
 			letter.headerRight
 		],
 		[],
@@ -1331,7 +1396,14 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		doc.text(label, m + i * sigW + 2, y2 + 4);
 		doc.setFont(void 0, "normal");
 		doc.setFontSize(8);
-		doc.text(String(sigNames[i] || ""), m + i * sigW + 2, y2 + (hasSigStamp ? 8.2 : 10));
+		const sigImage = exportEngineOn ? cachedSignature(signatureUserKey({ name: sigNames[i] })) : "";
+		if (sigImage) {
+			try {
+				doc.addImage(sigImage, "PNG", m + i * sigW + 2, y2 + (hasSigStamp ? 5 : 6), 28, 8);
+			} catch {
+				doc.text(String(sigNames[i] || ""), m + i * sigW + 2, y2 + (hasSigStamp ? 8.2 : 10));
+			}
+		} else doc.text(String(sigNames[i] || ""), m + i * sigW + 2, y2 + (hasSigStamp ? 8.2 : 10));
 		if (!hasSigStamp) return;
 		if (sigTitles[i]) {
 			doc.setFontSize(6.5);
@@ -1347,6 +1419,7 @@ function exportRceToPDF(rce = {}, hostDoc) {
 			doc.setFont(void 0, "normal");
 		}
 	});
+	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: rce.status, approvalStatus: rce.approval?.status })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`${rce.rceNo || rce.id || "RCE"}_Checklist.pdf`);
 	return doc;
 }
@@ -2170,7 +2243,7 @@ function SignaturePad({ value, onChange }) {
 		})]
 	});
 }
-function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "", checkTemplates = [], onCheckTemplatesChange }) {
+function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "", checkTemplates = [], onCheckTemplatesChange, engineOn = false, rceList = [], ceList = [], onSubmitNoting = null, onDecideNoting = null, onStoreSignature = null }) {
 	const clients = useMasterlist().clients || [];
 	const roles = useMasterlist().BOL || [];
 	const materialsList = useMasterlist().BOCM || [];
@@ -2476,6 +2549,24 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							value: form.oifNo,
 							onChange: (e) => patch({ oifNo: e.target.value })
 						})] }),
+						engineOn ? /* @__PURE__ */ jsxs("label", { children: ["LINKED RCE", /* @__PURE__ */ jsx("select", {
+							className: "ce-input",
+							value: form.rceId || "",
+							onChange: (e) => patch({ rceId: e.target.value }),
+							children: [/* @__PURE__ */ jsx("option", { value: "", children: "—" }, "none"), ...(rceList || []).map((rce) => /* @__PURE__ */ jsx("option", {
+								value: rce.id || rce.rceNo,
+								children: rce.rceNo || rce.id
+							}, rce.id || rce.rceNo))]
+						})] }) : null,
+						engineOn ? /* @__PURE__ */ jsxs("label", { children: ["LINKED CE", /* @__PURE__ */ jsx("select", {
+							className: "ce-input",
+							value: form.ceId || "",
+							onChange: (e) => patch({ ceId: e.target.value }),
+							children: [/* @__PURE__ */ jsx("option", { value: "", children: "—" }, "none"), ...(ceList || []).map((ce) => /* @__PURE__ */ jsx("option", {
+								value: ce.id,
+								children: `${ce.id} · ${ce.status || "Draft"}`
+							}, ce.id))]
+						})] }) : null,
 						/* @__PURE__ */ jsxs("label", {
 							className: "oif-span2",
 							children: ["PROJECT DESCRIPTION", /* @__PURE__ */ jsx("input", {
@@ -2998,7 +3089,60 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 					}), /* @__PURE__ */ jsx(SignaturePad, {
 						value: form.inspectorSignature || "",
 						onChange: (inspectorSignature) => patch({ inspectorSignature })
-					})]
+					}), engineOn ? /* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: async () => {
+								if (!String(form.inspectorSignature || "").startsWith("data:image/png")) {
+									window.alert("Draw the signature first.");
+									return;
+								}
+								const saved = await onStoreSignature?.(form.inspectorSignature);
+								window.alert(saved?.stored ? "Signature image saved." : saved?.path ? "Kept for this session. Storage is not available, so a later export uses the script signature." : saved?.message || "The signature image could not be stored. The script signature will be used on exports.");
+							},
+							children: "Save as my signature"
+						}), /* @__PURE__ */ jsx("span", {
+							className: "wiz-hint",
+							children: "Prepared by the inspector, then noted by the lead."
+						})]
+					}) : null, engineOn ? /* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-primary ce-btn-sm",
+							onClick: () => {
+								const result = onDecideNoting?.(form, "approve", "");
+								if (!result?.ok) return;
+								patch({ status: result.nextStatus || "Noted", approval: result.approval });
+							},
+							children: "Noted"
+						}) : null, form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => {
+								const why = window.prompt("What needs to change?");
+								if (!why || !String(why).trim()) return;
+								const result = onDecideNoting?.(form, "request-edit", String(why).trim());
+								if (!result?.ok) return;
+								patch({ status: result.nextStatus || "For revision", approval: result.approval });
+							},
+							children: "Request edit"
+						}) : null, form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? null : form.approval?.status !== "in-progress" && form.status !== "Noted" ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-primary ce-btn-sm",
+							onClick: () => {
+								const result = onSubmitNoting?.(form);
+								if (!result?.ok) return;
+								patch({ status: "For approval", approval: result.approval });
+							},
+							children: "Submit for noting"
+						}) : /* @__PURE__ */ jsx("span", {
+							className: "wiz-hint",
+							children: "Waiting for Noted by."
+						})]
+					}) : null]
 				})
 			]
 		})]
@@ -18538,7 +18682,12 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				assumptions: state.assumptions || sowText.replace(/<[^>]+>/g, " "),
 				exportedBy: editingUser,
 				exportedAt: nowIso()
-			}
+			},
+			draftWatermark: needsDraftWatermark({
+				flagOn: engineOn,
+				status: ceStatus,
+				approvalStatus: approvalNow?.status
+			})
 		};
 		let url = "";
 		try {
@@ -20287,6 +20436,16 @@ function exportOifToPDF(form = {}, hostDoc) {
 	line("Customer", form.customerName || form.client);
 	line("Representative", form.customerRep);
 	line("Inspector", form.onsiteInspector || form.createdBy);
+	if (exportEngineOn) {
+		const inspectorImage = cachedSignature(signatureUserKey({ name: form.onsiteInspector || form.createdBy }));
+		if (inspectorImage) {
+			y = room(y, 16);
+			try {
+				doc.addImage(inspectorImage, "PNG", m + 36, y, 40, 12);
+				y += 16;
+			} catch { /* inspector name already printed */ }
+		}
+	}
 	line("Contact", form.contactNo);
 	line("Activity", oifChecked(form.activity, {
 		onsite: "Onsite",
@@ -20356,6 +20515,7 @@ function exportOifToPDF(form = {}, hostDoc) {
 			y += 6;
 		} catch (err) {}
 	});
+	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: form.status, approvalStatus: form.approval?.status })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`Inspection_${form.oifNo || form.id || "report"}.pdf`);
 	return doc;
 }
@@ -20401,18 +20561,25 @@ function exportRceExcel(rce, documentControl) {
 	XLSX.writeFile(wb, `RCE_${src.rceNo || src.id || "export"}.xlsx`);
 }
 async function previewRcePdf(rce, documentControl) {
-	return exportRceToPDF(rceForExport(rce, documentControl), new jsPDF({
+	const src = rceForExport(rce, documentControl);
+	if (exportEngineOn) await warmExportSignatures([src.preparedBy, src.reviewedBy, src.approvedBy]);
+	const doc = exportRceToPDF(src, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
 		format: "a4"
-	})).output("bloburl");
+	}));
+	if (needsDraftWatermark({ flagOn: exportEngineOn, status: src.status, approvalStatus: src.approval?.status })) stampDraftWatermark(doc);
+	return doc.output("bloburl");
 }
 async function previewOifPdf(form) {
-	return exportOifToPDF(form, new jsPDF({
+	if (exportEngineOn) await warmExportSignatures([form?.onsiteInspector, form?.createdBy, form?.notedBy]);
+	const doc = exportOifToPDF(form, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
 		format: "a4"
-	})).output("bloburl");
+	}));
+	if (needsDraftWatermark({ flagOn: exportEngineOn, status: form?.status, approvalStatus: form?.approval?.status })) stampDraftWatermark(doc);
+	return doc.output("bloburl");
 }
 function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [], facts = [], docNoun = "document", backLabel = "Back to document", emptyFiles = "No files were saved with this version.", missingDoc = "This revision was not kept as its own copy. History is still available.", buildPdf, exportPdf, exportExcel, ceBundle = null }) {
 	const list = versions.length ? versions : [];
@@ -20677,7 +20844,7 @@ function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [],
 		})
 	});
 }
-function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = [] }) {
+function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = [], engineOn = false }) {
 	const versions = row?.versions?.length ? row.versions : [];
 	const [selectedId, setSelectedId] = useState(versions[versions.length - 1]?.id || "");
 	const [pane, setPane] = useState("estimate");
@@ -20706,9 +20873,14 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 		let url = "";
 		setPdfError("");
 		setPdfUrl("");
+		const data = buildMonitoringExportData(version, documentControl, users, row);
+		const payload = !engineOn ? data : {
+			...data,
+			draftWatermark: needsDraftWatermark({ flagOn: true, status: row?.status, approvalStatus: version?.approval?.status })
+		};
 		(async () => {
 			try {
-				url = await previewIssuePdf(buildMonitoringExportData(version, documentControl, users, row));
+				url = await previewIssuePdf(payload);
 				if (alive) setPdfUrl(url);
 				else URL.revokeObjectURL(url);
 			} catch (err) {
@@ -20719,10 +20891,17 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 			alive = false;
 			if (url) URL.revokeObjectURL(url);
 		};
-	}, [version, documentControl, users, row]);
+	}, [version, documentControl, users, row, engineOn]);
 	if (!version) return null;
 	const hot = /high|urgent|emergency/i.test(row?.priority || "");
-	const exportData = () => buildMonitoringExportData(version, documentControl, users, row);
+	const exportData = () => {
+		const data = buildMonitoringExportData(version, documentControl, users, row);
+		if (!engineOn) return data;
+		return {
+			...data,
+			draftWatermark: needsDraftWatermark({ flagOn: true, status: row?.status, approvalStatus: version?.approval?.status })
+		};
+	};
 	const panelHead = (title) => /* @__PURE__ */ jsxs("div", {
 		className: "mon-preview-panel-head",
 		children: [
@@ -21689,6 +21868,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 				documentControl,
 				users,
 				rceList,
+				engineOn,
 				onClose: () => setPreviewRow(null),
 				onOpen: (ceId) => {
 					setPreviewRow(null);
@@ -25352,7 +25532,8 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		};
 		onSubmitRCE?.(rceData);
 	};
-	function handleExport() {
+	async function handleExport() {
+		if (exportEngineOn) await warmExportSignatures([form.preparedBy, form.reviewedBy, form.approvedBy]);
 		exportRceToPDF({
 			...form,
 			company,
@@ -27182,6 +27363,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 	};
 	const engineFlag = approvalEngineOn(adminConfig);
+	exportEngineOn = engineFlag;
+	exportUsers = adminConfig?.users || [];
 	useEffect(() => {
 		if (!engineFlag) return;
 		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
@@ -28062,6 +28245,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			});
 		});
 		const existing = form.ceId ? (ceList || []).find((ce) => ce.id === form.ceId) : null;
+		if (engineFlag && existing && ceBlocksInspectionLines(existing)) {
+			window.alert("This cost estimate is locked. Inspection lines were not sent.");
+			return;
+		}
 		const DRAFT_STATUSES = ["Draft", "Ongoing", "On Park", "Waiting for information", "Sourcing", ""];
 		const editable = existing && DRAFT_STATUSES.includes(String(existing.status || ""));
 		if (editable && documents[existing.id]) {
@@ -28150,6 +28337,72 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			...r,
 			...patch
 		} : r));
+	};
+	const handleStoreSignature = async (dataUrl) => {
+		if (!engineFlag) return { ok: false, stored: false };
+		const saved = await storeSignatureImage(accountUserId || editorName, dataUrl, editorName);
+		if (!saved.stored) return saved;
+		return saved;
+	};
+	const handleSubmitNoting = (form) => {
+		if (!engineFlag) return { ok: false };
+		const id = form?.id || form?.oifNo;
+		if (!id) {
+			window.alert("Save the inspection before sending it for noting.");
+			return { ok: false };
+		}
+		const now = nowIso();
+		const begun = form?.approval?.engine === "v2" && form.approval.status === "edit-requested" ? planEdit(form.approval, {
+			actor: editorName,
+			userId: accountUserId || "",
+			now
+		}) : beginEngineApproval({
+			docType: "oif",
+			docNo: id,
+			rev: "0",
+			owner: form.onsiteInspector || editorName,
+			actor: editorName,
+			userId: accountUserId || "",
+			now,
+			flow: approvalFlowInput("oif"),
+			changeKind: "submit"
+		});
+		if (!begun?.ok) {
+			window.alert(begun?.message || "Noting could not start.");
+			return begun || { ok: false };
+		}
+		const next = { ...form, id, status: "For approval", approval: begun.approval };
+		setInspectionReports((prev) => prev.map((row) => row.id === id || row.oifNo === id ? { ...row, ...next } : row));
+		setActiveOif(next);
+		notice({
+			type: NOTICE_EVENTS.APPROVAL,
+			title: "Inspection needs noting",
+			body: `${id} prepared by ${editorName}`,
+			toRole: noticeRoleFor(begun.approval),
+			view: "inspection-form"
+		});
+		return { ok: true, approval: begun.approval };
+	};
+	const handleDecideNoting = (form, decision, remarks) => {
+		if (!engineFlag) return { ok: false };
+		const result = decideApproval(form?.approval, {
+			actor: editorName,
+			level: actingLevel,
+			decision,
+			remarks,
+			byUserId: accountUserId || "",
+			now: nowIso()
+		});
+		if (!result || !result.ok) {
+			window.alert(result?.reason || result?.message || "Noting could not be recorded.");
+			return result || { ok: false };
+		}
+		const nextStatus = result.editRequested || result.approval?.status === "edit-requested" ? "For revision" : result.final ? "Noted" : "For approval";
+		const id = form?.id || form?.oifNo;
+		const next = { ...form, status: nextStatus, approval: result.approval };
+		setInspectionReports((prev) => prev.map((row) => row.id === id || row.oifNo === id ? { ...row, ...next } : row));
+		setActiveOif((cur) => cur ? { ...cur, ...next } : next);
+		return { ...result, nextStatus };
 	};
 	const handleAssist = () => {
 		if (!activeCE) return;
@@ -29199,7 +29452,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						onSendToCe: handleSendInspectionToCe,
 						onBack: () => setCurrentView(inspectionReturn || "dashboard"),
-						onSave: handleSaveInspection
+						onSave: handleSaveInspection,
+						engineOn: engineFlag,
+						rceList,
+						ceList,
+						onSubmitNoting: handleSubmitNoting,
+						onDecideNoting: handleDecideNoting,
+						onStoreSignature: handleStoreSignature
 					}),
 					currentView === "el-calculator" && /* @__PURE__ */ jsx(ElCalculatorView, {
 						onInsert: handleElInsert,
