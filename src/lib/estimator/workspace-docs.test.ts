@@ -3,8 +3,11 @@ import test from "node:test";
 import { emptyMasterlist, type WorkspacePayload } from "./defaults.ts";
 import {
   assembleWorkspace,
+  changedDocKeys,
   docKey,
+  mergeServerWithDirty,
   planSave,
+  revisionsForDirtyPush,
   splitWorkspace,
   stableHash,
   stripVolatileFileFields,
@@ -154,3 +157,68 @@ test("held admin settings are not part of the save", () => {
   assert.equal(planned.writes.some((doc) => doc.kind === "admin"), false);
   assert.equal(planned.writes.some((doc) => doc.kind === "ce"), true);
 });
+
+test("hydration does not tombstone a server document missing from the local copy", () => {
+  const server = sample();
+  server.ceList.push({
+    id: "CE-2026-009",
+    client: "Server",
+    status: "Draft",
+    project: "Kept",
+    lastEdited: "2026-02-01",
+  });
+  const local = sample();
+  local.ceList[0] = { ...local.ceList[0], client: "Local edit" };
+  const merged = mergeServerWithDirty(server, local, [docKey("ce", "CE-2026-001")]);
+  assert.equal(merged.ceList.find((ce) => ce.id === "CE-2026-001")?.client, "Local edit");
+  assert.equal(merged.ceList.some((ce) => ce.id === "CE-2026-009"), true);
+  assert.equal(merged.rceList.length, server.rceList.length);
+  const docs = splitWorkspace(merged);
+  const { revisions } = assembleWorkspace(
+    splitWorkspace(server).map((doc) => ({ ...doc, version: 4 })),
+    server,
+  );
+  const quiet = planSave(docs, revisions, new Set(), new Set(), false);
+  assert.equal(quiet.tombstones.length, 0);
+  assert.equal(quiet.writes.length, 1);
+  assert.equal(quiet.writes[0].id, "CE-2026-001");
+  assert.equal(quiet.writes[0].expectedVersion, 4);
+});
+
+test("a local list does not replace server rows that were not edited", () => {
+  const server = sample();
+  const local = sample();
+  local.rceList = [];
+  local.ceList = [];
+  const merged = mergeServerWithDirty(server, local, [docKey("ce", "CE-2026-001"), docKey("rce", "RCE-2026-001")]);
+  assert.equal(merged.ceList.length, 1);
+  assert.equal(merged.rceList.length, 1);
+  const untouched = mergeServerWithDirty(server, local, []);
+  assert.equal(untouched, server);
+});
+
+test("changed document keys ignore a timestamp-only save", () => {
+  const first = sample();
+  const second = sample();
+  const app = (second.schemaConfig as { __app: { savedAt: string } }).__app;
+  app.savedAt = "2026-05-01T00:00:00.000Z";
+  assert.deepEqual(changedDocKeys(first, second), []);
+  second.ceList[0] = { ...second.ceList[0], client: "Edited" };
+  assert.deepEqual(changedDocKeys(first, second), [docKey("ce", "CE-2026-001")]);
+});
+
+test("a dirty document keeps the version the edit started from", () => {
+  const server = {
+    [docKey("ce", "CE-2026-001")]: { version: 5, hash: "server", synced: true },
+    [docKey("rce", "RCE-2026-001")]: { version: 3, hash: "rce", synced: true },
+  };
+  const backup = {
+    [docKey("ce", "CE-2026-001")]: { version: 2, hash: "local-base", synced: true },
+  };
+  const pinned = revisionsForDirtyPush(server, backup, [docKey("ce", "CE-2026-001")]);
+  assert.equal(pinned[docKey("ce", "CE-2026-001")].version, 2);
+  assert.equal(pinned[docKey("rce", "RCE-2026-001")].version, 3);
+  assert.equal(revisionsForDirtyPush(server, backup, [])[docKey("ce", "CE-2026-001")].version, 5);
+  assert.equal(server[docKey("ce", "CE-2026-001")].version, 5);
+});
+
