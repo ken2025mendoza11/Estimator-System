@@ -433,3 +433,19 @@ export function checksumTotal(n) {
   const v = Number(n) || 0;
   return Math.round(v * 100) / 100;
 }
+
+export {
+  actorCanDecide,
+  approvalEngineOn,
+  beginEngineApproval,
+  commentOpen,
+  decideApproval,
+  fixComment,
+  nextEngineRevision,
+  normalizeApprovalMode,
+  openStepIndexes,
+  planEdit,
+  planRevise,
+  planUpdate,
+  validateFlowSteps,
+} from "./approvalEngine.js";
