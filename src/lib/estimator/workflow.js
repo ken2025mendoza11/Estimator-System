@@ -449,3 +449,18 @@ export {
   planUpdate,
   validateFlowSteps,
 } from "./approvalEngine.js";
+
+export {
+  canDecideTakeover,
+  ceCreateAllowed,
+  decideTakeover,
+  dueReminderSlots,
+  pendingClosingStatus,
+  planClosing,
+  planTakeover,
+  rceChanged,
+  rceStamp,
+  reminderSlotsUntil,
+} from "./reminders.js";
+
+export { matrixAllows, normalizeNotifyMatrix } from "./notifyMatrix.js";
