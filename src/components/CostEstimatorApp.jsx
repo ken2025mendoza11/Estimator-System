@@ -19,6 +19,9 @@ import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
 import { SystemManual } from "./SystemManual";
 import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
 import { checksumTotal, commercialNet, miscAmount, qtyUnitAmount, roundMoney } from "../lib/estimator/money";
+import { phStamp, phYear } from "../lib/estimator/phTime";
+import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
+import { allocateDocNumber } from "../lib/estimator/supabase-workspace";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
 //#region src/components/CostEstimatorApp.jsx
@@ -903,6 +906,25 @@ async function exportIssuePdf(data = {}) {
 	const pdfData = issuePdfData(data);
 	(await renderCostEstimatePdf(pdfData)).save(`Cost_Estimate_${pdfData.ceNumber || "export"}.pdf`);
 }
+function coverWorkAmounts(tasks) {
+	const cats = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
+	const table = {
+		BOL: { onsite: 0, shop: 0, trading: 0 },
+		BOTE: { onsite: 0, shop: 0, trading: 0 },
+		BOCM: { onsite: 0, shop: 0, trading: 0 },
+		PPE: { onsite: 0, shop: 0, trading: 0 },
+		MISC: { onsite: 0, shop: 0, trading: 0 },
+		MOB: { onsite: 0, shop: 0, trading: 0 }
+	};
+	(tasks || []).forEach((task2) => {
+		const wt = taskWorkType(task2);
+		const col = wt === "shop" ? "shop" : wt === "trading" ? "trading" : "onsite";
+		cats.forEach((cat) => {
+			table[cat][col] = roundMoney(table[cat][col] + categoryOnTask(task2, cat));
+		});
+	});
+	return table;
+}
 function exportIssueExcel(data = {}) {
 	const cover = data.cover || {};
 	const grand = Number(cover.grandTotal) || 0;
@@ -926,7 +948,7 @@ function exportIssueExcel(data = {}) {
 		["CE #", ceNumber],
 		["RCE #", rceLabel2],
 		["Date", cover.date || ""],
-		["Validity days", cover.validityDays || 30],
+		["Validity days", Number(cover.validityDays) || 30],
 		["Prepared", cover.preparedBy || ""],
 		["Reviewed", cover.reviewedBy || ""],
 		["Approved", cover.approvedBy || ""],
@@ -947,14 +969,16 @@ function exportIssueExcel(data = {}) {
 		"MISC",
 		"MOB"
 	];
+	const amounts = coverWorkAmounts(data.tasks || []);
 	catNames.forEach((name, i) => {
 		const row = 15 + i;
+		const cell = amounts[name] || { onsite: 0, shop: 0, trading: 0 };
 		coverAoA.push([
 			name,
-			{ f: `IFERROR('${name}'!B2,0)` },
-			{ f: `IFERROR('${name}'!C2,0)` },
-			{ f: `IFERROR('${name}'!D2,0)` },
-			{ f: `B${row}+C${row}+D${row}` }
+			roundMoney(cell.onsite),
+			roundMoney(cell.shop),
+			roundMoney(cell.trading),
+			{ f: `ROUND(B${row}+C${row}+D${row},2)` }
 		]);
 	});
 	const first = 15;
@@ -965,16 +989,16 @@ function exportIssueExcel(data = {}) {
 		"",
 		"",
 		"",
-		{ f: `SUM(E${first}:E${last})` }
+		{ f: `ROUND(SUM(E${first}:E${last}),2)` }
 	]);
-	coverAoA.push(["Contingency %", cover.contingencyPct || 0]);
-	coverAoA.push(["Discount %", cover.discountPct || 0]);
+	coverAoA.push(["Contingency %", Number(cover.contingencyPct) || 0]);
+	coverAoA.push(["Discount %", Number(cover.discountPct) || 0]);
 	coverAoA.push([
 		"Net",
 		"",
 		"",
 		"",
-		{ f: `E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100)` }
+		{ f: `ROUND(E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100),2)` }
 	]);
 	coverAoA.push([]);
 	coverAoA.push(["Assumptions / exclusions", cover.assumptions || ""]);
@@ -2379,14 +2403,14 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 				}), /* @__PURE__ */ jsx("button", {
 					type: "button",
 					className: "ce-btn-ghost",
-					onClick: () => {
+					onClick: async () => {
 						const hasPeople = (form.manpower || []).some((row) => String(row.designation || "").trim());
 						const hasMats = (form.materialRows || []).some((row) => String(row.description || "").trim());
 						if (!hasPeople && !hasMats) {
 							window.alert("Add a role or a material row first. The free-text material boxes stay on the report and are not sent as priced lines.");
 							return;
 						}
-						const id = onSendToCe?.(form);
+						const id = await onSendToCe?.(form);
 						if (id) {
 							patch({ ceId: id });
 							setDraftNote(`Lines added on ${id}`);
@@ -2956,7 +2980,7 @@ function ElCalculatorView(props) {
 	return React.createElement(ElCalculatorView$1, props);
 }
 function nextDocNo(prefix, list, field) {
-	const year = (/* @__PURE__ */ new Date()).getFullYear();
+	const year = phYear();
 	const re = new RegExp(`(?:^|\\b)${prefix}-${year}-(\\d+)`, "i");
 	let max = 0;
 	const consider = (raw) => {
@@ -3019,7 +3043,7 @@ function composedCeNumber(raw, companyKey, documentControl) {
 function nextCeNoForCompany(companyKey, ceList, documents, rceList, documentControl) {
 	const code = companyCodeFromDesignation(companyKey, documentControl);
 	if (!code) return nextDocNo("CE", ceNumberSources(ceList, documents));
-	const year = (/* @__PURE__ */ new Date()).getFullYear();
+	const year = phYear();
 	const reCoded = new RegExp(`^CE-${code}-${year}-(\\d+)$`, "i");
 	const rePlain = new RegExp(`^CE-${year}-(\\d+)$`, "i");
 	let max = 0;
@@ -3042,6 +3066,25 @@ function nextCeNoForCompany(companyKey, ceList, documents, rceList, documentCont
 		take(doc?.docNo, mine);
 	});
 	return `CE-${code}-${year}-${String(max + 1).padStart(3, "0")}`;
+}
+async function takeDocNo(kind, company, fallback) {
+	if (typeof navigator !== "undefined" && navigator.onLine === false) {
+		throw new Error(DOC_NUMBER_OFFLINE);
+	}
+	try {
+		const issued = await allocateDocNumber(kind, company || "", phYear());
+		if (issued) return issued;
+	} catch (err) {
+		if (!missingDocNumberRpc(err)) throw err;
+	}
+	return fallback();
+}
+function ceIsSealed(status, doc) {
+	const values = [status, doc?.ceStatus, doc?.status, doc?.approval?.status];
+	return values.some((value) => {
+		const key = String(value || "").trim().toLowerCase();
+		return key === "for approval" || key === "done" || key === "accepted";
+	});
 }
 function shortPersonName(name) {
 	const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -3397,6 +3440,7 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		documentControl,
 		docDate: info.date || "",
 		ceNumber: docNoOut || row?.ceDisplay || "CE",
+		tasks,
 		sections
 	};
 }
@@ -6815,17 +6859,7 @@ var PHP = new Intl.NumberFormat("en-PH", {
 var fmt = (n) => PHP.format(Number.isFinite(n) ? n : 0);
 var num2 = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
 function limitError(field, raw) {
-	const key = String(field || "");
-	const percent = key === "contingencyPct" || key === "discountPct";
-	const money = key === "qty" || key === "days" || key === "rate" || key === "unitCost";
-	if (!percent && !money) return "";
-	const text = String(raw ?? "").trim();
-	if (text === "") return "";
-	const n = Number(text);
-	if (!Number.isFinite(n)) return "";
-	if (percent && (n < 0 || n > 100)) return "Must be between 0 and 100%.";
-	if (money && n < 0) return "Cannot be negative.";
-	return "";
+	return blockedNumberReason(field, raw);
 }
 function withoutBadLimits(patch) {
 	const next = { ...patch || {} };
@@ -17735,7 +17769,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -17790,8 +17824,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	});
 	const historyRef = useRef([]);
 	const stateRef = useRef(state);
+	const readOnlyRef = useRef(readOnly);
 	stateRef.current = state;
+	readOnlyRef.current = readOnly;
 	const dispatch = (action) => {
+		const patchKeys = action?.patch && typeof action.patch === "object" ? Object.keys(action.patch) : [];
+		const revisionStart = action?.type === "PATCH_PROJECT_INFO" && patchKeys.length > 0 && patchKeys.every((key) => key === "revisionPending" || key === "revisionNote");
+		if (readOnly && !revisionStart) return;
 		if (!action || action.type === "REPLACE_STATE") {
 			baseDispatch(action);
 			return;
@@ -17803,6 +17842,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		baseDispatch(action);
 	};
 	const undoEdit = () => {
+		if (readOnlyRef.current) return;
 		const prev = historyRef.current.pop();
 		if (!prev) return;
 		baseDispatch({
@@ -17890,11 +17930,11 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		setVersionHistory((prev) => [...prev, snapshot]);
 	};
 	const restoreVersion = (version) => {
+		if (readOnly) return;
 		dispatch({
 			type: "RESTORE_TASKS",
 			tasks: JSON.parse(JSON.stringify(version.tasks))
 		});
-		setCeStatus(version.ceStatus);
 	};
 	const prepareExportData = () => {
 		const sections = [];
@@ -18162,6 +18202,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			docDate: info.date || state.meta.date || todayLocal(),
 			ceNumber: docNoOut || ceData?.id || state.meta.title || "—",
 			attachmentFiles,
+			tasks,
 			sections
 		};
 	};
@@ -18465,7 +18506,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 				})
 			}),
 			/* @__PURE__ */ jsxs("div", {
-				className: "ce-shell ce-sheet-theme" + (tab === "BREAKDOWN" ? " ce-shell-breakdown" : ""),
+				className: "ce-shell ce-sheet-theme" + (tab === "BREAKDOWN" ? " ce-shell-breakdown" : "") + (readOnly ? " ce-sealed" : ""),
 				style: {
 					...isEditorLocked ? {
 						pointerEvents: "none",
@@ -18609,17 +18650,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										const remarks = window.prompt("Approval remarks") || "";
 										const step = currentApprovalStep(ceData?.approval || state.approval);
 										const finalStep = !!step?.isFinal;
-										if (finalStep && (state.projectInfo || {}).revisionPending) {
-											dispatch({
-												type: "PATCH_PROJECT_INFO",
-												patch: {
-													revNo: nextCeRevision((state.projectInfo || {}).revNo),
-													revDate: todayLocal(),
-													revisionPending: false
-												}
-											});
-										}
-										onApprovalDecision?.(ceData?.id, "accept", remarks);
+										const result = onApprovalDecision?.(ceData?.id, "accept", remarks);
+										if (!result?.ok) return;
 										if (finalStep) setCeStatus("Done");
 									},
 									children: "Approve step"
@@ -18629,7 +18661,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									onClick: () => {
 										const remarks = window.prompt("Reject remarks (required)");
 										if (!remarks) return;
-										onApprovalDecision?.(ceData?.id, "reject", remarks);
+										const result = onApprovalDecision?.(ceData?.id, "reject", remarks);
+										if (!result?.ok) return;
 										setCeStatus("Ongoing");
 									},
 									children: "Reject"
@@ -18693,6 +18726,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 							/* @__PURE__ */ jsx("button", {
 								className: `ce-btn-ghost ce-btn-sm ${isParked ? "ce-btn-active" : ""}`,
 								onClick: () => {
+									if (readOnly) return;
 									const next = !isParked;
 									onParkToggle && onParkToggle(next);
 									if (next) {
@@ -19083,6 +19117,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									className: "ce-btn-primary",
 									disabled: !canPass,
 									onClick: () => {
+										if (readOnly) return;
 										setCeStatus("For approval");
 										onStatusChange?.("For approval");
 										onSubmitApproval?.(ceData?.id, state.meta?.statusNote || "");
@@ -19143,6 +19178,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								type: "button",
 								className: "ce-btn-primary",
 								onClick: () => {
+									if (readOnly) return;
 									const gaps = INFO_GAPS.filter((g) => infoGaps[g.id]).map((g) => g.label);
 									const note = infoNote.trim();
 									if (!gaps.length && !note) {
@@ -23371,7 +23407,7 @@ function umStatusStyle(status) {
 	if (key === "for approval" || key === "for revision") return { label, color: "#1e4b8a" };
 	return { label, color: "#18170f" };
 }
-function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel = "staff", onApprovalDecision, documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors }) {
+function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel = "staff", onApprovalDecision, documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors, numbersOnline = true }) {
 	const me = currentUserName || "Estimator A";
 	const [status, setStatus] = useState("All");
 	const [sortBy, setSortBy] = useState("newest");
@@ -23545,18 +23581,24 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 						className: "ce-btn-ghost",
 						onClick: onNewInspection,
 						type: "button",
+						disabled: !numbersOnline,
+						title: numbersOnline ? undefined : DOC_NUMBER_OFFLINE,
 						children: "Create Inspection Report"
 					}),
 					/* @__PURE__ */ jsxs("button", {
 						className: "ce-btn-primary",
 						onClick: onNewCE,
 						type: "button",
+						disabled: !numbersOnline,
+						title: numbersOnline ? undefined : DOC_NUMBER_OFFLINE,
 						children: [/* @__PURE__ */ jsx(Plus, { size: 15 }), " Cost Estimate"]
 					}),
 					/* @__PURE__ */ jsxs("button", {
 						className: "ce-btn-ghost",
 						onClick: onNewRCE,
 						type: "button",
+						disabled: !numbersOnline,
+						title: numbersOnline ? undefined : DOC_NUMBER_OFFLINE,
 						children: [/* @__PURE__ */ jsx(Plus, { size: 15 }), " RCE"]
 					})
 				]
@@ -24581,7 +24623,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			projectType: "New Project",
 			inquiryNumber: "",
 			inquiryDate: "",
-			rceNo: initialData?.rceNo || initialData?.id || nextDocNo("RCE", rceList),
+			rceNo: initialData?.rceNo || initialData?.id || "",
 			rceDate: todayLocal(),
 			customer: "",
 			address: "",
@@ -24609,6 +24651,19 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		};
 		return base;
 	});
+	const rceListRef = useRef(rceList);
+	rceListRef.current = rceList;
+	useEffect(() => {
+		if (initialData || readOnly) return;
+		let cancelled = false;
+		takeDocNo("rce", "", () => nextDocNo("RCE", rceListRef.current)).then((rceNo) => {
+			if (cancelled || !rceNo) return;
+			setForm((prev) => prev.rceNo ? prev : { ...prev, rceNo });
+		}).catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [initialData, readOnly]);
 	const [checklist, setChecklist] = useState(() => ({
 		...emptyRceChecklist(),
 		...initialData?.checklist || {}
@@ -24722,9 +24777,11 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}
 	function applyRceDraft(saved) {
 		if (!saved?.form) return;
+		const form = { ...saved.form };
+		delete form.status;
 		setForm((prev) => ({
 			...prev,
-			...saved.form
+			...form
 		}));
 		if (saved.checklist) setChecklist(saved.checklist);
 		if (saved.company) setCompany(saved.company);
@@ -24786,6 +24843,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}, [form, checklist, company, readOnly, draftKey]);
 	const handleSubmit = () => {
 		if (readOnly) return;
+		if (!String(form.rceNo || "").trim()) {
+			window.alert(typeof navigator !== "undefined" && navigator.onLine === false ? DOC_NUMBER_OFFLINE : "Waiting for a document number.");
+			return;
+		}
 		const hard = rceHardBlocks(form, company);
 		setFieldErrors(hard);
 		if (hard.length) {
@@ -25891,7 +25952,7 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 		]
 	});
 }
-function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel, onApprovalDecision, documentControl, users, onReceivedBy, onStampSubmitted, onStartRevision, boardColors }) {
+function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel, onApprovalDecision, documentControl, users, onReceivedBy, onStampSubmitted, onStartRevision, boardColors, numbersOnline = true }) {
 	return /* @__PURE__ */ jsx(Dashboard, {
 		ceList,
 		rceList,
@@ -25909,7 +25970,8 @@ function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInsp
 		onReceivedBy,
 		onStampSubmitted,
 		onStartRevision,
-		boardColors
+		boardColors,
+		numbersOnline
 	});
 }
 function SOWTab({ sowText, setSowText }) {
@@ -26523,6 +26585,17 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (lockedName && editingUser !== lockedName && !names.includes(editingUser)) setEditingUser(lockedName);
 	}, [adminConfig, editingUser, isAdminAccount, lockedName]);
 	const [isEditorLocked, setIsEditorLocked] = useState(false);
+	const [numbersOnline, setNumbersOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+	useEffect(() => {
+		const up = () => setNumbersOnline(true);
+		const down = () => setNumbersOnline(false);
+		window.addEventListener("online", up);
+		window.addEventListener("offline", down);
+		return () => {
+			window.removeEventListener("online", up);
+			window.removeEventListener("offline", down);
+		};
+	}, []);
 	const [editorReturn, setEditorReturn] = useState("monitoring");
 	const [headerEditing, setHeaderEditing] = useState(false);
 	const [pendingLeave, setPendingLeave] = useState("");
@@ -26946,7 +27019,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		setWizardRce(rce);
 		setCurrentView("ce-wizard");
 	};
-	const handleCreateFromWizard = (payload) => {
+	const handleCreateFromWizard = async (payload) => {
 		if (payload.reuseCeId) {
 			const existing = ceList.find((ce) => ce.id === payload.reuseCeId);
 			setWizardRce(null);
@@ -26964,7 +27037,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			}
 			return;
 		}
-		const id = nextCeNoForCompany(rce?.company || "", ceList, documents, rceList, adminConfig.documentControl);
+		let id;
+		try {
+			const code = companyCodeFromDesignation(rce?.company || "", adminConfig.documentControl);
+			id = await takeDocNo("ce", code, () => nextCeNoForCompany(rce?.company || "", ceList, documents, rceList, adminConfig.documentControl));
+		} catch (err) {
+			window.alert(err?.message || DOC_NUMBER_OFFLINE);
+			return;
+		}
 		const today = todayLocal();
 		const newCE = {
 			id,
@@ -27197,8 +27277,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			stayOnBoard: true
 		});
 	};
-	const handleSaveInspection = (form, opts = {}) => {
-		const id = form.id || nextDocNo("OIF", inspectionReports);
+	const handleSaveInspection = async (form, opts = {}) => {
+		let id = form.id;
+		if (!id) {
+			try {
+				id = await takeDocNo("oif", "", () => nextDocNo("OIF", inspectionReports));
+			} catch (err) {
+				window.alert(err?.message || DOC_NUMBER_OFFLINE);
+				return;
+			}
+		}
 		const today = todayLocal();
 		setInspectionReports((prev) => {
 			const idx = prev.findIndex((r) => r.id === id);
@@ -27281,8 +27369,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			oifNo: form.oifNo || id
 		}));
 		if (opts.andNew) {
+			let oifNo = "";
+			try {
+				oifNo = await takeDocNo("oif", "", () => nextDocNo("OIF", [...inspectionReports, { id, oifNo: form.oifNo || id }]));
+			} catch (err) {
+				window.alert(err?.message || DOC_NUMBER_OFFLINE);
+				return;
+			}
 			setActiveOif({
-				oifNo: nextDocNo("OIF", [...inspectionReports, { id, oifNo: form.oifNo || id }]),
+				oifNo,
 				customerName: form.customerName || "",
 				customerAddress: form.customerAddress || "",
 				customerRep: form.customerRep || "",
@@ -27293,7 +27388,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		}
 		setCurrentView(inspectionReturn || "dashboard");
 	};
-	const handleSendInspectionToCe = (form) => {
+	const handleSendInspectionToCe = async (form) => {
 		const ml = masterlistRef.current || {};
 		const bolList = ml.manpower || ml.BOL || [];
 		const matList = ml.consumables || ml.BOCM || [];
@@ -27347,7 +27442,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			});
 			return existing.id;
 		}
-		const id = nextDocNo("CE", ceNumberSources(ceList, documents));
+		let id;
+		try {
+			id = await takeDocNo("ce", "", () => nextDocNo("CE", ceNumberSources(ceList, documents)));
+		} catch (err) {
+			window.alert(err?.message || DOC_NUMBER_OFFLINE);
+			return;
+		}
 		const today = todayLocal();
 		const items = emptyItems();
 		items.BOL = bolLines;
@@ -27570,10 +27671,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 		if (!result.ok) {
 			window.alert(result.reason);
-			return;
+			return result;
 		}
 		const stampedAt = nowIso();
-		const stampText = `${editorName}  ${String(stampedAt).replace("T", " ").slice(0, 16)}`;
+		const stampText = phStamp(new Date(), editorName);
 		const projectInfo = { ...doc.projectInfo || {} };
 		if (decision !== "reject") {
 			const role = step?.role || "head";
@@ -27642,6 +27743,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			to: ce?.assignedTo,
 			view: "editor"
 		});
+		return result;
 	};
 	const handleTakeOver = () => {
 		handleAssist();
@@ -27867,6 +27969,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						documentControl: adminConfig.documentControl,
 						users: adminConfig.users || [],
 						boardColors: adminConfig.boardColors,
+						numbersOnline,
 						currentUserName: editorName,
 						actingLevel,
 						onReceivedBy: (row, name) => {
@@ -27901,15 +28004,34 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						onStartRevision: handleReviseArchivedCE,
 						onNewCE: () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_OFFLINE);
+								return;
+							}
 							setWizardRce(null);
 							setCurrentView("ce-wizard");
 						},
-						onNewInspection: () => {
-							setActiveOif({ oifNo: nextDocNo("OIF", inspectionReports) });
+						onNewInspection: async () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_OFFLINE);
+								return;
+							}
+							let oifNo = "";
+							try {
+								oifNo = await takeDocNo("oif", "", () => nextDocNo("OIF", inspectionReports));
+							} catch (err) {
+								window.alert(err?.message || DOC_NUMBER_OFFLINE);
+								return;
+							}
+							setActiveOif({ oifNo });
 							setInspectionReturn("dashboard");
 							setCurrentView("inspection-form");
 						},
 						onNewRCE: () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_OFFLINE);
+								return;
+							}
 							setSelectedRCE(null);
 							setRceSeed(null);
 							setCurrentView("rce-form");
@@ -27944,6 +28066,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						goToSearch: () => setCurrentView("dashboard"),
 						editingUser: editorName,
 						isEditorLocked,
+						readOnly: ceIsSealed(activeCE?.status, documents?.[activeCE?.id]),
 						onUserActivity: () => setEditingUser(editorName),
 						onLock: () => setIsEditorLocked(true),
 						onTakeOver: handleTakeOver,
@@ -28119,6 +28242,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onStartRevision: handleReviseArchivedCE,
 						onViewRCE: handleViewRCE,
 						onNewRCE: () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_OFFLINE);
+								return;
+							}
 							setSelectedRCE(null);
 							setRceSeed(null);
 							setCurrentView("rce-form");
