@@ -1176,3 +1176,16 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 /* Notes start at the left edge of the Notes column */
 .ce-summary-block .ce-summary-notes-cell { text-align: left; padding-left: 0.35rem; white-space: pre-wrap; }
 .ce-sheet-notes.ce-sheet-notes-compact, .ce-sheet-notes.ce-sheet-notes-compact .ce-sheet-notes-head { text-align: left; padding-left: 0; margin-left: 0; }
+
+.ce-login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.ce-login-card { background: var(--card); border: 1px solid var(--border); border-radius: 0.85rem; width: min(28rem, 100%); padding: 1.5rem 1.4rem 1.3rem; }
+.ce-login-kicker { letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 0.35rem; font-size: 0.72rem; font-weight: 700; }
+.ce-login-title { margin: 0 0 0.6rem; font-size: 1.8rem; }
+.ce-login-copy { color: var(--ink-soft); margin: 0 0 1rem; font-size: 0.92rem; line-height: 1.45; }
+.ce-login-actions { display: flex; flex-direction: column; gap: 0.55rem; }
+.ce-login-btn { min-height: 44px; width: 100%; background: var(--ink); color: #fff; border: 1px solid var(--ink); border-radius: 0.5rem; cursor: pointer; font: inherit; font-weight: 650; padding: 0.55rem 1rem; }
+.ce-login-btn:hover { opacity: 0.88; }
+.ce-login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ce-sealed input, .ce-sealed textarea, .ce-sealed select, .ce-sealed .ProseMirror, .ce-sealed .ce-add-row, .ce-sealed .ce-iconbtn { pointer-events: none; }
+.ce-sealed .ce-award-box, .ce-sealed .ce-award-box * { pointer-events: auto; }
+

@@ -1,40 +1,74 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate } from "@tanstack/react-router";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import type { MasterlistState, SaveState, WorkspacePayload } from "@/lib/estimator/defaults";
+import type { SaveState, WorkspacePayload } from "@/lib/estimator/defaults";
 import { defaultWorkspace, jsonSafe } from "@/lib/estimator/defaults";
 import {
   loadWorkspaceFromSupabase,
   saveWorkspaceToSupabase,
 } from "@/lib/estimator/supabase-workspace";
-import { docKey, WorkspaceSaveError, type RevisionMap } from "@/lib/estimator/workspace-docs";
+import { docKey, changedDocKeys, mergeServerWithDirty, revisionsForDirtyPush, WorkspaceSaveError, type RevisionMap } from "@/lib/estimator/workspace-docs";
 import { loadAccountAccess, type AccountAccess } from "@/lib/supabase/account-role";
 import { supabaseConfigError } from "@/lib/supabase/client";
 import { ensureSupabaseAccess } from "@/lib/supabase/session";
 import CostEstimatorApp from "@/components/CostEstimatorApp";
 
-const BACKUP_KEY = "estimator-workspace-backup";
+const LEGACY_BACKUP_KEY = "estimator-workspace-backup";
 
-function readBackup(): { at: number; payload: WorkspacePayload } | null {
+function backupKey(userId: string) {
+  return `estimator-workspace-backup:${userId}`;
+}
+
+type BackupFile = {
+  at: number;
+  userId: string;
+  payload: WorkspacePayload;
+  dirtyKeys: string[];
+  revisions: RevisionMap;
+};
+
+function readBackup(userId: string): BackupFile | null {
+  if (!userId) return null;
   try {
-    const raw = localStorage.getItem(BACKUP_KEY);
+    const raw = localStorage.getItem(backupKey(userId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { at?: number; payload?: WorkspacePayload };
+    const parsed = JSON.parse(raw) as {
+      at?: number;
+      userId?: string;
+      payload?: WorkspacePayload;
+      dirtyKeys?: unknown;
+      revisions?: RevisionMap;
+    };
     if (!parsed?.payload || typeof parsed.payload !== "object") return null;
-    return { at: Number(parsed.at) || 0, payload: parsed.payload };
+    if (parsed.userId && parsed.userId !== userId) return null;
+    const dirtyKeys = Array.isArray(parsed.dirtyKeys)
+      ? parsed.dirtyKeys.filter((key): key is string => typeof key === "string")
+      : [];
+    const revisions = parsed.revisions && typeof parsed.revisions === "object" ? parsed.revisions : {};
+    return { at: Number(parsed.at) || 0, userId, payload: parsed.payload, dirtyKeys, revisions };
   } catch {
     return null;
   }
 }
 
-function writeBackup(payload: WorkspacePayload) {
+function writeBackup(userId: string, payload: WorkspacePayload, dirtyKeys: string[], revisions: RevisionMap) {
+  if (!userId) return;
   try {
     localStorage.setItem(
-      BACKUP_KEY,
-      JSON.stringify({ at: Date.now(), payload }),
+      backupKey(userId),
+      JSON.stringify({ at: Date.now(), userId, payload, dirtyKeys, revisions }),
     );
   } catch {
     /* quota — keep the in-memory copy */
+  }
+}
+
+function clearBackup(userId: string) {
+  try {
+    if (userId) localStorage.removeItem(backupKey(userId));
+    localStorage.removeItem(LEGACY_BACKUP_KEY);
+  } catch {
+    /* private mode */
   }
 }
 
@@ -56,46 +90,12 @@ function stamp(payload: WorkspacePayload): WorkspacePayload {
   };
 }
 
-function masterlistRows(ml: MasterlistState | undefined): number {
-  if (!ml) return 0;
-  let total = 0;
-  (["manpower", "equipment", "consumables", "ppe", "misc", "clients"] as const).forEach(
-    (key) => {
-      if (Array.isArray(ml[key])) total += ml[key].length;
-    },
-  );
-  (ml.customCategories || []).forEach((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-    const items = (raw as { items?: unknown }).items;
-    if (Array.isArray(items)) total += items.length;
-  });
-  return total;
-}
-
-function keepUploaded(primary: WorkspacePayload, secondary: WorkspacePayload | null): WorkspacePayload {
-  if (!secondary) return primary;
-  const sheets = ["manpower", "equipment", "consumables", "ppe", "misc", "clients"] as const;
-  const masterlist = {
-    ...(secondary.masterlist || {}),
-    ...(primary.masterlist || {}),
-  } as MasterlistState;
-  sheets.forEach((key) => {
-    const primaryRows = Array.isArray(primary.masterlist?.[key]) ? primary.masterlist[key] : [];
-    const secondaryRows = Array.isArray(secondary.masterlist?.[key]) ? secondary.masterlist[key] : [];
-    masterlist[key] = primaryRows.length ? primaryRows : secondaryRows;
-  });
-  const primaryCustom = primary.masterlist?.customCategories || [];
-  const secondaryCustom = secondary.masterlist?.customCategories || [];
-  masterlist.customCategories = primaryCustom.length ? primaryCustom : secondaryCustom;
-  return {
-    ...secondary,
-    ...primary,
-    masterlist,
-    rceList: (primary.rceList || []).length ? primary.rceList : secondary.rceList || [],
-    ceList: (primary.ceList || []).length ? primary.ceList : secondary.ceList || [],
-    documents: { ...(secondary.documents || {}), ...(primary.documents || {}) },
-    schemaConfig: { ...(secondary.schemaConfig || {}), ...(primary.schemaConfig || {}) },
-  };
+function keepUploaded(
+  server: WorkspacePayload,
+  local: WorkspacePayload | null,
+  dirtyKeys: string[],
+): WorkspacePayload {
+  return mergeServerWithDirty(server, local, dirtyKeys);
 }
 
 export function EstimatorShell() {
@@ -107,9 +107,7 @@ export function EstimatorShell() {
   });
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
-  const [workspace, setWorkspace] = useState<WorkspacePayload>(
-    () => readBackup()?.payload || defaultWorkspace(),
-  );
+  const [workspace, setWorkspace] = useState<WorkspacePayload>(() => defaultWorkspace());
   const [bootKey, setBootKey] = useState(0);
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -127,6 +125,9 @@ export function EstimatorShell() {
   const saveBlocked = useRef(false);
   const hydrated = useRef(false);
   const dirty = useRef(false);
+  const dirtyKeys = useRef<string[]>([]);
+  const userIdRef = useRef("");
+  const wasSignedIn = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const accountRef = useRef(account);
   accountRef.current = account;
@@ -147,7 +148,7 @@ export function EstimatorShell() {
     setSaveNotice(message);
   }, []);
 
-  const write = useCallback((payload: WorkspacePayload) => {
+  const write = useCallback((payload: WorkspacePayload, allowTombstones = true) => {
     latest.current = payload;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -164,11 +165,14 @@ export function EstimatorShell() {
         saveWorkspaceToSupabase(target, {
           revisions: revisions.current,
           canWriteAdmin: accountRef.current.role === "admin",
+          tombstones: allowTombstones,
         })
           .then((next) => {
             revisions.current = next;
             if (latest.current !== target) return;
             dirty.current = false;
+            dirtyKeys.current = [];
+            writeBackup(userIdRef.current, target, [], next);
             setConflictOpen(false);
             setSaveNotice(null);
             setSaveState("saved");
@@ -182,11 +186,14 @@ export function EstimatorShell() {
                 saveWorkspaceToSupabase(retry, {
                   revisions: revisions.current,
                   canWriteAdmin: accountRef.current.role === "admin",
+                  tombstones: allowTombstones,
                 })
                   .then((next) => {
                     revisions.current = next;
                     if (latest.current !== retry) return;
                     dirty.current = false;
+                    dirtyKeys.current = [];
+                    writeBackup(userIdRef.current, retry, [], next);
                     setConflictOpen(false);
                     setSaveNotice(null);
                     setSaveState("saved");
@@ -205,6 +212,19 @@ export function EstimatorShell() {
 
   const signedInId = currentUser?.id ?? "";
   const signedInName = currentUser?.displayName || currentUser?.primaryEmail || "";
+
+  useEffect(() => {
+    if (signedInId) {
+      wasSignedIn.current = true;
+      userIdRef.current = signedInId;
+      return;
+    }
+    if (!wasSignedIn.current) return;
+    clearBackup(userIdRef.current);
+    dirtyKeys.current = [];
+    wasSignedIn.current = false;
+    userIdRef.current = "";
+  }, [signedInId]);
 
   useEffect(() => {
     if (supabaseConfigError || isPending || !signedInId) return;
@@ -238,32 +258,24 @@ export function EstimatorShell() {
         if (cancelled) return;
         revisions.current = loaded.revisions;
         saveBlocked.current = Boolean(loaded.blocked);
+        clearBackup("");
         const data = loaded.workspace;
-        const local = readBackup();
-        const remoteAt = Date.parse(
-          String(
-            (data?.schemaConfig as { __app?: { savedAt?: string } } | undefined)
-              ?.__app?.savedAt || "",
-          ),
-        ) || 0;
-        const localAt = local?.at || 0;
-        const localNewer = !!(local && localAt > remoteAt + 1500);
-        const newer = localNewer ? local.payload : data;
-        const older = localNewer ? data : local?.payload || null;
-        const chosen = stamp(jsonSafe(keepUploaded(newer, older)));
+        const local = readBackup(signedInId);
+        const keys = local?.dirtyKeys || [];
+        const chosen = stamp(jsonSafe(keepUploaded(data, local?.payload || null, keys)));
         latest.current = chosen;
-        writeBackup(chosen);
+        dirtyKeys.current = changedDocKeys(data, chosen);
+        revisions.current = revisionsForDirtyPush(loaded.revisions, local?.revisions, dirtyKeys.current);
+        userIdRef.current = signedInId;
+        writeBackup(signedInId, chosen, dirtyKeys.current, revisions.current);
         hydrated.current = true;
         if (loaded.warning) {
           setSaveState("error");
           setSaveNotice(loaded.warning);
         }
-        if (
-          !loaded.blocked &&
-          (localNewer || masterlistRows(chosen.masterlist) !== masterlistRows(data.masterlist))
-        ) {
+        if (!loaded.blocked && dirtyKeys.current.length) {
           dirty.current = true;
-          write(chosen);
+          write(chosen, false);
         }
         setWorkspace(chosen);
         setBootKey((n) => n + 1);
@@ -284,19 +296,23 @@ export function EstimatorShell() {
     return () => {
       cancelled = true;
     };
-  }, [write, sessionReady]);
+  }, [write, sessionReady, signedInId]);
 
   const persist = useCallback(
     (next: WorkspacePayload) => {
       const safe = stamp(jsonSafe(next));
+      const keys = changedDocKeys(latest.current, safe);
+      for (const key of keys) {
+        if (!dirtyKeys.current.includes(key)) dirtyKeys.current.push(key);
+      }
       latest.current = safe;
       if (!hydrated.current) {
-        writeBackup(safe);
+        writeBackup(userIdRef.current, safe, dirtyKeys.current, revisions.current);
         return;
       }
-      dirty.current = true;
-      writeBackup(safe);
-      write(safe);
+      dirty.current = dirtyKeys.current.length > 0;
+      writeBackup(userIdRef.current, safe, dirtyKeys.current, revisions.current);
+      if (dirty.current) write(safe);
     },
     [write],
   );
@@ -304,7 +320,7 @@ export function EstimatorShell() {
   useEffect(() => {
     const flush = () => {
       if (!dirty.current) return;
-      writeBackup(latest.current);
+      writeBackup(userIdRef.current, latest.current, dirtyKeys.current, revisions.current);
       void saveWorkspaceToSupabase(latest.current, {
         revisions: revisions.current,
         canWriteAdmin: accountRef.current.role === "admin",
@@ -312,6 +328,8 @@ export function EstimatorShell() {
         .then((next) => {
           revisions.current = next;
           dirty.current = false;
+          dirtyKeys.current = [];
+          writeBackup(userIdRef.current, latest.current, [], next);
         })
         .catch((err) => {
           if (err instanceof WorkspaceSaveError) revisions.current = err.revisions;
@@ -362,7 +380,8 @@ export function EstimatorShell() {
         saveBlocked.current = Boolean(loaded.blocked);
         const next = stamp(jsonSafe(loaded.workspace));
         latest.current = next;
-        writeBackup(next);
+        dirtyKeys.current = [];
+        writeBackup(userIdRef.current, next, [], revisions.current);
         dirty.current = false;
         setConflictOpen(false);
         setSaveNotice(loaded.warning || null);

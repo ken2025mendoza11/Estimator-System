@@ -19,6 +19,7 @@ import {
   type RevisionMap,
   type StoredDoc,
 } from "./workspace-docs";
+import { missingDocNumberRpc } from "./docNumbers";
 import {
   downloadDataUrl,
   fileBody,
@@ -796,12 +797,14 @@ type SaveOptions = {
   revisions: RevisionMap;
   force?: string[];
   canWriteAdmin?: boolean;
+  /** False while hydrating so a local backup cannot delete server documents. */
+  tombstones?: boolean;
 };
 
 type RpcResult = {
   ok?: boolean;
   skipped?: boolean;
-  conflict?: "version" | "deleted";
+  conflict?: "version" | "deleted" | "exists";
   version?: number;
 };
 
@@ -997,6 +1000,21 @@ function remember(
   revisions[docKey(kind, id)] = { version, hash: deleted ? "" : hash, synced, deleted };
 }
 
+/** Server counter. Null means the SQL function is not applied yet and the caller uses the local format. */
+export async function allocateDocNumber(kind: string, company: string, year: number): Promise<string | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_doc_no", {
+    p_kind: kind,
+    p_company: company || "",
+    p_year: year,
+  });
+  if (error) {
+    if (missingDocNumberRpc(error)) return null;
+    throw error;
+  }
+  return typeof data === "string" && data ? data : null;
+}
+
 export async function saveWorkspaceToSupabase(
   payload: WorkspacePayload,
   options: SaveOptions,
@@ -1016,12 +1034,12 @@ export async function saveWorkspaceToSupabase(
     }
     throw err;
   }
-  const plan = planSave(local, revisions, force, hold);
+  const plan = planSave(local, revisions, force, hold, options?.tombstones !== false);
   const kindOrder: Record<string, number> = { rce: 0, masterlist: 1, ce: 2 };
   plan.writes.sort(
     (a, b) => (kindOrder[a.kind] ?? 5) - (kindOrder[b.kind] ?? 5),
   );
-  const conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" }> = [];
+  const conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" | "exists" }> = [];
   const rceIds = new Set(
     local.filter((doc) => doc.kind === "rce").map((doc) => doc.id),
   );
@@ -1091,10 +1109,15 @@ export async function saveWorkspaceToSupabase(
       continue;
     }
     if (!result.ok || result.conflict) {
+      const reason = result.conflict === "deleted"
+        ? "deleted"
+        : result.conflict === "exists"
+          ? "exists"
+          : "version";
       conflicts.push({
         kind: write.kind,
         id: write.id,
-        reason: result.conflict === "deleted" ? "deleted" : "version",
+        reason,
       });
       continue;
     }
@@ -1137,8 +1160,11 @@ export async function saveWorkspaceToSupabase(
   }
 
   if (conflicts.length) {
+    const exists = conflicts.some((item) => item.reason === "exists");
     throw new WorkspaceSaveError(
-      "This was changed by someone else — Reload / Keep mine",
+      exists
+        ? "That document number already exists. Reload and create it again."
+        : "This was changed by someone else — Reload / Keep mine",
       conflicts,
       revisions,
     );
