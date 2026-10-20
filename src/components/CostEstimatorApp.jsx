@@ -35,6 +35,10 @@ import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/e
 import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
 import { allocateCeSuffix, allocateDocNumber } from "../lib/estimator/supabase-workspace";
 import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
+import { Phase6Admin } from "./Phase6Admin";
+import { Phase6Reports } from "./Phase6Reports";
+import { MobileDocScreen } from "./MobileDocScreen";
+import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
@@ -42,6 +46,8 @@ import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, override
 
 let reopenCalcLine = null;
 let calcConstantsNow = null;
+let equipmentRatesOn = false;
+let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
 	return String(template ?? "").replace(/\{(\w+)\}/g, (_, key) => {
 		const value = vars[key];
@@ -4743,7 +4749,10 @@ function defaultAdminConfig() {
 			docSuffixes: false,
 			scopeLibraryV2: false,
 			priceCheck: false,
-			branding: false
+			branding: false,
+			equipmentRates: false,
+			reports: false,
+			mobileViewer: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4751,6 +4760,8 @@ function defaultAdminConfig() {
 		suffixReasons: [],
 		phHolidays: [],
 		branding: {},
+		equipmentFormula: normalizeEquipmentFormula(null),
+		equipmentItems: [],
 		notifyMatrix: normalizeNotifyMatrix(null),
 		directRates: directFormula({}),
 		calcConstants: defaultCalcConstants(),
@@ -4838,7 +4849,10 @@ function normalizeAdminConfig(raw) {
 			docSuffixes: src.features?.docSuffixes === true,
 			scopeLibraryV2: src.features?.scopeLibraryV2 === true,
 			priceCheck: src.features?.priceCheck === true,
-			branding: src.features?.branding === true
+			branding: src.features?.branding === true,
+			equipmentRates: src.features?.equipmentRates === true,
+			reports: src.features?.reports === true,
+			mobileViewer: src.features?.mobileViewer === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -4848,6 +4862,8 @@ function normalizeAdminConfig(raw) {
 		suffixReasons: Array.isArray(src.suffixReasons) ? src.suffixReasons.map((item) => String(item || "").trim()).filter(Boolean) : [],
 		phHolidays: Array.isArray(src.phHolidays) ? src.phHolidays.map((item) => cleanHolidayDate(item)).filter(Boolean) : [],
 		branding: cleanBranding(src.branding),
+		equipmentFormula: normalizeEquipmentFormula(src.equipmentFormula),
+		equipmentItems: Array.isArray(src.equipmentItems) ? src.equipmentItems.map((item) => normalizeEquipmentItem(item)) : [],
 		notifyMatrix: normalizeNotifyMatrix(src.notifyMatrix),
 		directRates: directFormula(src.directRates),
 		calcConstants: normalizeCalcConstants(src.calcConstants),
@@ -5161,7 +5177,8 @@ function AdminHub({ config, onChange }) {
 					["formula", "Template formula"],
 					["calc", "Calculator"],
 					["colors", "Board colors"],
-					["phase5", "Phase 5"]
+					["phase5", "Phase 5"],
+					["phase6", "Phase 6"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -5200,6 +5217,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "phase5" && /* @__PURE__ */ jsx(Phase5Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase6" && /* @__PURE__ */ jsx(Phase6Admin, {
 				cfg,
 				patch
 			})
@@ -10787,7 +10808,12 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			rate: blankOrNumber(r.rate),
 			powerKw: optionalNumber(r.powerKw),
 			hoursPerDay: optionalNumber(r.hoursPerDay),
-			kwhRate: optionalNumber(r.kwhRate)
+			kwhRate: optionalNumber(r.kwhRate),
+			...(r.rateType ? {
+				rateType: r.rateType,
+				rateVersion: r.rateVersion,
+				rateSnapshot: r.rateSnapshot
+			} : {})
 		})
 	});
 	const { draftRows, setDraftRows } = lineEntry;
@@ -10822,6 +10848,18 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		if (extra.masterlistId) {
 			if (!num2(row.days)) extra.days = defaultDaysForSubtask(task2, subtask2);
 			if (!num2(row.qty)) extra.qty = 1;
+			if (equipmentRatesOn && row.isDraft) {
+				const matched = matchEquipmentItem(equipmentCatalogNow?.items, value);
+				if (matched) {
+					const snap = boteLineSnapshot(matched, equipmentCatalogNow?.formula, row.rateType || "day");
+					if (snap.ok) {
+						extra.rate = snap.rate;
+						extra.rateType = snap.rateType;
+						extra.rateVersion = snap.rateVersion;
+						extra.rateSnapshot = snap.rateSnapshot;
+					}
+				}
+			}
 		}
 		const patch = applyIdentityException("BOTE", row, {
 			[field]: value,
@@ -10839,6 +10877,32 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			...r,
 			...patch,
 			limitError: ""
+		} : r));
+	};
+	const applyEquipmentRate = (row, kind) => {
+		if (!equipmentRatesOn) return;
+		if (!row.rateType && kind === "day") return;
+		const matched = matchEquipmentItem(equipmentCatalogNow?.items, row.description);
+		if (!matched) return;
+		const snap = boteLineSnapshot(matched, equipmentCatalogNow?.formula, kind);
+		if (!snap.ok) return;
+		const ratePatch = {
+			rate: snap.rate,
+			rateType: snap.rateType,
+			rateVersion: snap.rateVersion,
+			rateSnapshot: snap.rateSnapshot
+		};
+		if (!row.isDraft) dispatch({
+			type: "UPDATE_ITEM",
+			taskId: task2.id,
+			subtaskId: subtask2.id,
+			category: "BOTE",
+			itemId: row.id,
+			patch: ratePatch
+		});
+		else setDraftRows((prev) => prev.map((r) => r.id === row.id ? {
+			...r,
+			...ratePatch
 		} : r));
 	};
 	const appendRowIfLast = (row) => {
@@ -10970,6 +11034,16 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 											appendRowIfLast(row);
 										},
 										onFocus: () => appendRowIfLast(row)
+									}),
+									equipmentRatesOn && /* @__PURE__ */ jsx("select", {
+										className: "ce-input",
+										"aria-label": "Rate type",
+										value: row.rateType || "day",
+										onChange: (e) => applyEquipmentRate(row, e.target.value),
+										children: ["hour", "day", "rental", "project"].map((kind) => /* @__PURE__ */ jsx("option", {
+											value: kind,
+											children: kind
+										}, kind))
 									}),
 									/* @__PURE__ */ jsxs("span", {
 										className: "ce-desc-icons",
@@ -19087,6 +19161,11 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									ceData?.assisting ? ` \xB7 Editing ${ceData.assisting}` : ""
 								]
 							}),
+							adminConfig?.features?.mobileViewer === true && ceData?.id && !ceData?.libraryTemplate && /* @__PURE__ */ jsx("a", {
+								className: "ce-btn-ghost ce-btn-sm",
+								href: `/view/ce/${encodeURIComponent(ceData.id)}`,
+								children: "Mobile view"
+							}),
 							/* @__PURE__ */ jsxs("label", {
 								className: "ce-font-ctl",
 								children: [
@@ -27132,7 +27211,7 @@ function navKeyForView(view) {
 	if (view === "rce-form" || view === "rce-detail" || view === "rce-inbox") return "monitoring";
 	return view;
 }
-function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false }) {
+function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [bellOpen, setBellOpen] = useState(false);
 	const activeKey = navKeyForView(currentView);
@@ -27215,7 +27294,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 				}),
 				/* @__PURE__ */ jsx("nav", {
 					className: "ce-sidebar-nav",
-					children: NAV_ITEMS.filter((item) => !item.pinBottom).map((item) => {
+					children: [NAV_ITEMS.filter((item) => !item.pinBottom).map((item) => {
 						const Icon = item.icon;
 						const isActive = activeKey === item.key;
 						return /* @__PURE__ */ jsxs("button", {
@@ -27225,7 +27304,13 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							onClick: () => go(item.key),
 							children: [/* @__PURE__ */ jsx(Icon, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: item.label })]
 						}, item.key);
-					})
+					}), reportsOn ? /* @__PURE__ */ jsxs("button", {
+						type: "button",
+						"data-nav": "reports",
+						className: "ce-navitem" + (activeKey === "reports" ? " ce-navitem-active" : ""),
+						onClick: () => go("reports"),
+						children: [/* @__PURE__ */ jsx(FileText, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: "Reports" })]
+					}, "reports") : null]
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "ce-sidebar-foot",
@@ -27323,7 +27408,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		]
 	});
 }
-function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "", testDeployment = false }) {
+function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "", testDeployment = false, mobileView = null }) {
 	const workspace = initialWorkspace || {};
 	const extras = workspace.schemaConfig?.__app || {};
 	const [currentView, setCurrentView] = useState("dashboard");
@@ -27345,6 +27430,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [elOffer, setElOffer] = useState(null);
 	const [elSeed, setElSeed] = useState(null);
 	calcConstantsNow = adminConfig.calcConstants;
+	equipmentRatesOn = adminConfig.features?.equipmentRates === true;
+	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
 		setElSeed(calc);
 		setCurrentView("el-calculator");
@@ -29306,6 +29393,55 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			isNew: true
 		});
 	};
+	if (mobileView?.kind && adminConfig.features?.mobileViewer === true) {
+		return /* @__PURE__ */ jsx(MobileDocScreen, {
+			kind: mobileView.kind,
+			id: mobileView.id,
+			ceList,
+			rceList,
+			documents,
+			inspections: inspectionReports,
+			actor: editorName,
+			level: actingLevel,
+			onApprove: (summary, result) => {
+				const id = summary?.id;
+				if (!id || !result?.ok) return;
+				if (summary.kind === "ce") {
+					const nextStatus = result.final ? "Done" : "For approval";
+					setDocuments((prev) => {
+						const doc = prev[id] || {};
+						return {
+							...prev,
+							[id]: {
+								...doc,
+								approval: result.approval,
+								ceStatus: nextStatus
+							}
+						};
+					});
+					setCeList((prev) => prev.map((ce) => ce.id === id ? {
+						...ce,
+						status: nextStatus,
+						approval: result.approval
+					} : ce));
+				} else if (summary.kind === "rce") {
+					const nextStatus = result.final ? "Accepted" : "For approval";
+					setRceList((prev) => prev.map((row) => (row.id || row.rceNo) === id ? {
+						...row,
+						approval: result.approval,
+						status: nextStatus
+					} : row));
+				} else if (summary.kind === "oif") {
+					const nextStatus = result.final ? "Noted" : "For approval";
+					setInspectionReports((prev) => prev.map((row) => row.id === id || row.oifNo === id ? {
+						...row,
+						approval: result.approval,
+						status: nextStatus
+					} : row));
+				}
+			}
+		});
+	}
 	return /* @__PURE__ */ jsx("div", {
 		className: "ce-app",
 		style: adminConfig.features?.branding === true ? brandingVars(adminConfig.branding) : undefined,
@@ -29331,6 +29467,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				},
 				testMode: Boolean(testDeployment) && isAdminAccount,
 				canAdmin: isAdminAccount,
+				reportsOn: adminConfig.features?.reports === true,
 				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel)),
 				onClearAll: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
 				splitOpen: dockOpen,
@@ -29461,6 +29598,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					setCurrentView(n.view || "monitoring");
 				},
 				children: [
+					currentView === "reports" && adminConfig.features?.reports === true && /* @__PURE__ */ jsx(Phase6Reports, {
+						ceList,
+						documents
+					}),
 					currentView === "dashboard" && /* @__PURE__ */ jsx(EstimateHome, {
 						ceList,
 						rceList,

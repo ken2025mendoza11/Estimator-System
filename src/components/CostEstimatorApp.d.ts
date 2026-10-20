@@ -10,6 +10,7 @@ declare function CostEstimatorApp(props: {
   accountRole?: "admin" | "head" | "lead" | "staff";
   accountName?: string;
   testDeployment?: boolean;
+  mobileView?: { kind: string; id: string } | null;
 }): JSX.Element;
 
 export default CostEstimatorApp;
