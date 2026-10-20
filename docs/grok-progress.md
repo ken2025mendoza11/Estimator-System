@@ -10,7 +10,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 2 | GOLD: computation map + golden lock | done | `grok/phase-gold` | https://github.com/ken2025mendoza11/Estimator-System/pull/2 |
 | 3 | Phase 1A: data safety | done | `grok/phase-1a` | https://github.com/ken2025mendoza11/Estimator-System/pull/3 |
 | 4 | Phase 1B: access control and sign-in | done | `grok/phase-1b` | https://github.com/ken2025mendoza11/Estimator-System/pull/4 |
-| 5 | Phase 1C: stable IDs and clone remap | pending | | |
+| 5 | Phase 1C: stable IDs and clone remap | done | `grok/phase-1c` | https://github.com/ken2025mendoza11/Estimator-System/pull/5 |
 | 6 | CE-COMP: CE computation | pending | | |
 | 7 | Phase 4: calculator fixes | pending | | |
 | 8 | Phase 2a: approval engine + change types | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 3 is done on `grok/phase-1a`, stacked on `grok/phase-gold`. Step 4 is done on `grok/phase-1b`. Do not start Step 5 until Ken says `continue`.
+Item in progress: none. Step 4 is done on `grok/phase-1b`. Step 5 is done on `grok/phase-1c`, stacked on `grok/phase-1b`. Do not start Step 6 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -146,6 +146,35 @@ Risks:
 - Microsoft is not auto-linked to an existing Google account.
 - `is_admin()` now also requires status active. The rollback restores the previous function.
 - The PASS checks in the SQL file were not executed here.
+
+## Step 5 done
+
+Stacked on `grok/phase-1b` (https://github.com/ken2025mendoza11/Estimator-System/pull/4 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/5. Do not merge to `main`.
+
+Baseline before the first Step 5 edit (same tree as Step 4): `npm test` 225 + 91, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. `npm ci` was not repeated.
+
+- `b59b96f` Add a clone remap that gives tasks and lines new ids.
+- `eb3ccfb` Lock clone remap and prove load and save keep ids.
+- `e736f24` Remap ids when a cost estimate is cloned from another.
+
+After Step 5: `npm test` 225 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- `remapCloneIds` copies the estimate and assigns a fresh UUID to every task, nested subtask, and line. The source is not mutated. Predecessors are remapped. A predecessor that does not point at a copied id stays as it is.
+- `sow[].activity_id` and `schedule` (keyed by task id, or rows) follow the new ids. `sowText` is left alone. `clonedFrom` is added with `sourceId` and `idMap`, keeping any older keys.
+- Summary task-filter ids are remapped so the clone does not keep the source task ids in that list.
+- The wizard clone is the only caller. Saving and loading through split/assemble returns the same ids.
+
+SQL: none. Flags: none. This ships on. No screen change.
+
+Questions: none new. The Step 1 questions are still open.
+
+Risks:
+
+- `package.json` gained one test-script entry so the new tests run.
+- Attachment file ids are not remapped.
+- `clonedFrom.sourceId` is the source `projectInfo.docNo` when that is set. The wizard then puts the new CE number in `docNo`. The stored source id stays the old number.
 
 ### Golden table (today)
 
