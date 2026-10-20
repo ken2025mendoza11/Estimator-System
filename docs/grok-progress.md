@@ -17,7 +17,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 9 | Phase 2b: take-over, closing, reminders, notifications | done | `grok/phase-2b` | https://github.com/ken2025mendoza11/Estimator-System/pull/9 |
 | 10 | Phase 2c: signatures, DRAFT watermark, inspection | done | `grok/phase-2c` | https://github.com/ken2025mendoza11/Estimator-System/pull/10 |
 | 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | done | `grok/phase-5` | https://github.com/ken2025mendoza11/Estimator-System/pull/11 |
-| 12 | Phase 6: Equipment rates, reports, mobile viewer | pending | | |
+| 12 | Phase 6: Equipment rates, reports, mobile viewer | done | `grok/phase-6` | https://github.com/ken2025mendoza11/Estimator-System/pull/12 |
 | 13 | Phase 7: Pre-submit checker | pending | | |
 | 14 | Phase 8: Quotations, availability, locations, pending records | pending | | |
 | 15 | Phase 9: Route and fuel calculator | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 11 is done on `grok/phase-5`, stacked on `grok/phase-2c`. Do not start Step 12 until Ken says `continue`.
+Item in progress: none. Step 12 is done on `grok/phase-6`, stacked on `grok/phase-5`. Do not start Step 13 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -477,6 +477,44 @@ Risks:
 - Family folding runs on the active monitoring board. The executive table is still one row per cost estimate.
 - A suffix number taken from the server can differ from the local scan if another user took the letter first. The server id is the one saved.
 - Equipment rates, reports, and the mobile viewer are not in this step.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
+## Step 12 done
+
+Stacked on `grok/phase-5` (https://github.com/ken2025mendoza11/Estimator-System/pull/11 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/12. Do not merge to `main`.
+
+Baseline before the first Step 12 edit (same tree as Step 11, `01387cb`): `npm test` 283 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 174 warnings. Build ok. `npm ci` was not repeated.
+
+- `9275ab0` Add Phase 6 rates, reports, and a mobile viewer behind flags.
+
+After Step 12: `npm test` 288 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 182 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Three flags, each off unless it is exactly `true`: `equipmentRates`, `reports`, `mobileViewer`. Off, BOTE lines, the sidebar, and the home screen stay as they are.
+- Admin Phase 6 stores a versioned formula and equipment items (cost, life, salvage, hours, days, maintenance %, rental %). Each of hour, day, rental, and project is a formula or a manual override. The parser is a tokenizer. It does not use `eval` or `Function`. No new dependency.
+- Default version 1, for cost 100000, life 5, salvage 10000, hours 8, days 20, maintenance 10, rental 15: hour 2475, day 19800, rental 22770, project 396000. A new BOTE line stores the per-day equivalent in `rate` (`hour` × hours, `project` ÷ days, day and rental already per day) plus `rateType`, `rateVersion`, and `rateSnapshot`. `calcBOTE` is not edited. A line with no `rateType` stays qty × days × rate. A saved line is not rewritten when the formula later changes. Picking "day" on a line that has no rate type does nothing.
+- Reports, only when `reports` is on: pipeline, win rate = Awarded ÷ (Awarded + Not awarded), mean speed in days, open workload, cost mix from `categoryOnTask` as a reader, and accuracy. Excel uses the `xlsx` package already in the app.
+- Mobile viewer route `/view/$kind/$id`. The screen is read-only and shows Approve only when `mobileViewer` is on and the Step 8 engine says this person can approve. Approve calls `decideApproval`. Reject is still refused. A final step sets CE to Done, RCE to Accepted, and OIF to Noted. The flag off leaves the normal app.
+
+SQL written: none.
+
+Flags: all three ship off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The code commit is about 1,100 lines because the modules, the viewer route, and the App wiring shipped together. It builds.
+- `eslint` is 182 warnings: the Step 11 count of 174 plus one `@ts-nocheck` warning on each new Phase 6 file. The App warning count stayed 111. `routeTree.gen.ts` is ignored by eslint.
+- `package.json` gained `phase6.test.mjs`. `workflow.js` only re-exports. `CostEstimatorApp.d.ts` gained an optional `mobileView` prop so the shell typechecks.
+- A formula that divides by zero, or an hour or project rate with hours or days missing, does not invent a line rate.
+- The mobile route is registered. With the flag off, that route still opens the normal app and does not show the viewer.
 
 ### Questions still open
 
