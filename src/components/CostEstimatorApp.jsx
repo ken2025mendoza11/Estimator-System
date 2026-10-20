@@ -21,6 +21,7 @@ import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, n
 import { checksumTotal, commercialNet, miscAmount, qtyUnitAmount, roundMoney } from "../lib/estimator/money";
 import { phStamp, phYear } from "../lib/estimator/phTime";
 import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
+import { remapCloneIds } from "../lib/estimator/cloneIds";
 import { allocateDocNumber } from "../lib/estimator/supabase-workspace";
 import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
@@ -27146,10 +27147,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				}))
 			}));
 			if (payload.stripAttachments) clone.fileAttachments = emptyFileAttachments();
+			const remapped = remapCloneIds(clone);
 			setDocuments((prev) => ({
 				...prev,
 				[id]: {
-					...clone,
+					...remapped.doc,
 					projectInfo: {
 						...clone.projectInfo || {},
 						docNo: id,
