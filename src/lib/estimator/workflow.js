@@ -500,3 +500,4 @@ export { evaluateFormula } from "./rateFormula.js";
 export { buildReport, winRate } from "./reports.js";
 export { mobileApprove, mobileSummary } from "./mobileView.js";
 export { blocksFinalApproval, canSubmit, runChecker } from "./checker.js";
+export { ceIsUnlocked, lineFromQuote, missingPhase8Table } from "./phase8.js";

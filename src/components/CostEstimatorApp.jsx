@@ -39,10 +39,14 @@ import { Phase6Admin } from "./Phase6Admin";
 import { Phase6Reports } from "./Phase6Reports";
 import { MobileDocScreen } from "./MobileDocScreen";
 import { Phase7Admin } from "./Phase7Admin";
+import { Phase8Admin } from "./Phase8Admin";
+import { Phase8CePanel } from "./Phase8Panels";
 import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
 import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
 import { blocksFinalApproval, canSubmit, normalizeCheckerConfig, runChecker, versionWithReport } from "../lib/estimator/checker";
 import { browserSpell } from "../lib/estimator/spellBrowser";
+import { annexesForExport, availabilityKeysFrom, listMasterlistItems } from "../lib/estimator/phase8";
+import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
@@ -1008,7 +1012,21 @@ async function previewIssuePdf(data = {}) {
 }
 async function exportIssuePdf(data = {}) {
 	const pdfData = issuePdfData(data);
-	(await renderCostEstimatePdf(pdfData)).save(`Cost_Estimate_${pdfData.ceNumber || "export"}.pdf`);
+	const doc = await renderCostEstimatePdf(pdfData);
+	const annexes = (Array.isArray(data.annexes) ? data.annexes : []).filter((file) => file && file.include !== false && (file.dataUrl || file.bytes));
+	const name = `Cost_Estimate_${pdfData.ceNumber || "export"}.pdf`;
+	if (!annexes.length) {
+		doc.save(name);
+		return;
+	}
+	const merged = await stitchAnnexes(doc.output("arraybuffer"), annexes);
+	const blob = new Blob([merged], { type: "application/pdf" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = name;
+	link.click();
+	URL.revokeObjectURL(url);
 }
 function coverWorkAmounts(tasks, pricing) {
 	const blank = () => ({ onsite: 0, shop: 0, trading: 0 });
@@ -4757,7 +4775,11 @@ function defaultAdminConfig() {
 			equipmentRates: false,
 			reports: false,
 			mobileViewer: false,
-			checkerV2: false
+			checkerV2: false,
+			quotations: false,
+			availability: false,
+			clientLocations: false,
+			pendingRecords: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4768,6 +4790,8 @@ function defaultAdminConfig() {
 		equipmentFormula: normalizeEquipmentFormula(null),
 		equipmentItems: [],
 		checker: normalizeCheckerConfig(null),
+		availabilityKeys: [],
+		pendingEscalateDays: 3,
 		notifyMatrix: normalizeNotifyMatrix(null),
 		directRates: directFormula({}),
 		calcConstants: defaultCalcConstants(),
@@ -4859,7 +4883,11 @@ function normalizeAdminConfig(raw) {
 			equipmentRates: src.features?.equipmentRates === true,
 			reports: src.features?.reports === true,
 			mobileViewer: src.features?.mobileViewer === true,
-			checkerV2: src.features?.checkerV2 === true
+			checkerV2: src.features?.checkerV2 === true,
+			quotations: src.features?.quotations === true,
+			availability: src.features?.availability === true,
+			clientLocations: src.features?.clientLocations === true,
+			pendingRecords: src.features?.pendingRecords === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -4872,6 +4900,8 @@ function normalizeAdminConfig(raw) {
 		equipmentFormula: normalizeEquipmentFormula(src.equipmentFormula),
 		equipmentItems: Array.isArray(src.equipmentItems) ? src.equipmentItems.map((item) => normalizeEquipmentItem(item)) : [],
 		checker: normalizeCheckerConfig(src.checker),
+		availabilityKeys: availabilityKeysFrom(src.availabilityKeys),
+		pendingEscalateDays: Number(src.pendingEscalateDays) > 0 ? Math.round(Number(src.pendingEscalateDays)) : 3,
 		notifyMatrix: normalizeNotifyMatrix(src.notifyMatrix),
 		directRates: directFormula(src.directRates),
 		calcConstants: normalizeCalcConstants(src.calcConstants),
@@ -5187,7 +5217,8 @@ function AdminHub({ config, onChange }) {
 					["colors", "Board colors"],
 					["phase5", "Phase 5"],
 					["phase6", "Phase 6"],
-					["phase7", "Phase 7"]
+					["phase7", "Phase 7"],
+					["phase8", "Phase 8"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -5234,6 +5265,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "phase7" && /* @__PURE__ */ jsx(Phase7Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase8" && /* @__PURE__ */ jsx(Phase8Admin, {
 				cfg,
 				patch
 			})
@@ -7718,6 +7753,14 @@ function masterlistReducer(state, action) {
 				clients: []
 			};
 			return withCategoryItems(state, action.categoryKey, () => []);
+		case "SET_QUOTATIONS": return {
+			...state,
+			quotations: Array.isArray(action.quotations) ? action.quotations : []
+		};
+		case "SET_PENDING_RECORDS": return {
+			...state,
+			pendingRecords: Array.isArray(action.pendingRecords) ? action.pendingRecords : []
+		};
 		default: return state;
 	}
 }
@@ -7808,6 +7851,14 @@ function MasterlistProvider({ children, initialState, onChange }) {
 		clearSheet: (categoryKey) => dispatch({
 			type: "CLEAR_SHEET",
 			categoryKey: categoryKey === "clients" ? "clients" : normalizeCategoryKey(categoryKey)
+		}),
+		setQuotations: (quotations) => dispatch({
+			type: "SET_QUOTATIONS",
+			quotations
+		}),
+		setPendingRecords: (pendingRecords) => dispatch({
+			type: "SET_PENDING_RECORDS",
+			pendingRecords
 		})
 	}), [state]);
 	return /* @__PURE__ */ jsx(MasterlistContext.Provider, {
@@ -8544,6 +8595,10 @@ function reducer(state, action) {
 				...state.summaryTaskFilters,
 				selectedTaskIds: action.ids
 			}
+		};
+		case "SET_QUOTATION_REFS": return {
+			...state,
+			quotationRefs: Array.isArray(action.refs) ? action.refs : []
 		};
 		default: return state;
 	}
@@ -18425,6 +18480,11 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const approvalV2 = approvalNow?.engine === "v2";
 	const engineOn = adminConfig?.features?.approvalEngineV2 === true;
 	const checkerOn = adminConfig?.features?.checkerV2 === true;
+	const quotationsOn = adminConfig?.features?.quotations === true;
+	const availabilityOn = adminConfig?.features?.availability === true;
+	const locationsOn = adminConfig?.features?.clientLocations === true;
+	const pendingOn = adminConfig?.features?.pendingRecords === true;
+	const [annexOff, setAnnexOff] = useState({});
 	const grand = projectTotal(state.tasks, state.pricing);
 	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat, state.pricing), 0);
 	const benefitSum = directOn ? directColumnTotals(state.tasks, state.pricing).A1 : 0;
@@ -19009,7 +19069,19 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			checker: adminConfig?.checker,
 			dictionary: [...(adminConfig?.checker?.words || []), ...(Array.isArray(ceData?.spellIgnore) ? ceData.spellIgnore : []), ...ignoreOnce],
 			db,
-			spell: browserSpell()
+			spell: browserSpell(),
+			features: {
+				quotations: quotationsOn,
+				availability: availabilityOn,
+				clientLocations: locationsOn,
+				pendingRecords: pendingOn
+			},
+			quotations: masterlist.quotations || [],
+			quotationRefs: state.quotationRefs || ceData?.quotationRefs || [],
+			items: listMasterlistItems(masterlist).map((item) => ({ id: item.id, availabilityKey: item.availabilityKey || "" })),
+			clientName: state.meta?.client || "",
+			clients: masterlist.clients || [],
+			pendingRecords: masterlist.pendingRecords || []
 		});
 	};
 	const blockFinal = () => {
@@ -19187,7 +19259,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										/* @__PURE__ */ jsx("button", {
 											className: "ce-btn-primary",
 											type: "button",
-											onClick: () => exportIssuePdf(exportPreview.payload),
+											onClick: () => exportIssuePdf(quotationsOn ? {
+											...exportPreview.payload,
+											annexes: annexesForExport(masterlist.quotations, state.quotationRefs || ceData?.quotationRefs || [], annexOff)
+										} : exportPreview.payload),
 											children: "PDF"
 										})
 									]
@@ -19202,6 +19277,36 @@ ${names.join(", ")}`, editingUser) : editingUser;
 					ceData?.libraryTemplate && /* @__PURE__ */ jsx("p", {
 						className: "scope-edit-banner",
 						children: "Editing a library template. Changes save here only. The source cost estimate is not changed."
+					}),
+					(quotationsOn || availabilityOn || locationsOn || pendingOn) && /* @__PURE__ */ jsx(Phase8CePanel, {
+						features: adminConfig?.features,
+						library: masterlist.quotations || [],
+						onLibrary: (quotations) => masterlist.setQuotations(quotations),
+						refs: state.quotationRefs || ceData?.quotationRefs || [],
+						onRefs: (refs) => dispatch({ type: "SET_QUOTATION_REFS", refs }),
+						tasks: state.tasks,
+						readOnly: !!readOnly || !!isEditorLocked,
+						clientName: state.meta?.client || "",
+						clients: masterlist.clients || [],
+						onUpdateClient: (id, patch) => masterlist.updateClient(id, patch),
+						items: listMasterlistItems(masterlist),
+						onUpdateItem: (categoryKey, id, patch) => masterlist.updateItem(categoryKey, id, patch),
+						keys: adminConfig?.availabilityKeys || [],
+						records: masterlist.pendingRecords || [],
+						onRecords: (records) => masterlist.setPendingRecords(records),
+						level: actingLevel,
+						actor: editingUser,
+						holidays: adminConfig?.phHolidays || [],
+						escalateAfter: adminConfig?.pendingEscalateDays || 3,
+						unticked: annexOff,
+						onUntick: (id, off) => setAnnexOff((prev) => ({ ...prev, [id]: off })),
+						onAddLine: (taskId, subtaskId, category, item) => dispatch({
+							type: "ADD_ITEMS",
+							taskId,
+							subtaskId,
+							category,
+							items: [item]
+						})
 					}),
 					/* @__PURE__ */ jsxs("div", {
 						className: "ce-status-bar",
