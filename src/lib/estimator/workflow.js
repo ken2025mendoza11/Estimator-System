@@ -499,3 +499,4 @@ export { boteLineSnapshot, equipmentRateCard, perDayRate } from "./equipmentRate
 export { evaluateFormula } from "./rateFormula.js";
 export { buildReport, winRate } from "./reports.js";
 export { mobileApprove, mobileSummary } from "./mobileView.js";
+export { blocksFinalApproval, canSubmit, runChecker } from "./checker.js";
