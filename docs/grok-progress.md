@@ -19,7 +19,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | done | `grok/phase-5` | https://github.com/ken2025mendoza11/Estimator-System/pull/11 |
 | 12 | Phase 6: Equipment rates, reports, mobile viewer | done | `grok/phase-6` | https://github.com/ken2025mendoza11/Estimator-System/pull/12 |
 | 13 | Phase 7: Pre-submit checker | done | `grok/phase-7` | https://github.com/ken2025mendoza11/Estimator-System/pull/13 |
-| 14 | Phase 8: Quotations, availability, locations, pending records | pending | | |
+| 14 | Phase 8: Quotations, availability, locations, pending records | done | `grok/phase-8` | https://github.com/ken2025mendoza11/Estimator-System/pull/14 |
 | 15 | Phase 9: Route and fuel calculator | pending | | |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | pending | | |
 | 17 | LOGIN-UI: sign-in and sign-up UI | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 13 is done on `grok/phase-7`, stacked on `grok/phase-6`. Do not start Step 14 until Ken says `continue`.
+Item in progress: none. Step 14 is done on `grok/phase-8`, stacked on `grok/phase-7`. Do not start Step 15 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -555,6 +555,46 @@ Risks:
 - The English dictionary is about 552KB and is bundled in the client. The build still succeeds. The client chunk is larger.
 - Flag off is source-asserted: `if (!checkerOn) saveVersion()` and `buildCePreflight(...)` remain.
 - Quotations, availability, locations, and pending records are not in this step.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
+## Step 14 done
+
+Stacked on `grok/phase-7` (https://github.com/ken2025mendoza11/Estimator-System/pull/13 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/14. Do not merge to `main`.
+
+Baseline before the first Step 14 edit (same tree as Step 13, `f776ef7`): `npm test` 292 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 187 warnings. Build ok. `npm ci` was not repeated.
+
+- `6f39153` Add quotations, availability, locations, and pending records behind flags.
+
+After Step 14: `npm test` 300 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 192 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Four flags, each off unless it is exactly `true`: `quotations`, `availability`, `clientLocations`, `pendingRecords`. Off, the estimate, the export, and the masterlist sheets stay as they are. Export with no annexes still calls `doc.save`.
+- On, a quotation file is hashed with SHA-256 and stored once on the masterlist JSON. A second upload of the same file reuses that row. The cost estimate stores `{ quotationId, includeAnnex }` only. A quote line becomes a CE line at the database price when that price is above 0, and at the quote price only when the database price is missing.
+- The quotation PDF is previewed inline. Ticked annexes are appended after the finished cost-estimate PDF by `stitchPdfAttachments`. Untick applies to that export only. The base summary layout is not redrawn.
+- Availability keys start empty. Nothing is seeded. A key is stored on the item JSON as `availabilityKey`.
+- A client location is `{ id, label, address, city, notes }` on `client.locations`. There is no Sites table. The client's existing code, name, and address stay.
+- A pending record is submitted, recommended by a lead, head, or admin, then finalised by an admin. Merge re-points `masterlistId` on Draft, Ongoing, and For revision estimates only. For approval, Done, and the other locked statuses are skipped and not rewritten. Reminders use the existing 08:00–22:00 Asia/Manila slots, one every 3 hours. Escalation is after N working days, default 3, from the admin field `pendingEscalateDays`.
+- Checker rules `quote-over-db`, `quote-missing`, `availability`, `client-location`, and `pending-open` run only when the matching flag is on.
+
+SQL written, not run: `supabase/p8-quotations-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after `p1b-access-2026-10-20.sql`. It adds `quotations`, `quotation_lines`, `document_quotations`, `client_locations`, and `pending_records`. It does not alter `clients` or `masterlist_items`. The screen writes the JSON doc. `tryMirror` returns missing when a table is absent. `supabase-workspace.ts` is not changed, so a missing table cannot block a save.
+
+Flags: all four ship off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The code commit is 1,364 lines because the modules, the panel, the SQL, and the App wiring shipped together. It builds.
+- `eslint` is 192 warnings: the Step 13 count of 187 plus one `@ts-nocheck` warning on each of `phase8.js`, `pdfAnnex.js`, `phase8.test.mjs`, `Phase8Admin.jsx`, and `Phase8Panels.jsx`. The App warning count stayed 111.
+- `package.json` gained `phase8.test.mjs`. `workflow.js` only re-exports. `calcBOTE` was not edited.
+- A quotation's data URL lives once on the masterlist JSON, so a large PDF makes that document larger. The cost estimate stores only the id.
+- The route and fuel calculator is not in this step.
 
 ### Questions still open
 
