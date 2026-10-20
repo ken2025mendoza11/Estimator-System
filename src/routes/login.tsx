@@ -1,6 +1,6 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { authEnabled, signIn } from "@/lib/auth/client";
+import { authClient, authEnabled, signIn } from "@/lib/auth/client";
 import { getSignInOptions } from "@/lib/auth/sign-in-options";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 
@@ -11,7 +11,7 @@ export const Route = createFileRoute("/login")({
 
 function Login() {
   const { user, isPending } = useCurrentUserState();
-  const { providers, setupError } = Route.useLoaderData();
+  const { providers, setupError, testLogin } = Route.useLoaderData();
   const [signInError, setSignInError] = useState<string | null>(null);
   if (isPending) {
     return (
@@ -61,6 +61,46 @@ function Login() {
         ) : (
           <p className="ce-login-copy">Sign-in is disabled.</p>
         )}
+        {testLogin ? (
+          <div className="ce-login-actions">
+            <p className="ce-login-copy">Test sign-in</p>
+            {testLogin.users.map((account) => (
+              <button
+                key={account.role}
+                type="button"
+                className="ce-login-btn"
+                onClick={() => {
+                  setSignInError(null);
+                  if (!testLogin.password) {
+                    setSignInError("ESTIMATOR_TEST_PASSWORD is not set on this server.");
+                    return;
+                  }
+                  authClient.signIn
+                    .email({
+                      email: account.email,
+                      password: testLogin.password,
+                      callbackURL: "/",
+                    })
+                    .then((result) => {
+                      if (result.error) {
+                        setSignInError(result.error.message ?? "Sign-in failed");
+                        return;
+                      }
+                      window.location.href = "/";
+                    })
+                    .catch((err: unknown) =>
+                      setSignInError(err instanceof Error ? err.message : "Sign-in failed"),
+                    );
+                }}
+              >
+                Sign in as {account.label}
+              </button>
+            ))}
+            {signInError ? (
+              <p className="ce-login-copy" role="alert">{signInError}</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </main>
   );
