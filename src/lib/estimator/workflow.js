@@ -464,3 +464,12 @@ export {
 } from "./reminders.js";
 
 export { matrixAllows, normalizeNotifyMatrix } from "./notifyMatrix.js";
+
+export {
+  ceBlocksInspectionLines,
+  inspectionNotingSteps,
+  isOwnSignaturePath,
+  needsDraftWatermark,
+  signatureObjectPath,
+  signatureUserKey,
+} from "./signatures.js";

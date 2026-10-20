@@ -15,7 +15,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 7 | Phase 4: calculator fixes | done | `grok/phase-4` | https://github.com/ken2025mendoza11/Estimator-System/pull/7 |
 | 8 | Phase 2a: approval engine + change types | done | `grok/phase-2a` | https://github.com/ken2025mendoza11/Estimator-System/pull/8 |
 | 9 | Phase 2b: take-over, closing, reminders, notifications | done | `grok/phase-2b` | https://github.com/ken2025mendoza11/Estimator-System/pull/9 |
-| 10 | Phase 2c: signatures, DRAFT watermark, inspection | pending | | |
+| 10 | Phase 2c: signatures, DRAFT watermark, inspection | done | `grok/phase-2c` | https://github.com/ken2025mendoza11/Estimator-System/pull/10 |
 | 11 | Phase 5: Monitoring, suffixes, award, Admin, Scope Library, Price check | pending | | |
 | 12 | Phase 6: Equipment rates, reports, mobile viewer | pending | | |
 | 13 | Phase 7: Pre-submit checker | pending | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 9 is done on `grok/phase-2b`, stacked on `grok/phase-2a`. Do not start Step 10 until Ken says `continue`.
+Item in progress: none. Step 10 is done on `grok/phase-2c`, stacked on `grok/phase-2b`. Do not start Step 11 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -320,6 +320,38 @@ Risks:
 - A reminder is computed when the app is open. A closed browser does not catch up until the next time that list is loaded.
 - A cost estimate created while the flag was off has no stamp, so it is not tagged when an RCE changes.
 - Signatures, the DRAFT watermark, and the inspection flow are not in this step.
+
+## Step 10 done
+
+Stacked on `grok/phase-2b` (https://github.com/ken2025mendoza11/Estimator-System/pull/9 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/10. Do not merge to `main`.
+
+Baseline before the first Step 10 edit (same tree as Step 9, `41aad09`): `npm test` 267 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 164 warnings. Build ok. `npm ci` was not repeated.
+
+- `f3db1ca` Add signature paths, the DRAFT rule, and inspection noting rules.
+- `c5e24fb` Draw signatures and the DRAFT mark, and note inspections, when the flag is on.
+
+After Step 10: `npm test` 270 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 166 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Same flag `approvalEngineV2`, still off. Off, the PDF bytes, the Excel cover header, the inspection form, and send-to-CE stay as they are. No second flag.
+- On, a PNG signature is kept for the session and uploaded to `signatures/<user key>.png` in the private `estimator-files` bucket. A missing bucket or a refused upload keeps the image for this session and later exports fall back to the bundled Great Vibes script font. The SIL OFL text is `public/fonts/OFL-GreatVibes.txt`. The font file was already in `public/fonts`.
+- On, CE, RCE, and OIF PDFs, including their previews, stamp DRAFT until the document is final. Done, accepted, approved, Noted, Cancelled, No quote, and Close bid are clean. A pending closing is still a draft. The Excel cover writes DRAFT in the existing middle header cell. No cover row is inserted, so the formulas stay on the same rows. An RCE page inside a CE pack is not stamped on its own; the CE stamp covers the pack.
+- Inspection noting uses the stored oif flow (Prepared by, then Noted by). Submit sets For approval. The lead's Noted writes status Noted, not Done. Request edit restores For revision. A report with no id must be saved first. Linked RCE and linked CE selects appear only while the flag is on. Sending lines to a For approval, Done, accepted, approved, pending-approval, Cancelled, No quote, or Close bid cost estimate is blocked. Ongoing and For revision still accept lines.
+
+SQL written, not run: `supabase/p2-approvals-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after the app is deployed. The four `estimator_files_*` policies are replaced so `signatures/` is own-path only (`signatures/<auth.uid>.png`). Other paths in the bucket stay open to signed-in users. The rollback restores the previous open policies and does not delete signature files. The app keeps working when the policy is missing: the script font is used.
+
+Flags: `approvalEngineV2` ships off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The rules, tests, SQL, and license text are one commit of about 290 lines. The App wiring is one commit of about 290 lines.
+- `eslint` is 166 warnings: the Step 9 count of 164 plus one `@ts-nocheck` warning on each of `signatures.js` and `signatures.test.mjs`. The App warning count stayed 111.
+- `package.json` gained `signatures.test.mjs`. `workflow.js` only re-exports.
+- The storage key is `auth.uid()`. The app also remembers the image under the person's display name so a PDF slot that only has a name can draw it in this session. Another user's image is not readable once the own-path policy is applied, and that slot falls back to the script font.
+- Monitoring, suffixes, award, Admin, Scope Library, and Price check are not in this step.
 
 ### Golden table (today)
 
