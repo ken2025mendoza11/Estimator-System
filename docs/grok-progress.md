@@ -6,7 +6,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 
 | Step | Name | Status | Branch | PR |
 | --- | --- | --- | --- | --- |
-| 1 | Phase 0: test sign-in, seed, guardrail files | done | `grok/phase-0` | opening |
+| 1 | Phase 0: test sign-in, seed, guardrail files | done | `grok/phase-0` | https://github.com/ken2025mendoza11/Estimator-System/pull/1 |
 | 2 | GOLD: computation map + golden lock | pending | | |
 | 3 | Phase 1A: data safety | pending | | |
 | 4 | Phase 1B: access control and sign-in | pending | | |
@@ -29,6 +29,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 
 - `1e37dba` Turn test sign-in on only outside production.
 - `6206da1` Add an idempotent seed for the test project.
+- `bc6efeb` Document the test deployment and the step table.
 
 Item in progress: none. Next action for Step 2: map every total, then lock today's numbers for the four cases and `legacy-ce.json`. Do not start until Ken says `continue`.
 
