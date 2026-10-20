@@ -20,6 +20,7 @@ import {
   type StoredDoc,
 } from "./workspace-docs";
 import { missingDocNumberRpc } from "./docNumbers";
+import { missingSuffixRpc } from "./docSuffixes";
 import {
   downloadDataUrl,
   fileBody,
@@ -1064,6 +1065,29 @@ export async function allocateDocNumber(kind: string, company: string, year: num
   });
   if (error) {
     if (missingDocNumberRpc(error)) return null;
+    throw error;
+  }
+  return typeof data === "string" && data ? data : null;
+}
+
+/** Atomic alternate / addendum / update number. Null means next_ce_suffix is not applied yet. */
+export async function allocateCeSuffix(
+  base: string,
+  kind: string,
+  stem: string,
+  awarded: boolean,
+  reason: string,
+): Promise<string | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_ce_suffix", {
+    p_base: base,
+    p_kind: kind,
+    p_stem: stem,
+    p_awarded: awarded,
+    p_reason: reason || "",
+  });
+  if (error) {
+    if (missingSuffixRpc(error)) return null;
     throw error;
   }
   return typeof data === "string" && data ? data : null;

@@ -475,3 +475,22 @@ export {
   signaturePeople,
   signatureUserKey,
 } from "./signatures.js";
+
+export {
+  canMintAlternate,
+  combinedTotal,
+  familyKey,
+  nextAddendum,
+  nextAlternate,
+  nextUpdateCopy,
+  parseCeNumber,
+  planSuffix,
+  urgentPlan,
+  URGENT_TAG,
+} from "./docSuffixes.js";
+
+export { addWorkingDays, isWorkingDay, workingDaysBetween } from "./phCalendar.js";
+export { foldFamilyRows } from "./monitoringFamilies.js";
+export { constantDrift, priceDrifts, resyncPlan } from "./priceCheck.js";
+export { bumpScopeUsage, resourceSeed, saveAsScope } from "./scopeLibrary.js";
+export { brandingVars } from "./branding.js";
