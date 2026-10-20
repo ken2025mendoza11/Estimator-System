@@ -38,8 +38,8 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Calendar date in Asia/Taipei (YYYY-MM-DD). No DST; UTC+8 all year. */
-export function todayLocal(timeZone = "Asia/Taipei") {
+/** Calendar date in Asia/Manila (YYYY-MM-DD). No DST; UTC+8 all year. */
+export function todayLocal(timeZone = "Asia/Manila") {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -48,8 +48,8 @@ export function todayLocal(timeZone = "Asia/Taipei") {
   }).format(new Date());
 }
 
-/** Add calendar days to the Taipei local date. Does not change stored date format. */
-export function addDaysLocal(days, timeZone = "Asia/Taipei") {
+/** Add calendar days to the Manila local date. Does not change stored date format. */
+export function addDaysLocal(days, timeZone = "Asia/Manila") {
   const [y, m, d] = todayLocal(timeZone).split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + Number(days || 0)));
   const yy = dt.getUTCFullYear();
