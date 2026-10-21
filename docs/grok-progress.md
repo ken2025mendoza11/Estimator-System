@@ -20,7 +20,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 12 | Phase 6: Equipment rates, reports, mobile viewer | done | `grok/phase-6` | https://github.com/ken2025mendoza11/Estimator-System/pull/12 |
 | 13 | Phase 7: Pre-submit checker | done | `grok/phase-7` | https://github.com/ken2025mendoza11/Estimator-System/pull/13 |
 | 14 | Phase 8: Quotations, availability, locations, pending records | done | `grok/phase-8` | https://github.com/ken2025mendoza11/Estimator-System/pull/14 |
-| 15 | Phase 9: Route and fuel calculator | pending | | |
+| 15 | Phase 9: Route and fuel calculator | done | `grok/phase-9` | https://github.com/ken2025mendoza11/Estimator-System/pull/15 |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | pending | | |
 | 17 | LOGIN-UI: sign-in and sign-up UI | pending | | |
 | 18 | Phase 11: past estimates and document formats | blocked until Ken supplies sample files | | |
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 14 is done on `grok/phase-8`, stacked on `grok/phase-7`. Do not start Step 15 until Ken says `continue`.
+Item in progress: none. Step 15 is done on `grok/phase-9`, stacked on `grok/phase-8`. Do not start Step 16 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -601,3 +601,44 @@ Risks:
 1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
 2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
 3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
+## Step 15 done
+
+Stacked on `grok/phase-8` (https://github.com/ken2025mendoza11/Estimator-System/pull/14 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/15. Do not merge to `main`.
+
+Baseline before the first Step 15 edit (same tree as Step 14, `b0eeb5e`): `npm test` 300 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 192 warnings. Build ok. `npm ci` was not repeated.
+
+- `7963c6e` Add a route and fuel calculator behind a flag that stays off.
+
+After Step 15: `npm test` 306 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 197 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- One flag, off unless it is exactly `true`: `routeFuel`. Off, the EL calculator tabs stay weld, paint, raw, air, and standards. There is no Route and fuel tab and no print bar.
+- On, the calculator gains a Route and fuel tab. The other calculators get a print view. The route panel has its own print view. Print styles sit inside that bar, so they are absent when the flag is off.
+- The map uses OpenStreetMap tiles through `GET /api/route-fuel`. Road kilometres come from OSRM through the same route, cached in memory for 6 hours. The first map click is the start and the next is the end. Circles and a polyline are used. There is no geocoder. If the service fails, the user types the kilometres.
+- Fuel is kilometres divided by km per litre, times the regional price, plus 10%. Tolls and a ferry amount are extra and are not inside the fuel formula. A truck is warned, not blocked, on a weekday Manila departure inside 06:00–10:00 or 17:00–22:00.
+- Vehicles, fuel prices, and tolls live in admin JSON. Nothing is seeded. Admin Phase 9 can add them only while the flag is on.
+- Add to cost estimate uses the existing Step 7 dialog. The line is MISC section B, description "Route fuel", and the snapshot keeps fuel, tolls, and the ferry apart.
+
+SQL written, not run: `supabase/p9-route-fuel-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after `p1b-access-2026-10-20.sql`. It adds `vehicles`, `fuel_prices`, and `route_tolls`. It does not alter `clients` or `masterlist_items`. The screen writes the JSON. A missing table cannot block a save. `supabase-workspace.ts` is not changed.
+
+Flags: `routeFuel` ships off. `leaflet` is pinned at `1.9.4`.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The code commit is 861 lines because the calculator, the map, the cached route, the SQL, and the App wiring shipped together. It builds.
+- `eslint` is 197 warnings: the Step 14 count of 192 plus one `@ts-nocheck` warning on each of `routeFuel.js`, `routeFuel.server.js`, `phase9.test.mjs`, `RouteFuelPanel.jsx`, and `Phase9Admin.jsx`. The App warning count stayed 111.
+- `package.json` gained `phase9.test.mjs` and pinned `leaflet@1.9.4`. `workflow.js` only re-exports. `calcBOTE` and `money.js` were not edited. The calculator only reads `roundMoney`.
+- The public OSRM and OSM demo servers can be slow or refuse a request. The calculator then asks for a typed distance. The cache is in memory only, so a new server starts empty.
+- Leaflet is loaded only in the browser, after the flag is on and the route tab is open. It is not imported at the top of a server module.
+- SOW tagging, the Gantt, and the project schedule are not in this step.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
