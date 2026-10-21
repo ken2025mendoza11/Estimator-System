@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 17 is done on `grok/phase-login-ui`, stacked on `grok/phase-10`. Do not start Step 18 until Ken says `continue`. Step 18 stays blocked until sample files are attached.
+Item in progress: none. Step 17 is done on `grok/phase-login-ui`, stacked on `grok/phase-10`. Ken said `continue` on 20 Oct 2026. Step 18 stays blocked: no sample past estimates and no template gap analysis were attached.
 
 ## Step 3 done
 
