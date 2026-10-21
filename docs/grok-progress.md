@@ -25,6 +25,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | https://github.com/ken2025mendoza11/Estimator-System/pull/17 |
 | 18 | Phase 11: past estimates and document formats | skipped | | |
 | 19 | Follow-up: seed examples, weld label, active user id | done | `grok/phase-followup` | https://github.com/ken2025mendoza11/Estimator-System/pull/18 |
+| 20 | Admin and caller role match the signed-in user id | done | `grok/phase-20` | |
 
 ## Step 1 done
 
@@ -45,7 +46,16 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 19 is done on `grok/phase-followup`, stacked on `grok/phase-login-ui`. Step 18 stays SKIPPED.
+Item in progress: none. Step 20 is done on `grok/phase-20`, stacked on `grok/phase-followup`. Step 18 stays SKIPPED.
+
+## Step 20 done
+
+Stacked on `grok/phase-followup`. Do not merge to `main`.
+
+- `is_admin()` and `caller_role()` match `auth.uid()` only, and only an active row. A pending, declined, or duplicate account with an admin email gets no admin rights and no role.
+- `app_user_roles_select` now reads only the signed-in user id. The email lookup in the sign-in screen is still only a duplicate check; the role it keeps is `linkedAccountRole`, which ignores other rows.
+- Left as they are, because they do not grant this session another account's role: `email_is_allowed` (allowlist), `register_pending` (stores a pending duplicate, role staff), `grant_role` (refuses a second active email), and the unused `userLevel` name-or-email lookup in the local user list.
+- SQL: `supabase/p20-role-by-id-2026-10-20.sql`. The rollback restores only those two functions and the select policy.
 
 ## Step 19 done
 

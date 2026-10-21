@@ -1,7 +1,7 @@
 import { readSupabaseIdentity } from "./access-token";
 import { supabase, supabaseConfigError } from "./client";
 import { ensureSupabaseAccess } from "./session";
-import { linkedAccountActive, ownAccountStatus } from "../estimator/activeUser.js";
+import { linkedAccountActive, linkedAccountRole, ownAccountStatus } from "../estimator/activeUser.js";
 
 export type AccountStatus = "active" | "pending" | "declined" | "disabled";
 
@@ -234,10 +234,12 @@ async function legacyAccount(userId: string, name: string, email: string | null)
     if (!byEmail.error && byEmail.data) rows.push(...byEmail.data);
   }
   const own = ownAccountStatus(userId, rows);
+  const privilege = linkedAccountRole(userId, rows);
+  const ownRole = LEVELS.includes(privilege as AccountAccess["role"]) ? (privilege as AccountAccess["role"]) : "staff";
   if (own) {
     return {
       userId,
-      role: pickRole(rows.filter((row) => (row.user_key || userId) === userId)),
+      role: ownRole,
       name,
       status: own,
       note: "",
@@ -292,7 +294,9 @@ async function legacyAccount(userId: string, name: string, email: string | null)
       duplicate: true,
     };
   }
-  const role = LEVELS.includes(result.role as AccountAccess["role"]) ? (result.role as AccountAccess["role"]) : "staff";
+  const role = status === "active" && LEVELS.includes(result.role as AccountAccess["role"])
+    ? (result.role as AccountAccess["role"])
+    : "staff";
   return {
     userId,
     role,
