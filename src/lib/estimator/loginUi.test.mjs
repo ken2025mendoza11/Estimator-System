@@ -6,6 +6,7 @@ import {
 	WELCOME_STOPS,
 	accessCopy,
 	accessState,
+	needsProfileForm,
 	compareAccounts,
 	classifyEmail,
 	linkAllowed,
@@ -54,6 +55,10 @@ test("access states keep a decline reason and do not treat a new provider as sig
 	assert.equal(accessState({ status: "disabled" }), "disabled");
 	assert.equal(accessCopy("declined", "No seat").copy, "No seat");
 	assert.equal(accessState({ status: "pending" }), "pending");
+	assert.equal(needsProfileForm({ status: "active", profileComplete: false }), true);
+	assert.equal(needsProfileForm({ status: "pending", profileComplete: false }), true);
+	assert.equal(needsProfileForm({ status: "active", profileComplete: true }), false);
+	assert.equal(needsProfileForm({ status: "declined", profileComplete: false }), false);
 });
 
 test("an admin reminder waits three hours and does not repeat inside that window", () => {

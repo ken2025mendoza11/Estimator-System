@@ -12,7 +12,8 @@ import {
 	signatureObjectPath,
 	signaturePeople,
 	signatureUserKey,
-	stableUserUuid
+	stableUserUuid,
+	withDeadline
 } from "./signatures.js";
 
 const USER_NAMESPACE = "c1e0a7e0-7b1a-4e3a-9c2d-5f6a7b8c9d0e";
@@ -105,4 +106,13 @@ test("inspection is prepared then noted, and a locked estimate blocks inspection
 	assert.equal(ceBlocksInspectionLines({ status: "Done" }), true);
 	assert.equal(ceBlocksInspectionLines({ status: "Pending Cancelled approval" }), true);
 	assert.equal(ceBlocksInspectionLines({ status: "No quote" }), true);
+});
+
+test("a hung signature download settles so the inspection preview can finish", async () => {
+	const started = Date.now();
+	const hung = await withDeadline(() => new Promise(() => {}), 40, "");
+	assert.equal(hung, "");
+	assert.equal(Date.now() - started < 500, true);
+	const ready = await withDeadline(() => Promise.resolve("data:image/png,ok"), 400, "");
+	assert.equal(ready, "data:image/png,ok");
 });

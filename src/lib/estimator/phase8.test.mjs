@@ -9,6 +9,7 @@ import {
 	addQuotation,
 	annexesForExport,
 	availabilityKeysFrom,
+	ceEditorOpen,
 	ceIsUnlocked,
 	dbPriceOf,
 	documentQuotationMirrorRow,
@@ -108,6 +109,9 @@ test("pending records need a reviewer, then an admin, and only unlocked estimate
 	assert.equal(merged.ces[0].doc.tasks[0].subtasks[0].items.BOCM[0].unitCost, 5);
 	assert.equal(ceIsUnlocked("Done"), false);
 	assert.equal(ceIsUnlocked("For revision"), true);
+	assert.equal(ceEditorOpen("For approval"), false);
+	assert.equal(ceEditorOpen("Done"), false);
+	assert.equal(ceEditorOpen("Ongoing"), true);
 });
 
 test("reminders stay lazy and escalation waits N working days", () => {

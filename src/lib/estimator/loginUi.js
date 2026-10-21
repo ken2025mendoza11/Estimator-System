@@ -131,6 +131,13 @@ export function accessState(account) {
 	return "active";
 }
 
+/** An unfinished profile is the form, including an active account that was left incomplete. */
+export function needsProfileForm(account) {
+	const state = accessState(account);
+	const waiting = account?.status === "pending";
+	return account?.profileComplete === false && (waiting || state === "active");
+}
+
 export function accessCopy(state, reason) {
 	const why = String(reason || "").trim();
 	if (state === "duplicate") {

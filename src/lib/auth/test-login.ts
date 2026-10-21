@@ -18,6 +18,8 @@ export type TestUser = {
   email: string;
   /** Better Auth user id. A UUID, so the Supabase user key stays this id. */
   userId: string;
+  /** Omitted means active. Pending and declined are picker accounts, not new roles. */
+  accountStatus?: "active" | "pending" | "declined";
 };
 
 /** Fake users for the test picker and scripts/seed-test.mjs. Not real people. */
@@ -49,6 +51,22 @@ export const TEST_USERS: readonly TestUser[] = [
     name: "Test Admin",
     email: "admin@estimator-test.invalid",
     userId: "44444444-4444-4444-8444-444444444444",
+  },
+  {
+    role: "staff",
+    label: "Pending",
+    name: "Sample Pending",
+    email: "sample-pending@estimator-test.invalid",
+    userId: "55555555-5555-4555-8555-555555555555",
+    accountStatus: "pending",
+  },
+  {
+    role: "staff",
+    label: "Declined",
+    name: "Sample Declined",
+    email: "sample-declined@estimator-test.invalid",
+    userId: "66666666-6666-4666-8666-666666666666",
+    accountStatus: "declined",
   },
 ];
 

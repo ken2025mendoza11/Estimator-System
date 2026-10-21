@@ -38,7 +38,23 @@ export const QUEUE_LEVELS = ["staff", "lead", "head"];
 const CLIENT = "Sample Client";
 const WHEN = "2026-10-21";
 const APPROVAL_AT = "2026-10-21T00:00:00.000Z";
-const QUEUE_OWNER = "Sample admin";
+/** Real test-login names. Acting as these is the same person as signing in. */
+export const LOGIN_NAMES = {
+	staff: "Test Staff",
+	lead: "Test Lead",
+	head: "Test Head",
+	admin: "Test Admin",
+};
+const QUEUE_OWNER = LOGIN_NAMES.admin;
+export const ACCEPTED_RCE_ID = "SAMPLE-RCE-ACCEPTED";
+export const PENDING_RCE_ID = "SAMPLE-RCE-PENDING";
+
+const ASSIGNEE = {
+	Shop: LOGIN_NAMES.staff,
+	Onsite: LOGIN_NAMES.lead,
+	Trading: LOGIN_NAMES.head,
+	Hybrid: LOGIN_NAMES.staff,
+};
 
 function slug(value) {
 	return String(value || "")
@@ -111,9 +127,75 @@ function rceDoc(status, extra = {}) {
 	};
 }
 
+function sampleTasks(jobType) {
+	const key = String(jobType || "").toLowerCase();
+	const workType = key === "shop" ? "shop" : key === "trading" ? "trading" : "onsite";
+	return [
+		{
+			id: "task-sample-1",
+			title: "Sample work",
+			expanded: true,
+			notes: "",
+			files: [],
+			duration: 1,
+			predecessor: null,
+			workType,
+			subtasks: [
+				{
+					id: "sub-sample-1",
+					title: "Sample labour",
+					expanded: true,
+					type: "Sequential",
+					predecessor: null,
+					notes: "",
+					files: [],
+					items: {
+						BOL: [
+							{
+								id: "bol-sample-1",
+								role: "Rigger",
+								qty: 1,
+								days: 1,
+								rate: 700,
+								otHrs: 0,
+								dayType: "Regular",
+								shift: "Day",
+								perDiem: 0,
+								allowance: 0,
+							},
+						],
+						BOTE: [],
+						BOCM: [],
+						PPE: [],
+						MISC: [],
+					},
+					children: [],
+				},
+			],
+		},
+	];
+}
+
+function signatureInfo(final) {
+	if (!final) return {};
+	return {
+		preparedBy: LOGIN_NAMES.staff,
+		preparedStamp: "Test Staff 2026-10-21 08:00",
+		reviewedBy: LOGIN_NAMES.lead,
+		reviewedStamp: "Test Lead 2026-10-21 09:00",
+		approvedBy: LOGIN_NAMES.head,
+		approvedStamp: "Test Head 2026-10-21 10:00",
+	};
+}
+
 function ceDoc({ id, status, jobType, ord, extra = {} }) {
 	const flags = workFlags(jobType);
 	const project = extra.project || `Sample ${jobType} ${status}`;
+	const assignee = extra.assignedTo || ASSIGNEE[jobType] || LOGIN_NAMES.staff;
+	const priced = status !== "Draft";
+	const approval = extra.approval || (status === "Done" ? { status: "accepted" } : null);
+	const rceId = extra.rceId || (status === "Draft" ? PENDING_RCE_ID : ACCEPTED_RCE_ID);
+	const signs = signatureInfo(status === "Done" || approval?.status === "accepted");
 	return {
 		kind: "ce",
 		id,
@@ -125,10 +207,10 @@ function ceDoc({ id, status, jobType, ord, extra = {} }) {
 		reason: extra.reason || "",
 		leadApproval: extra.leadApproval || null,
 		owner: extra.owner || "",
-		assignedTo: extra.assignedTo || "",
+		assignedTo: assignee,
 		takeover: extra.takeover || null,
 		locked: extra.locked === true,
-		approval: extra.approval || null,
+		approval,
 		payload: {
 			summary: {
 				id,
@@ -137,10 +219,12 @@ function ceDoc({ id, status, jobType, ord, extra = {} }) {
 				status,
 				project,
 				lastEdited: WHEN,
-				lastEditedBy: extra.assignedTo || extra.owner || "Sample staff",
+				lastEditedBy: assignee,
+				assignedTo: assignee,
 				location: "Manila",
-				rceId: extra.rceId || "SAMPLE-RCE-PENDING",
+				rceId,
 				jobType,
+				approval,
 			},
 			document: {
 				sample: true,
@@ -154,9 +238,9 @@ function ceDoc({ id, status, jobType, ord, extra = {} }) {
 				alternateReason: extra.reason || "",
 				leadApproval: extra.leadApproval || null,
 				owner: extra.owner || "",
-				assignedTo: extra.assignedTo || "",
+				assignedTo: assignee,
 				takeover: extra.takeover || null,
-				approval: extra.approval || null,
+				approval,
 				meta: {
 					client: CLIENT,
 					location: "Manila",
@@ -164,8 +248,8 @@ function ceDoc({ id, status, jobType, ord, extra = {} }) {
 					title: project,
 					subtitle: "Sample data",
 				},
-				tasks: [],
-				projectInfo: { revNo: extra.rev || "0", docNo: id, quantity: 1 },
+				tasks: priced ? sampleTasks(jobType) : [],
+				projectInfo: { revNo: extra.rev || "0", docNo: id, quantity: 1, ...signs },
 			},
 		},
 	};
@@ -192,6 +276,8 @@ function inspectionDoc(status, rceId, ceId, ord) {
 			ceId,
 			ceNo: ceId,
 			usedByCe: ceId,
+			createdBy: LOGIN_NAMES.staff,
+			onsiteInspector: LOGIN_NAMES.staff,
 			date: WHEN,
 			customerName: CLIENT,
 			projectDescription: "Sample inspection",
@@ -220,7 +306,7 @@ function queueApproval(level, docNo) {
 		return startedApproval(docNo, {
 			mode: "sequential",
 			steps: [
-				{ id: "sample-staff", title: "Estimate check", role: "staff", assigneeName: "Sample staff" },
+				{ id: "sample-staff", title: "Estimate check", role: "staff", assigneeName: LOGIN_NAMES.staff },
 				{ id: "sample-staff-final", title: "Approved by Head", role: "head", isFinal: true },
 			],
 		});
@@ -327,8 +413,8 @@ export function buildSampleSet() {
 		ord: ord++,
 		extra: {
 			project: "Sample taken-over CE",
-			owner: "Sample staff",
-			assignedTo: "Sample lead",
+			owner: LOGIN_NAMES.staff,
+			assignedTo: LOGIN_NAMES.lead,
 			takeover: {
 				status: "approved",
 				owner: "Sample staff",
@@ -361,16 +447,57 @@ export function buildSampleSet() {
 			extra: {
 				project: `Sample queue for ${level}`,
 				owner: QUEUE_OWNER,
+				assignedTo: LOGIN_NAMES[level],
 				approval: queueApproval(level, id),
 			},
 		}));
 	}
 
 	INSPECTION_STATUSES.forEach((status, index) => {
-		const rce = docs.find((doc) => doc.kind === "rce" && doc.status === "Pending" && !doc.superseded);
-		const ce = docs.find((doc) => doc.kind === "ce" && doc.jobType === CE_JOB_TYPES[index % CE_JOB_TYPES.length] && doc.status === "Draft");
+		const jobType = CE_JOB_TYPES[index % CE_JOB_TYPES.length];
+		const rce = docs.find((doc) => doc.id === ACCEPTED_RCE_ID);
+		const ce = docs.find((doc) => doc.kind === "ce" && doc.jobType === jobType && doc.status === "Done");
 		docs.push(inspectionDoc(status, rce.id, ce.id, ord++));
 	});
 
 	return { users, docs };
+}
+
+/** Role row for the test seed. Active people have a finished profile and have seen the welcome. */
+export const ACTIVE_WELCOME_AT = "2026-10-21T00:00:00.000Z";
+
+export function roleRowFor(user) {
+	const status = user.accountStatus || "active";
+	return {
+		user_key: user.userKey || user.userId || user.id,
+		email: user.email,
+		role: user.dbRole || user.role,
+		status,
+		display_name: user.name,
+		decline_reason: status === "declined" ? user.declineReason || "Sample declined account" : null,
+		profile_complete: true,
+		welcome_seen_at: status === "active" ? ACTIVE_WELCOME_AT : null,
+	};
+}
+
+/** Row for public.rce_requests. The cost-estimate foreign key needs this id. */
+export function rceRequestRow(doc) {
+	const payload = doc?.payload && typeof doc.payload === "object" ? doc.payload : doc || {};
+	const id = doc?.id || payload.id;
+	return {
+		id,
+		client: payload.client || "",
+		customer: payload.customer || payload.client || "",
+		project_title: payload.projectTitle || payload.description || "",
+		location: payload.location || "",
+		description: payload.description || payload.projectTitle || "",
+		category: payload.category || "",
+		status: payload.status || doc?.status || "Pending",
+		shopwork: Boolean(payload.shopwork),
+		onsite: Boolean(payload.onsite),
+		trading: Boolean(payload.trading),
+		date_received: payload.dateReceived || null,
+		rce_no: payload.rceNo || id,
+		payload,
+	};
 }

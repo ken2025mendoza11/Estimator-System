@@ -145,7 +145,37 @@ export function cachedSignature(userKey) {
 	return (key && cache.get(key)) || "";
 }
 
-/** Session cache, then the private bucket. A missing bucket or a refused read returns "". */
+/** A storage read must not hold a PDF preview open. */
+export const SIGNATURE_LOAD_MS = 4000;
+
+export function withDeadline(start, ms, fallback = "") {
+	return new Promise((resolve) => {
+		let settled = false;
+		const timer = setTimeout(() => {
+			if (settled) return;
+			settled = true;
+			resolve(fallback);
+		}, ms);
+		Promise.resolve()
+			.then(start)
+			.then(
+				(value) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					resolve(value);
+				},
+				() => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					resolve(fallback);
+				},
+			);
+	});
+}
+
+/** Session cache, then the private bucket. A missing bucket, a refused read, or a hung read returns "". */
 export async function loadSignatureImage(userKey) {
 	const hit = cachedSignature(userKey);
 	if (hit) return hit;
@@ -153,7 +183,7 @@ export async function loadSignatureImage(userKey) {
 	if (!path) return "";
 	try {
 		const { downloadDataUrl } = await import("./file-storage.ts");
-		const dataUrl = await downloadDataUrl(path);
+		const dataUrl = await withDeadline(() => downloadDataUrl(path), SIGNATURE_LOAD_MS, "");
 		if (dataUrl) rememberSignature(userKey, dataUrl);
 		return dataUrl || "";
 	} catch {
