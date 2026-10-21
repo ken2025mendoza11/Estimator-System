@@ -21,7 +21,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 13 | Phase 7: Pre-submit checker | done | `grok/phase-7` | https://github.com/ken2025mendoza11/Estimator-System/pull/13 |
 | 14 | Phase 8: Quotations, availability, locations, pending records | done | `grok/phase-8` | https://github.com/ken2025mendoza11/Estimator-System/pull/14 |
 | 15 | Phase 9: Route and fuel calculator | done | `grok/phase-9` | https://github.com/ken2025mendoza11/Estimator-System/pull/15 |
-| 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | pending | | |
+| 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
 | 17 | LOGIN-UI: sign-in and sign-up UI | pending | | |
 | 18 | Phase 11: past estimates and document formats | blocked until Ken supplies sample files | | |
 
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 15 is done on `grok/phase-9`, stacked on `grok/phase-8`. Do not start Step 16 until Ken says `continue`.
+Item in progress: none. Step 16 is done on `grok/phase-10`, stacked on `grok/phase-9`. Do not start Step 17 until Ken says `continue`.
 
 ## Step 3 done
 
@@ -641,4 +641,44 @@ Risks:
 1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
 2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
 3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
+## Step 16 done
+
+Stacked on `grok/phase-9` (https://github.com/ken2025mendoza11/Estimator-System/pull/15 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/16. Do not merge to `main`.
+
+Baseline before the first Step 16 edit (same tree as Step 15, `71d75be`): `npm test` 306 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 197 warnings. Build ok. `npm ci` was not repeated.
+
+- `b01e183` Add SOW headings and a project schedule behind flags that stay off.
+
+After Step 16: `npm test` 312 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 201 warnings. Build ok. Golden totals unchanged.
+
+### What shipped
+
+- Two flags, each off unless it is exactly `true`: `sowTagging` and `schedule`. Off, the scope editor stays the scope text and the export order stays as it is. There is no Project schedule page.
+- On, scope headings sit beside the existing scope text. `sowText` is kept. Split into headings does nothing until Confirm. Each heading has one activity id. A heading with no activity, an activity that is not a task id, and a task with no heading are coverage warnings. They run only when `sowTagging` is on.
+- Version snapshots keep `sowText` and `sow`. A saved schedule is included when the estimate has one.
+- The schedule is stored on the cost estimate, keyed by task id. Day numbers come from the existing schedule function and are not rewritten. Bars are drawn as a plain SVG on Philippine working days (Sunday off, Saturday on unless it is a listed holiday). Finish to start only. No resource view, milestones, critical path, or lags.
+- A locked estimate keeps the baseline rows. Draft, Ongoing, and For revision can move the working bars and still keep that baseline. A clone remaps the task ids.
+- With `schedule` on, the export order is Summary, scope of work, cost breakdown, project schedule, then annexes. The Project schedule page lists estimates.
+
+SQL written, not run: `supabase/p10-schedule-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after `p1b-access-2026-10-20.sql`. It adds `ce_schedule`. It does not alter `clients` or `masterlist_items`. The screen writes the JSON. A missing table cannot block a save.
+
+Flags: both ship off.
+
+Questions: none new. The three questions below are still open.
+
+Risks:
+
+- The code commit is 609 lines because the headings, the chart, the export order, and the App wiring shipped together. It builds.
+- `eslint` is 201 warnings: the Step 15 count of 197 plus one `@ts-nocheck` warning on each of `phase10.js`, `phase10.test.mjs`, `Phase10Admin.jsx`, and `Phase10Panels.jsx`. The App warning count stayed 111.
+- `package.json` gained `phase10.test.mjs`. `workflow.js` only re-exports. `computeSchedule`, `calcBOTE`, and `money.js` were not edited.
+- The public holiday list is whatever Admin already stored. A blank start date uses today's Asia/Manila date.
+- Sign-in and sign-up UI are not in this step.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
 
