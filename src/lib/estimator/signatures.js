@@ -267,11 +267,14 @@ export function shouldLoadExportSignatures(flagOn) {
 	return flagOn === true;
 }
 
+const INSPECTION_ISSUED = new Set(["filed", "noted"]);
 const FINAL_STATUSES = new Set(["done", "accepted", "approved", "noted", "cancelled", "canceled", "no quote", "close bid"]);
 
 /** Flag off is never a draft mark. A final approval, including a decided closing, is not a draft. */
-export function needsDraftWatermark({ flagOn, status, approvalStatus } = {}) {
+export function needsDraftWatermark({ flagOn, status, approvalStatus, docType = "" } = {}) {
 	if (flagOn !== true) return false;
+	// Step 25: an inspection report is issued once it is Filed. Filed and Noted carry no DRAFT mark.
+	if (String(docType).toLowerCase() === "oif" && INSPECTION_ISSUED.has(String(status || "").trim().toLowerCase())) return false;
 	const approval = String(approvalStatus || "").trim().toLowerCase();
 	if (approval === "accepted" || approval === "approved") return false;
 	const key = String(status || "").trim().toLowerCase();

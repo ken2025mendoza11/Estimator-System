@@ -1,3 +1,4 @@
+// @ts-nocheck
 /** Fixed TEST sample rows. No network, no secrets, no random ids. */
 import { beginEngineApproval } from "../src/lib/estimator/approvalEngine.js";
 
@@ -44,6 +45,13 @@ export const LOGIN_NAMES = {
 	lead: "Test Lead",
 	head: "Test Head",
 	admin: "Test Admin",
+};
+/** Real test-login ids (src/lib/auth/test-login.ts). A seeded signer id is a real account id, never SAMPLE-USER-*. */
+export const LOGIN_IDS = {
+	staff: "11111111-1111-4111-8111-111111111111",
+	lead: "22222222-2222-4222-8222-222222222222",
+	head: "33333333-3333-4333-8333-333333333333",
+	admin: "44444444-4444-4444-8444-444444444444",
 };
 const QUEUE_OWNER = LOGIN_NAMES.admin;
 export const ACCEPTED_RCE_ID = "SAMPLE-RCE-ACCEPTED";
@@ -295,7 +303,7 @@ function startedApproval(docNo, flow) {
 	const result = beginEngineApproval({
 		owner: QUEUE_OWNER,
 		actor: QUEUE_OWNER,
-		userId: "SAMPLE-USER-ADMIN",
+		userId: LOGIN_IDS.admin,
 		now: APPROVAL_AT,
 		docType: "ce",
 		docNo,

@@ -17,6 +17,7 @@ import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
 import { buildDirectCes } from "./seed-documents.mjs";
 import { buildSampleSet, rceRequestRow, roleRowFor } from "./seed-samples.mjs";
+import { ceMirrorRows } from "./seed-mirror.mjs";
 import { SIGNATURE_BUCKET, signaturePng, signatureTargets } from "./seed-signatures.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -271,6 +272,24 @@ export async function seedSignatures(people) {
   return targets.length;
 }
 
+/** Write the RPC's mirror rows for one seeded CE (service key, so no trigger signer check). */
+async function upsertCeMirror(id, payload, rceIds) {
+  const rows = ceMirrorRows(id, payload, rceIds);
+  if (!rows) return false;
+  await sb("cost_estimates?on_conflict=id", {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: { ...rows.estimate, deleted_at: null },
+  });
+  if (!rows.document) return true;
+  await sb("ce_documents?on_conflict=ce_id", {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: rows.document,
+  });
+  return true;
+}
+
 async function upsertRceRequest(row) {
   await sb("rce_requests?on_conflict=id", {
     method: "POST",
@@ -430,6 +449,14 @@ async function seedSupabase(ce, users) {
   for (const doc of sample.docs) {
     await upsertDoc(doc.kind, doc.id, doc.payload, doc.ord);
   }
+  const rceRows = await sb("rce_requests?select=id");
+  const rceIds = new Set((Array.isArray(rceRows) ? rceRows : []).map((row) => row.id));
+  const ceRows = await sb("workspace_docs?kind=eq.ce&deleted_at=is.null&select=doc_id,payload");
+  let mirrored = 0;
+  for (const row of Array.isArray(ceRows) ? ceRows : []) {
+    if (await upsertCeMirror(row.doc_id, row.payload, rceIds)) mirrored += 1;
+  }
+  console.log(`Mirrored ${mirrored} cost estimates into cost_estimates and ce_documents.`);
   const signed = await seedSignatures([
     ...users,
     ...sample.users.filter((user) => (user.accountStatus || "active") === "active"),

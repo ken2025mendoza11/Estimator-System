@@ -3,7 +3,7 @@ import type { WorkspacePayload } from "@/lib/estimator/defaults";
 
 declare function CostEstimatorApp(props: {
   initialWorkspace?: WorkspacePayload;
-  onPersist?: (workspace: WorkspacePayload) => void;
+  onPersist?: (workspace: WorkspacePayload, options?: { baseline?: boolean }) => void;
   saveState?: "idle" | "saving" | "saved" | "error";
   currentUserName?: string;
   accountUserId?: string;

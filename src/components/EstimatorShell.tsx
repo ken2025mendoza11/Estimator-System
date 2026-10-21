@@ -354,8 +354,15 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
   }, [write, sessionReady, signedInId]);
 
   const persist = useCallback(
-    (next: WorkspacePayload) => {
+    (next: WorkspacePayload, options?: { baseline?: boolean }) => {
       const safe = stamp(jsonSafe(next));
+      if (options?.baseline) {
+        // Step 25: the app's normalised first state is not an edit. Keep any
+        // unsaved keys from load, mark nothing new as dirty, save nothing new.
+        latest.current = safe;
+        writeBackup(userIdRef.current, safe, dirtyKeys.current, revisions.current);
+        return;
+      }
       const keys = changedDocKeys(latest.current, safe);
       for (const key of keys) {
         if (!dirtyKeys.current.includes(key)) dirtyKeys.current.push(key);
