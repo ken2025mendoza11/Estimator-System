@@ -1,24 +1,44 @@
 /** Fixed TEST sample rows. No network, no secrets, no random ids. */
+import { beginEngineApproval } from "../src/lib/estimator/approvalEngine.js";
 
+/** Labels from CostEstimatorApp.jsx defaultBoardColors(). */
 export const RCE_STATUSES = [
-	"draft",
-	"submitted",
-	"under review",
-	"returned for edit",
-	"final approved",
-	"revised",
-	"cancelled",
+	"Pending",
+	"In Review",
+	"For approval",
+	"Waiting for information",
+	"Accepted",
+	"Rejected",
+	"For revision",
+	"Cancelled",
 ];
 
 export const CE_JOB_TYPES = ["Shop", "Onsite", "Trading", "Hybrid"];
-export const CE_STATUSES = RCE_STATUSES;
+
+export const CE_STATUSES = [
+	"Draft",
+	"Pending",
+	"Ongoing",
+	"On Park",
+	"Waiting for information",
+	"Sourcing",
+	"For approval",
+	"For revision",
+	"Done",
+	"No quote",
+	"Cancelled",
+	"Close bid",
+];
 
 export const INSPECTION_STATUSES = ["Filed", "For review", "Noted", "For revision", "Cancelled"];
 
-export const SAMPLE_ROLES = ["staff", "reviewer", "final approver", "head", "admin"];
+export const SAMPLE_ROLES = ["staff", "lead", "head", "admin"];
+export const QUEUE_LEVELS = ["staff", "lead", "head"];
 
 const CLIENT = "Sample Client";
 const WHEN = "2026-10-21";
+const APPROVAL_AT = "2026-10-21T00:00:00.000Z";
+const QUEUE_OWNER = "Sample admin";
 
 function slug(value) {
 	return String(value || "")
@@ -119,7 +139,7 @@ function ceDoc({ id, status, jobType, ord, extra = {} }) {
 				lastEdited: WHEN,
 				lastEditedBy: extra.assignedTo || extra.owner || "Sample staff",
 				location: "Manila",
-				rceId: extra.rceId || "SAMPLE-RCE-DRAFT",
+				rceId: extra.rceId || "SAMPLE-RCE-PENDING",
 				jobType,
 			},
 			document: {
@@ -181,17 +201,50 @@ function inspectionDoc(status, rceId, ceId, ord) {
 	};
 }
 
-export function openQueueRole(doc) {
-	const approval = doc?.approval || doc?.payload?.document?.approval;
-	const steps = Array.isArray(approval?.steps) ? approval.steps : [];
-	const index = Number.isInteger(approval?.currentIndex) ? approval.currentIndex : 0;
-	const step = steps[index];
-	if (!step || step.decision) return "";
-	return String(step.role || "");
+function startedApproval(docNo, flow) {
+	const result = beginEngineApproval({
+		owner: QUEUE_OWNER,
+		actor: QUEUE_OWNER,
+		userId: "SAMPLE-USER-ADMIN",
+		now: APPROVAL_AT,
+		docType: "ce",
+		docNo,
+		flow,
+	});
+	if (!result.ok) throw new Error(result.message || `Sample approval failed for ${docNo}`);
+	return result.approval;
 }
 
-export function queueFor(role, docs) {
-	return (docs || []).filter((doc) => openQueueRole(doc) === role);
+function queueApproval(level, docNo) {
+	if (level === "staff") {
+		return startedApproval(docNo, {
+			mode: "sequential",
+			steps: [
+				{ id: "sample-staff", title: "Estimate check", role: "staff", assigneeName: "Sample staff" },
+				{ id: "sample-staff-final", title: "Approved by Head", role: "head", isFinal: true },
+			],
+		});
+	}
+	if (level === "lead") {
+		return startedApproval(docNo, {
+			mode: "sequential",
+			steps: [
+				{ id: "sample-lead-prep", title: "Prepared by Estimator", role: "staff" },
+				{ id: "sample-lead-review", title: "Reviewed by Lead", role: "lead" },
+				{ id: "sample-lead-final", title: "Approved by Head", role: "head", isFinal: true },
+			],
+		});
+	}
+	return startedApproval(docNo, {
+		mode: "sequential",
+		steps: [
+			{ id: "sample-head-final", title: "Approved by Head", role: "head", isFinal: true },
+		],
+	});
+}
+
+export function pendingAccounts(users) {
+	return (users || []).filter((user) => user.accountStatus === "pending");
 }
 
 /** Same rows on every call. Existing legacy and direct-v1 ids are not included. */
@@ -220,26 +273,23 @@ export function buildSampleSet() {
 	const docs = [];
 	let ord = 100;
 	for (const status of RCE_STATUSES) {
-		if (status === "revised") {
-			docs.push(rceDoc("superseded", {
-				id: "SAMPLE-RCE-SUPERSEDED",
-				ord: ord++,
-				superseded: true,
-				supersededBy: "SAMPLE-RCE-REVISED",
-				rev: "0",
-				projectTitle: "Sample RCE original",
-			}));
-			docs.push(rceDoc("revised", {
-				id: "SAMPLE-RCE-REVISED",
-				ord: ord++,
-				rev: "Rev 1",
-				revises: "SAMPLE-RCE-SUPERSEDED",
-				projectTitle: "Sample RCE Rev 1",
-			}));
-			continue;
-		}
 		docs.push(rceDoc(status, { ord: ord++ }));
 	}
+	docs.push(rceDoc("Accepted", {
+		id: "SAMPLE-RCE-SUPERSEDED",
+		ord: ord++,
+		superseded: true,
+		supersededBy: "SAMPLE-RCE-ACCEPTED-REV1",
+		rev: "0",
+		projectTitle: "Sample RCE original",
+	}));
+	docs.push(rceDoc("Accepted", {
+		id: "SAMPLE-RCE-ACCEPTED-REV1",
+		ord: ord++,
+		rev: "Rev 1",
+		revises: "SAMPLE-RCE-SUPERSEDED",
+		projectTitle: "Sample RCE Rev 1",
+	}));
 
 	for (const jobType of CE_JOB_TYPES) {
 		for (const status of CE_STATUSES) {
@@ -254,7 +304,7 @@ export function buildSampleSet() {
 
 	docs.push(ceDoc({
 		id: "SAMPLE-CE-ALT-A",
-		status: "submitted",
+		status: "For approval",
 		jobType: "Shop",
 		ord: ord++,
 		extra: {
@@ -263,7 +313,7 @@ export function buildSampleSet() {
 			project: "Sample alternate CE",
 			leadApproval: {
 				role: "lead",
-				by: "Sample reviewer",
+				by: "Sample lead",
 				decision: "approved",
 				at: WHEN,
 			},
@@ -272,17 +322,17 @@ export function buildSampleSet() {
 
 	docs.push(ceDoc({
 		id: "SAMPLE-CE-TAKEOVER",
-		status: "under review",
+		status: "Ongoing",
 		jobType: "Onsite",
 		ord: ord++,
 		extra: {
 			project: "Sample taken-over CE",
 			owner: "Sample staff",
-			assignedTo: "Sample reviewer",
+			assignedTo: "Sample lead",
 			takeover: {
 				status: "approved",
 				owner: "Sample staff",
-				by: "Sample reviewer",
+				by: "Sample lead",
 				reason: "Sample take-over",
 				decidedBy: "Sample head",
 			},
@@ -291,36 +341,34 @@ export function buildSampleSet() {
 
 	docs.push(ceDoc({
 		id: "SAMPLE-CE-LOCKED",
-		status: "final approved",
+		status: "Done",
 		jobType: "Hybrid",
 		ord: ord++,
 		extra: {
 			project: "Sample locked CE",
 			locked: true,
-			approval: { status: "accepted", locked: true },
+			approval: { status: "accepted" },
 		},
 	}));
 
-	SAMPLE_ROLES.forEach((role) => {
+	for (const level of QUEUE_LEVELS) {
+		const id = `SAMPLE-CE-QUEUE-${slug(level)}`;
 		docs.push(ceDoc({
-			id: `SAMPLE-CE-QUEUE-${slug(role)}`,
-			status: "under review",
+			id,
+			status: "For approval",
 			jobType: "Shop",
 			ord: ord++,
 			extra: {
-				project: `Sample queue for ${role}`,
-				approval: {
-					status: "in-progress",
-					currentIndex: 0,
-					steps: [{ role, title: `Waiting on ${role}`, decision: "" }],
-				},
+				project: `Sample queue for ${level}`,
+				owner: QUEUE_OWNER,
+				approval: queueApproval(level, id),
 			},
 		}));
-	});
+	}
 
 	INSPECTION_STATUSES.forEach((status, index) => {
-		const rce = docs.find((doc) => doc.kind === "rce" && doc.status === "draft");
-		const ce = docs.find((doc) => doc.kind === "ce" && doc.jobType === CE_JOB_TYPES[index % CE_JOB_TYPES.length] && doc.status === "draft");
+		const rce = docs.find((doc) => doc.kind === "rce" && doc.status === "Pending" && !doc.superseded);
+		const ce = docs.find((doc) => doc.kind === "ce" && doc.jobType === CE_JOB_TYPES[index % CE_JOB_TYPES.length] && doc.status === "Draft");
 		docs.push(inspectionDoc(status, rce.id, ce.id, ord++));
 	});
 

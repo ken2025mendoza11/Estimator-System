@@ -280,6 +280,7 @@ function adminConfig(users, extras = []) {
       .filter((user) => user.accountStatus === "pending")
       .map((user) => ({ id: user.id, name: user.name, email: user.email, sample: true })),
     designations: ["Cost Estimator", "Department Head"],
+    features: { approvalEngineV2: true },
     approvalFlows: {
       ce: [
         { id: "ce-1", title: "Prepared by Estimator", role: "staff" },
