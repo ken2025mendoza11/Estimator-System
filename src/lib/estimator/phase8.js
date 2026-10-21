@@ -274,6 +274,14 @@ export function ceIsUnlocked(status) {
 	return !key || key === "draft" || key === "ongoing" || key === "for revision";
 }
 
+/** For approval and Done stay locked. Revise is a new copy, not Submit CE. */
+export function ceEditorOpen(status) {
+	const key = String(status || "").trim().toLowerCase();
+	if (key === "for approval" || key === "done" || key === "accepted" || key === "approved") return false;
+	if (key.startsWith("pending ") && key.endsWith(" approval")) return false;
+	return true;
+}
+
 function repointValue(value, from, to) {
 	return String(value || "") === from ? to : value;
 }

@@ -26,6 +26,9 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 18 | Phase 11: past estimates and document formats | skipped | | |
 | 19 | Follow-up: seed examples, weld label, active user id | done | `grok/phase-followup` | https://github.com/ken2025mendoza11/Estimator-System/pull/18 |
 | 20 | Admin and caller role match the signed-in user id | done | `grok/phase-20` | https://github.com/ken2025mendoza11/Estimator-System/pull/19 |
+| 21 | Keep access rollback from dropping profile columns | done | `grok/phase-21` | https://github.com/ken2025mendoza11/Estimator-System/pull/20 |
+| 22 | TEST sample data set | done | `grok/phase-22` | https://github.com/ken2025mendoza11/Estimator-System/pull/21 |
+| 23 | Preview test fixes | done | `grok/phase-23` | https://github.com/ken2025mendoza11/Estimator-System/pull/22 |
 
 ## Step 1 done
 
@@ -46,7 +49,30 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 20 is done on `grok/phase-20`, stacked on `grok/phase-followup`. Step 18 stays SKIPPED.
+Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 23 done
+
+Stacked on `grok/phase-22` (https://github.com/ken2025mendoza11/Estimator-System/pull/21 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/22. Do not merge to `main`.
+
+- Seeded cost estimates point at an RCE that the seed also writes into `rce_requests` before any CE write. Drafts use `SAMPLE-RCE-PENDING`. Every other sample CE uses `SAMPLE-RCE-ACCEPTED`. A load no longer hits `cost_estimates_rce_id_fkey`.
+- The save and stale banners sit in the page flow. Monitoring tabs (Cost Estimate, Inspection, RCE Request, Executive Dashboard) stay above them and stay clickable.
+- Sample ownership uses the real test logins (Test Staff, Test Lead, Test Head, Test Admin). Acting as one of those uses that person's role, not the admin role. Each login sees their own estimates and the queue step they are allowed to decide. Admin still cannot decide a step.
+- An active account with `profile_complete` false gets the profile form. Sign out is on that form, on the access card, and in the app sidebar.
+- Active test and sample users are seeded with `profile_complete` true and `welcome_seen_at` set. Sample Pending and Sample Declined are in the test picker and get Neon sign-in rows. Their screens stay the pending and declined cards.
+- Every non-draft sample CE has a priced labour line and an Accepted linked RCE. Done estimates carry an accepted approval and prepared, reviewed, and approved stamps. DRAFT still marks only a non-final estimate.
+- For approval and Done do not show Submit CE or "You can edit this estimate". Done still has Revise.
+- Sample inspections link to the Accepted RCE and a Done CE, and Created by is Test Staff. A hung signature download cannot leave the inspection preview on "Building…".
+
+SQL: none. The seed was not run. Golden totals are unchanged.
+
+## Step 22 done
+
+Stacked on `grok/phase-21`. Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/21. The TEST seed adds the sample RCE, CE, inspection, and user set. `approvalEngineV2` is on only in that test admin config. The four direct-v1 totals stay 27,362.51, 95,682.28, 31,692.31 and 154,737.10.
+
+## Step 21 done
+
+Stacked on `grok/phase-20`. Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/20. The Phase 1B rollback no longer drops the five profile columns or `public.email_allowlist`.
 
 ## Step 20 done
 

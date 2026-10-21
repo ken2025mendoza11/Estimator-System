@@ -99,10 +99,16 @@ describe("emailAndPasswordEnabled", () => {
 });
 
 describe("TEST_USERS", () => {
-  it("is staff, lead, head, and admin", () => {
+  it("is staff, lead, head, and admin, plus pending and declined sign-ins", () => {
     assert.deepEqual(
-      TEST_USERS.map((user) => user.role),
+      TEST_USERS.filter((user) => !user.accountStatus || user.accountStatus === "active").map((user) => user.role),
       ["staff", "lead", "head", "admin"],
     );
+    const pending = TEST_USERS.find((user) => user.email === "sample-pending@estimator-test.invalid");
+    const declined = TEST_USERS.find((user) => user.email === "sample-declined@estimator-test.invalid");
+    assert.equal(pending?.accountStatus, "pending");
+    assert.equal(pending?.role, "staff");
+    assert.equal(declined?.accountStatus, "declined");
+    assert.equal(declined?.label, "Declined");
   });
 });

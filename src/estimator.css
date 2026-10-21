@@ -1223,3 +1223,10 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-sealed input, .ce-sealed textarea, .ce-sealed select, .ce-sealed .ProseMirror, .ce-sealed .ce-add-row, .ce-sealed .ce-iconbtn { pointer-events: none; }
 .ce-sealed .ce-award-box, .ce-sealed .ce-award-box * { pointer-events: auto; }
 
+/* The save alert stays in the page flow. Monitoring tabs paint above it and stay clickable. */
+.ce-save-banner{position:relative;z-index:2;background:#7f1d1d;color:#fff;padding:10px 16px;text-align:center;font:14px/1.4 system-ui,sans-serif}
+.ce-save-banner-btn{font:inherit;color:#fff;background:transparent;border:0;text-decoration:underline;cursor:pointer}
+.mon-hub{position:relative;z-index:5}
+.mon-hub-tabs.mon-hub-tabs{position:relative;z-index:6}
+
+

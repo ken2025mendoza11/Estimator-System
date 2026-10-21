@@ -474,29 +474,15 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
   return (
     <>
       {(conflictOpen || saveNotice) && (
-        <div
-          role="alert"
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            zIndex: 10000,
-            background: "#7f1d1d",
-            color: "#fff",
-            padding: "10px 16px",
-            textAlign: "center",
-            font: "14px/1.4 system-ui, sans-serif",
-          }}
-        >
+        <div role="alert" className="ce-save-banner">
           {conflictOpen ? (
             <span>
               This was changed by someone else —{" "}
-              <button type="button" onClick={reloadServer} style={{ font: "inherit", color: "#fff" }}>
+              <button type="button" className="ce-save-banner-btn" onClick={reloadServer}>
                 Reload
               </button>
               {" / "}
-              <button type="button" onClick={keepMine} style={{ font: "inherit", color: "#fff" }}>
+              <button type="button" className="ce-save-banner-btn" onClick={keepMine}>
                 Keep mine
               </button>
             </span>

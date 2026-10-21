@@ -19,6 +19,9 @@ import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
 import { AddToCeDialog } from "./AddToCeDialog";
 import { SystemManual } from "./SystemManual";
 import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
+import { ceEditorOpen } from "../lib/estimator/phase8";
+import { actingLevelFor, ceOnMyList } from "../lib/estimator/previewAccess";
+import { signOut } from "../lib/auth/client";
 import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
 import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
 import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatrix";
@@ -18471,6 +18474,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const summaryEditsRef = useRef({});
 	const [sowText, setSowText] = useState(() => ceData?.sowText || "");
 	const [ceStatus, setCeStatus] = useState(() => ceData?.ceStatus || status || "Draft");
+	const estimateOpen = ceEditorOpen(ceStatus) && !readOnly && !isEditorLocked;
 	const [checkerOpen, setCheckerOpen] = useState(false);
 	const [ackWarnings, setAckWarnings] = useState(false);
 	const [warnReason, setWarnReason] = useState("");
@@ -19181,7 +19185,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 					}),
 					/* @__PURE__ */ jsx("span", {
 						className: isEditorLocked ? "ce-edit-flag off" : "ce-edit-flag on",
-						children: isEditorLocked ? "View only — you cannot edit this estimate" : headerEditing ? "You can edit — header changes are not saved yet" : "You can edit this estimate"
+						children: estimateOpen ? headerEditing ? "You can edit — header changes are not saved yet" : "You can edit this estimate" : "View only — you cannot edit this estimate"
 					})
 				]
 			}) : null,
@@ -19661,7 +19665,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								onClick: () => setWaitInfoOpen(true),
 								children: "Request information"
 							}),
-							/* @__PURE__ */ jsx("button", {
+							estimateOpen && /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-primary ce-btn-sm",
 								onClick: () => {
@@ -21134,8 +21138,10 @@ function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [],
 		(async () => {
 			try {
 				url = await buildRef.current?.(current);
-				if (alive) setPdfUrl(url || "");
-				else if (url) URL.revokeObjectURL(url);
+				if (alive) {
+					if (url) setPdfUrl(url);
+					else setPdfError(`Could not build the ${docNoun} preview.`);
+				} else if (url) URL.revokeObjectURL(url);
 			} catch (err) {
 				if (alive) setPdfError(`Could not build the ${docNoun} preview.`);
 			}
@@ -21399,8 +21405,10 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 		(async () => {
 			try {
 				url = await previewIssuePdf(payload);
-				if (alive) setPdfUrl(url);
-				else URL.revokeObjectURL(url);
+				if (alive) {
+					if (url) setPdfUrl(url);
+					else setPdfError("Could not build the cost estimate preview.");
+				} else if (url) URL.revokeObjectURL(url);
 			} catch (err) {
 				if (alive) setPdfError("Could not build the cost estimate preview.");
 			}
@@ -24542,7 +24550,11 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 		if (!Array.isArray(doc.tasks)) return "—";
 		return fmt(projectTotal(doc.tasks, doc.pricing));
 	};
-	const mine = (ceList || []).filter((ce) => (ce.assignedTo || ce.lastEditedBy || me) === me);
+	const mine = (ceList || []).filter((ce) => ceOnMyList(ce, {
+		me,
+		level: actingLevel,
+		approval: documents?.[ce.id]?.approval || ce.approval
+	}));
 	const filtered = (status === "All" ? mine : mine.filter((ce) => ce.status === status)).slice().sort((a, b) => {
 		if (sortBy === "deadline") return Date.parse(deadlineOf(a) || "9999-12-31") - Date.parse(deadlineOf(b) || "9999-12-31");
 		if (sortBy === "priority") return (priRank[String(priorityOf(a)).toLowerCase()] ?? 9) - (priRank[String(priorityOf(b)).toLowerCase()] ?? 9);
@@ -27535,6 +27547,14 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							}, u.id || u.name))
 						}),
 						/* @__PURE__ */ jsx("small", { children: actingLevel }),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => {
+								void signOut();
+							},
+							children: "Sign out"
+						}),
 						saveState === "saving" && /* @__PURE__ */ jsx("small", {
 							className: "ce-save-note",
 							children: "Saving to database…"
@@ -27810,8 +27830,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [headerEditing, setHeaderEditing] = useState(false);
 	const [pendingLeave, setPendingLeave] = useState("");
 	const editorName = editingUser || lockedName || "Estimator A";
-	const actingLevel = realLevel;
 	const impersonating = isAdminAccount && !!accountUserId && editorName !== lockedName;
+	const actingLevel = actingLevelFor({
+		realLevel,
+		editorName,
+		users: adminConfig.users || [],
+		impersonating
+	});
 	noteSecurityActor(accountUserId, impersonating ? accountUserId : "");
 	useEffect(() => {
 		if (currentView === "admin" && !isAdminAccount) setCurrentView("dashboard");
@@ -29748,7 +29773,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				leavePrompt: pendingLeave ? {
 					next: pendingLeave,
 					editing: headerEditing,
-					locked: isEditorLocked,
+					locked: isEditorLocked || !ceEditorOpen(activeCE?.status),
 					owner: activeCE?.assignedTo || editorName
 				} : null,
 				onRequestLeave: (next) => setPendingLeave(next),

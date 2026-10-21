@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from "react";
 import { markWelcomeSeen, updatePendingProfile } from "../lib/supabase/account-role";
-import { WELCOME_STOPS, accessCopy, accessState, profileErrors, signatureReady } from "../lib/estimator/loginUi";
+import { WELCOME_STOPS, accessCopy, accessState, needsProfileForm, profileErrors, signatureReady } from "../lib/estimator/loginUi";
+import { signOut } from "../lib/auth/client";
 import { phStamp } from "../lib/estimator/phTime";
 
 function Stamp({ tone, title, caption }) {
@@ -139,6 +140,7 @@ function ProfileStep({ onChanged }) {
 			{errors.signature ? <p className="ce-login-copy" role="alert">{errors.signature}</p> : null}
 			{note ? <p className="ce-login-copy" role="alert">{note}</p> : null}
 			<button type="submit" className="ce-login-btn" disabled={busy}>Save profile</button>
+			<button type="button" className="ce-login-btn ce-login-btn-quiet" onClick={() => { void signOut(); }}>Sign out</button>
 		</form>
 	);
 }
@@ -146,7 +148,7 @@ function ProfileStep({ onChanged }) {
 export function AccessGate({ account, onChanged }) {
 	const state = accessState(account);
 	const waiting = account?.status === "pending";
-	const needsProfile = account?.profileComplete === false && waiting;
+	const needsProfile = needsProfileForm(account);
 	if (needsProfile) {
 		return (
 			<main className="ce-app ce-login">
@@ -171,6 +173,7 @@ export function AccessGate({ account, onChanged }) {
 						</div>
 					</>
 				) : null}
+				<button type="button" className="ce-login-btn ce-login-btn-quiet" onClick={() => { void signOut(); }}>Sign out</button>
 			</div>
 		</main>
 	);

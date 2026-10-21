@@ -16,7 +16,7 @@ import { hashPassword } from "better-auth/crypto";
 import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
 import { buildDirectCes } from "./seed-documents.mjs";
-import { buildSampleSet } from "./seed-samples.mjs";
+import { buildSampleSet, rceRequestRow, roleRowFor } from "./seed-samples.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = resolve(root, "src/lib/estimator/__fixtures__/legacy-ce.json");
@@ -238,6 +238,14 @@ async function sb(path, { method = "GET", body, prefer } = {}, retry = true) {
   return text ? JSON.parse(text) : null;
 }
 
+async function upsertRceRequest(row) {
+  await sb("rce_requests?on_conflict=id", {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: row,
+  });
+}
+
 async function upsertDoc(kind, id, payload, ord) {
   const existing = await sb(
     `workspace_docs?kind=eq.${encodeURIComponent(kind)}&doc_id=eq.${encodeURIComponent(id)}&select=version`,
@@ -254,6 +262,15 @@ async function upsertDoc(kind, id, payload, ord) {
 }
 
 function adminConfig(users, extras = []) {
+  const seen = new Set(users.map((user) => user.email));
+  const extraUsers = extras.filter((user) => !seen.has(user.email));
+  const pending = [];
+  const pendingSeen = new Set();
+  for (const user of [...users, ...extras]) {
+    if ((user.accountStatus || "active") !== "pending" || pendingSeen.has(user.email)) continue;
+    pendingSeen.add(user.email);
+    pending.push({ id: user.userId || user.id, name: user.name, email: user.email, sample: true });
+  }
   return {
     users: [
       ...users.map((user) => ({
@@ -263,9 +280,9 @@ function adminConfig(users, extras = []) {
         designation: user.label,
         department: "Costing",
         level: user.role,
-        status: "active",
+        status: user.accountStatus || "active",
       })),
-      ...extras.map((user) => ({
+      ...extraUsers.map((user) => ({
         id: user.id,
         name: user.name,
         email: user.email,
@@ -276,9 +293,7 @@ function adminConfig(users, extras = []) {
         sample: true,
       })),
     ],
-    pending: extras
-      .filter((user) => user.accountStatus === "pending")
-      .map((user) => ({ id: user.id, name: user.name, email: user.email, sample: true })),
+    pending,
     designations: ["Cost Estimator", "Department Head"],
     features: { approvalEngineV2: true },
     approvalFlows: {
@@ -303,22 +318,10 @@ function adminConfig(users, extras = []) {
 async function seedSupabase(ce, users) {
   const sample = buildSampleSet();
   const roleRows = [
-    ...users.map((user) => ({
-      user_key: user.userKey,
-      email: user.email,
-      role: user.role,
-      status: "active",
-      display_name: user.name,
-      decline_reason: null,
-    })),
-    ...sample.users.map((user) => ({
-      user_key: user.id,
-      email: user.email,
-      role: user.dbRole,
-      status: user.accountStatus,
-      display_name: user.name,
-      decline_reason: user.declineReason || null,
-    })),
+    ...users.map((user) => roleRowFor(user)),
+    ...sample.users
+      .filter((user) => !users.some((row) => row.email === user.email))
+      .map((user) => roleRowFor(user)),
   ];
   await sb("app_user_roles?on_conflict=user_key", {
     method: "POST",
@@ -336,7 +339,7 @@ async function seedSupabase(ce, users) {
     customCategories: [],
   }, 0);
   await upsertDoc("admin", "company", adminConfig(users, sample.users), 0);
-  await upsertDoc("rce", "RCE-TEST-001", {
+  const legacyRce = {
     id: "RCE-TEST-001",
     client,
     customer: client,
@@ -350,7 +353,12 @@ async function seedSupabase(ce, users) {
     trading: false,
     dateReceived: "2026-10-01",
     attachments: [],
-  }, 0);
+  };
+  await upsertDoc("rce", "RCE-TEST-001", legacyRce, 0);
+  await upsertRceRequest(rceRequestRow({ id: "RCE-TEST-001", status: "Accepted", payload: legacyRce }));
+  for (const doc of sample.docs) {
+    if (doc.kind === "rce") await upsertRceRequest(rceRequestRow(doc));
+  }
   await upsertDoc("ce", id, {
     summary: { id, client, status, project, lastEdited, lastEditedBy, location, rceId },
     document: { ...document, ceStatus: status },
