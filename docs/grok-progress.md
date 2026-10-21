@@ -25,7 +25,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | https://github.com/ken2025mendoza11/Estimator-System/pull/17 |
 | 18 | Phase 11: past estimates and document formats | skipped | | |
 | 19 | Follow-up: seed examples, weld label, active user id | done | `grok/phase-followup` | https://github.com/ken2025mendoza11/Estimator-System/pull/18 |
-| 20 | Admin and caller role match the signed-in user id | done | `grok/phase-20` | |
+| 20 | Admin and caller role match the signed-in user id | done | `grok/phase-20` | https://github.com/ken2025mendoza11/Estimator-System/pull/19 |
 
 ## Step 1 done
 
@@ -50,7 +50,7 @@ Item in progress: none. Step 20 is done on `grok/phase-20`, stacked on `grok/pha
 
 ## Step 20 done
 
-Stacked on `grok/phase-followup`. Do not merge to `main`.
+Stacked on `grok/phase-followup` (https://github.com/ken2025mendoza11/Estimator-System/pull/18 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/19. Do not merge to `main`.
 
 - `is_admin()` and `caller_role()` match `auth.uid()` only, and only an active row. A pending, declined, or duplicate account with an admin email gets no admin rights and no role.
 - `app_user_roles_select` now reads only the signed-in user id. The email lookup in the sign-in screen is still only a duplicate check; the role it keeps is `linkedAccountRole`, which ignores other rows.
