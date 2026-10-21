@@ -51,6 +51,21 @@ After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 w
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
 
+## Step 24 done
+
+Stacked on `grok/phase-23` (https://github.com/ken2025mendoza11/Estimator-System/pull/22 is still open). Draft PR: not opened yet — this box has no GitHub push credentials. Do not merge to `main`.
+
+- Opening or viewing a cost estimate saves nothing. The editor sends a document change only when the content really changed, and a sealed or locked estimate sends only an approval decision or a revision start. The App drops a change that leaves the stored document the same, so viewing no longer stamps `lastEditedBy`. The approval on the stored document always wins over the editor's copy, so an old copy cannot roll back another person's decision.
+- Why the save returned 403: `sod_error` raises 42501 when a changed approval step carries another person's `byUserId`. Viewing re-sent an older copy of the estimate (a local unsaved backup from an earlier session or seed, or the editor's mount-time copy) whose approval steps differ from the server, so the server saw a step "signed" by someone else. The SQL check is correct and is unchanged. Load now drops local unsaved copies for estimates the server holds as sealed, and approval reminders keep their stamp in this browser instead of editing the cost estimate.
+- Leaving a view-only estimate does not show the leave prompt.
+- Sign out clears the save error and the unsaved workspace backups before signing out, and the unload save does not run during sign-out. A stored save error carries its user id and is shown only to that user. A new account starts with a clean save state.
+- `npm run seed:test` makes the private `estimator-files` bucket if it is missing and uploads a fixed sample signature PNG for each test and active sample user to `signatures/<auth uid>.png`. Roster users carry `userId` so other people's signatures are found. A submitted (For approval) sample CE carries the preparer stamp. A reseed bumps the document version.
+- A missing signature file is asked for once per session; the PDF draws the typed name and stamp instead.
+- A view-only estimate hides the header Edit and Import buttons.
+- DRAFT: on every export before final approval, For approval included (Target workflow 2.14: "Approved documents export unchanged"). Off on Done, Accepted/approved, and Noted inspections. The inspection preview follows the same rule; no change was needed.
+
+SQL: none. The TEST seed must be re-run (`npm run seed:test`) to upload the signatures. Golden totals are unchanged.
+
 ## Step 23 done
 
 Stacked on `grok/phase-22` (https://github.com/ken2025mendoza11/Estimator-System/pull/21 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/22. Do not merge to `main`.

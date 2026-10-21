@@ -22,6 +22,8 @@ import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, n
 import { ceEditorOpen } from "../lib/estimator/phase8";
 import { actingLevelFor, ceOnMyList } from "../lib/estimator/previewAccess";
 import { signOut } from "../lib/auth/client";
+import { readReminderStamps, signOutEstimator, writeReminderStamps } from "../lib/estimator/clientSession";
+import { canShowHeaderEdit, leaveNeedsPrompt, sameDocument, shouldSendDocChange, stableJson } from "../lib/estimator/viewOnlySave";
 import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
 import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
 import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatrix";
@@ -17628,7 +17630,7 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 						meta.client,
 						meta.location,
 						meta.date
-					].filter(Boolean).join(" · ") : "Click Edit to add client, location, and date"
+					].filter(Boolean).join(" · ") : editLocked ? "—" : "Click Edit to add client, location, and date"
 				}) : /* @__PURE__ */ jsxs("div", {
 					className: "ce-meta-edit",
 					children: [
@@ -17735,13 +17737,13 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							type: "button",
 							children: [/* @__PURE__ */ jsx(Download, { size: 14 }), " Export"]
 						}),
-						/* @__PURE__ */ jsxs("button", {
+						canShowHeaderEdit({ editLocked }) ? /* @__PURE__ */ jsxs("button", {
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: onImportClick,
 							type: "button",
 							children: [/* @__PURE__ */ jsx(Upload, { size: 14 }), " Import"]
-						}),
-						!editing ? /* @__PURE__ */ jsxs("button", {
+						}) : null,
+						!editing ? canShowHeaderEdit({ editLocked }) ? /* @__PURE__ */ jsxs("button", {
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: () => {
 								setDraft(meta);
@@ -17749,7 +17751,7 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							},
 							type: "button",
 							children: [/* @__PURE__ */ jsx(Pencil, { size: 14 }), " Edit"]
-						}) : /* @__PURE__ */ jsxs("button", {
+						}) : null : /* @__PURE__ */ jsxs("button", {
 							className: "ce-btn-primary ce-btn-sm",
 							onClick: save,
 							type: "button",
@@ -18429,6 +18431,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		};
 	});
 	const historyRef = useRef([]);
+	const allowedChangeRef = useRef(false);
+	const baselineRef = useRef("");
 	const stateRef = useRef(state);
 	const readOnlyRef = useRef(readOnly);
 	stateRef.current = state;
@@ -18440,6 +18444,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const patchKeys = action?.patch && typeof action.patch === "object" ? Object.keys(action.patch) : [];
 		const revisionStart = action?.type === "PATCH_PROJECT_INFO" && patchKeys.length > 0 && patchKeys.every((key) => key === "revisionPending" || key === "revisionNote");
 		if (readOnly && !revisionStart && action?.type !== "SET_APPROVAL") return;
+		if (readOnly) allowedChangeRef.current = true;
 		if (!action || action.type === "REPLACE_STATE") {
 			baseDispatch(action);
 			return;
@@ -18497,19 +18502,29 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const mobManpower = useMasterlist().BOL || [];
 	const persistSkip = useRef(true);
 	useEffect(() => {
-		if (persistSkip.current) {
-			persistSkip.current = false;
-			return;
-		}
-		if (!ceData?.id || !onDocumentChange) return;
-		onDocumentChange(ceData.id, {
+		const next = {
 			...state,
 			sowText,
 			ceStatus,
 			docNo,
 			revNo,
 			revDate
-		});
+		};
+		if (persistSkip.current) {
+			persistSkip.current = false;
+			baselineRef.current = stableJson(next);
+			return;
+		}
+		if (!ceData?.id || !onDocumentChange) return;
+		if (!shouldSendDocChange({
+			readOnly: !!readOnly || !!isEditorLocked,
+			allowed: allowedChangeRef.current,
+			baseline: baselineRef.current,
+			next
+		})) return;
+		allowedChangeRef.current = false;
+		baselineRef.current = stableJson(next);
+		onDocumentChange(ceData.id, next);
 	}, [
 		state,
 		sowText,
@@ -19290,6 +19305,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						dispatch,
 						onExport: runIssuePack,
 						onImportClick: () => fileInputRef.current && fileInputRef.current.click(),
+						editLocked: !estimateOpen,
 						onEditingChange: (value) => {
 							setHeaderEditing(value);
 							onEditingChange?.(value);
@@ -27551,7 +27567,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							type: "button",
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: () => {
-								void signOut();
+								void signOutEstimator(() => signOut());
 							},
 							children: "Sign out"
 						}),
@@ -27829,6 +27845,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [editorReturn, setEditorReturn] = useState("monitoring");
 	const [headerEditing, setHeaderEditing] = useState(false);
 	const [pendingLeave, setPendingLeave] = useState("");
+	const requestEditorLeave = (next) => {
+		const viewOnly = currentView === "editor" && (isEditorLocked || ceIsSealed(activeCE?.status, documents?.[activeCE?.id]));
+		if (currentView === "editor" && !leaveNeedsPrompt({ viewOnly, headerEditing, saveState })) {
+			setHeaderEditing(false);
+			setCurrentView(next || editorReturn);
+			return;
+		}
+		setPendingLeave(next);
+	};
 	const editorName = editingUser || lockedName || "Estimator A";
 	const impersonating = isAdminAccount && !!accountUserId && editorName !== lockedName;
 	const actingLevel = actingLevelFor({
@@ -27865,8 +27890,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		setPersistTick((n) => n + 1);
 	};
 	const handleDocumentChange = (id, doc) => {
-		setDocuments((prev) => {
-			const prior = prev[id] || {};
+		const buildDoc = (prior) => {
 			const prevStatus = String(prior.ceStatus || "");
 			const nextStatus = String(doc?.ceStatus || prevStatus || "");
 			const schedule = adminConfig?.features?.schedule === true ? refreshSchedule({
@@ -27889,16 +27913,20 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				}));
 			}
 			return {
-				...prev,
-				[id]: {
-					...doc,
-					...(adminConfig?.features?.schedule === true ? { schedule } : {}),
-					timeline,
-					snapshots: doc?.snapshots || prior.snapshots || [],
-					ceSubmittedStamps: doc?.ceSubmittedStamps || prior.ceSubmittedStamps || []
-				}
+				...doc,
+				...(Object.prototype.hasOwnProperty.call(prior, "approval") ? { approval: prior.approval } : {}),
+				...(adminConfig?.features?.schedule === true ? { schedule } : {}),
+				timeline,
+				snapshots: doc?.snapshots || prior.snapshots || [],
+				ceSubmittedStamps: doc?.ceSubmittedStamps || prior.ceSubmittedStamps || []
 			};
-		});
+		};
+		const current = documents?.[id];
+		if (current && sameDocument(current, buildDoc(current))) return;
+		setDocuments((prev) => ({
+			...prev,
+			[id]: buildDoc(prev[id] || {})
+		}));
 		setCeList((prev) => prev.map((ce) => ce.id === id ? {
 			...ce,
 			lastEdited: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
@@ -27963,10 +27991,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
 		const now = new Date();
 		const hits = [];
+		const reminderUser = accountUserId || editorName || "";
+		const reminderStore = typeof localStorage === "undefined" ? null : localStorage;
+		const stamps = readReminderStamps(reminderStore, reminderUser);
 		(ceList || []).forEach((ce) => {
 			const status = String(ce.status || "");
 			if (status !== "For approval" && !status.startsWith("Pending ")) return;
-			const slots = dueReminderSlots({ now, lastNotifiedAt: ce.reminderAt || "" });
+			const slots = dueReminderSlots({ now, lastNotifiedAt: stamps[ce.id] || ce.reminderAt || "" });
 			if (slots.length) hits.push({ id: ce.id, slots });
 		});
 		if (!hits.length) return;
@@ -27986,11 +28017,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			});
 			return next;
 		});
-		setCeList((prev) => prev.map((ce) => {
-			const hit = hits.find((item) => item.id === ce.id);
-			if (!hit) return ce;
-			return { ...ce, reminderAt: hit.slots[hit.slots.length - 1].at };
-		}));
+		// Step 24: the stamp stays in this browser. A reminder never edits a cost estimate.
+		const nextStamps = { ...stamps };
+		hits.forEach((hit) => {
+			nextStamps[hit.id] = hit.slots[hit.slots.length - 1].at;
+		});
+		writeReminderStamps(reminderStore, reminderUser, nextStamps);
 	}, [engineFlag, ceList, adminConfig?.notifyMatrix]);
 	const approvalFlowInput = (docType) => {
 		const party = adminConfig?.approvalFinal?.[docType] || {};
@@ -29776,7 +29808,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					locked: isEditorLocked || !ceEditorOpen(activeCE?.status),
 					owner: activeCE?.assignedTo || editorName
 				} : null,
-				onRequestLeave: (next) => setPendingLeave(next),
+				onRequestLeave: (next) => requestEditorLeave(next),
 				onStay: () => setPendingLeave(""),
 				onConfirmLeave: () => {
 					const next = pendingLeave || editorReturn;
@@ -30038,7 +30070,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						taskTemplates,
 						onTaskTemplatesChange: setTaskTemplates,
 						adminConfig,
-						onBack: () => setPendingLeave(editorReturn),
+						onBack: () => requestEditorLeave(editorReturn),
 						onEditingChange: setHeaderEditing,
 						onEngineUpdate: handleEngineUpdate,
 						onRequestClosing: handleRequestClosing,

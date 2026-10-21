@@ -14,6 +14,8 @@ import { supabaseConfigError } from "@/lib/supabase/client";
 import { ensureSupabaseAccess } from "@/lib/supabase/session";
 import { AccessGate, WelcomeTour } from "@/components/AccessScreens";
 import CostEstimatorApp from "@/components/CostEstimatorApp";
+import { clearSaveError, isSigningOut, readSaveError, writeSaveError } from "@/lib/estimator/clientSession";
+import { dropReadOnlyDirtyKeys } from "@/lib/estimator/viewOnlySave";
 
 const LEGACY_BACKUP_KEY = "estimator-workspace-backup";
 
@@ -120,13 +122,8 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
   const [bootKey, setBootKey] = useState(0);
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [saveNotice, setSaveNotice] = useState<string | null>(() => {
-    try {
-      return sessionStorage.getItem("estimator-save-error");
-    } catch {
-      return null;
-    }
-  });
+  // A stored save error is read per user once the account is known (Step 24).
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [conflictOpen, setConflictOpen] = useState(false);
   const latest = useRef<WorkspacePayload>(workspace);
   const revisions = useRef<RevisionMap>({});
@@ -185,7 +182,7 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
             setConflictOpen(false);
             setSaveNotice(null);
             setSaveState("saved");
-            try { sessionStorage.removeItem("estimator-save-error"); } catch { /* ignore */ }
+            clearSaveError(typeof sessionStorage === "undefined" ? null : sessionStorage);
           })
           .catch((err) => {
             const conflict = err instanceof WorkspaceSaveError && err.conflicts.length > 0;
@@ -206,7 +203,7 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
                     setConflictOpen(false);
                     setSaveNotice(null);
                     setSaveState("saved");
-                    try { sessionStorage.removeItem("estimator-save-error"); } catch { /* ignore */ }
+                    clearSaveError(typeof sessionStorage === "undefined" ? null : sessionStorage);
                   })
                   .catch((retryErr) => noteFailure(retryErr, retry));
               }, 700);
@@ -221,6 +218,31 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
 
   const signedInId = currentUser?.id ?? "";
   const signedInName = currentUser?.displayName || currentUser?.primaryEmail || "";
+
+  // Step 24: a different account (or none) starts with a clean save state.
+  const lastUserRef = useRef("");
+  useEffect(() => {
+    if (lastUserRef.current === signedInId) return;
+    const switched = lastUserRef.current !== "";
+    lastUserRef.current = signedInId;
+    if (timer.current) clearTimeout(timer.current);
+    if (switched) {
+      dirty.current = false;
+      dirtyKeys.current = [];
+      revisions.current = {};
+      hydrated.current = false;
+      conflictKeys.current = [];
+      setConflictOpen(false);
+      setSaveState("idle");
+    }
+    let stored: string | null = null;
+    try {
+      stored = signedInId ? readSaveError(sessionStorage, signedInId) : null;
+    } catch {
+      stored = null;
+    }
+    setSaveNotice(stored);
+  }, [signedInId]);
 
   useEffect(() => {
     if (signedInId) {
@@ -293,10 +315,11 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
         clearBackup("");
         const data = loaded.workspace;
         const local = readBackup(signedInId);
-        const keys = local?.dirtyKeys || [];
+        // Never push a stale local copy of an estimate the server holds as sealed.
+        const keys = dropReadOnlyDirtyKeys(data, local?.dirtyKeys || []);
         const chosen = stamp(jsonSafe(keepUploaded(data, local?.payload || null, keys)));
         latest.current = chosen;
-        dirtyKeys.current = changedDocKeys(data, chosen);
+        dirtyKeys.current = dropReadOnlyDirtyKeys(data, changedDocKeys(data, chosen));
         revisions.current = revisionsForDirtyPush(loaded.revisions, local?.revisions, dirtyKeys.current);
         userIdRef.current = signedInId;
         writeBackup(signedInId, chosen, dirtyKeys.current, revisions.current);
@@ -351,7 +374,7 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
 
   useEffect(() => {
     const flush = () => {
-      if (!dirty.current) return;
+      if (!dirty.current || isSigningOut()) return;
       writeBackup(userIdRef.current, latest.current, dirtyKeys.current, revisions.current);
       void saveWorkspaceToSupabase(latest.current, {
         revisions: revisions.current,
@@ -369,8 +392,9 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
           const message = err instanceof Error
             ? err.message
             : "Could not save. Your changes are still here.";
+          if (isSigningOut()) return;
           try {
-            sessionStorage.setItem("estimator-save-error", message);
+            writeSaveError(sessionStorage, userIdRef.current, message);
           } catch {
             /* private mode */
           }

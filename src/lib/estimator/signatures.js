@@ -9,6 +9,8 @@ const USER_NAMESPACE = "c1e0a7e0-7b1a-4e3a-9c2d-5f6a7b8c9d0e";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cache = new Map();
+/** Paths that came back missing this session. A PDF draws the typed name instead. */
+const missingSignatures = new Set();
 
 function sha1(bytes) {
 	const words = [];
@@ -176,19 +178,32 @@ export function withDeadline(start, ms, fallback = "") {
 }
 
 /** Session cache, then the private bucket. A missing bucket, a refused read, or a hung read returns "". */
-export async function loadSignatureImage(userKey) {
+export async function loadSignatureImage(userKey, download = null) {
 	const hit = cachedSignature(userKey);
 	if (hit) return hit;
 	const path = signatureObjectPath(userKey);
 	if (!path) return "";
+	if (missingSignatures.has(path)) return "";
 	try {
-		const { downloadDataUrl } = await import("./file-storage.ts");
-		const dataUrl = await withDeadline(() => downloadDataUrl(path), SIGNATURE_LOAD_MS, "");
-		if (dataUrl) rememberSignature(userKey, dataUrl);
-		return dataUrl || "";
+		const fetcher = download || (await import("./file-storage.ts")).downloadDataUrl;
+		const dataUrl = await withDeadline(() => fetcher(path), SIGNATURE_LOAD_MS, "");
+		const body = String(dataUrl || "");
+		if (body.startsWith("data:image/")) {
+			rememberSignature(userKey, body);
+			return body;
+		}
+		// Missing file (storage 400/404) or not an image: ask once per session, then draw the name.
+		missingSignatures.add(path);
+		return "";
 	} catch {
+		missingSignatures.add(path);
 		return "";
 	}
+}
+
+/** Test hook and sign-out reset for the "file is missing" memory. */
+export function forgetMissingSignatures() {
+	missingSignatures.clear();
 }
 
 /** Writes signatures/<auth.uid>.png. Keeps the image for this session even if storage is missing. */
