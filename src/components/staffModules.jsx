@@ -2,6 +2,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { todayLocal } from "../lib/estimator/workflow";
 import { airResult, normalizeCalcConstants, paintResult, rawResult, weldResult } from "../lib/estimator/elCalcs";
+import { calculatorPrintRows } from "../lib/estimator/routeFuel";
+import { CalcPrintBar, RouteFuelPanel } from "./RouteFuelPanel";
 import {
   Plus,
   Trash2,
@@ -1272,7 +1274,7 @@ function FieldErrors({ messages }) {
   );
 }
 
-export function ElCalculatorView({ onInsert, constants, seed }) {
+export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false, vehicles = [], fuelPrices = [], tolls = [] }) {
   const rates = useMemo(() => normalizeCalcConstants(constants), [constants]);
   const [tool, setTool] = useState('weld');
   const [weld, setWeld] = useState(() => ({
@@ -1354,7 +1356,7 @@ export function ElCalculatorView({ onInsert, constants, seed }) {
           ['raw', '6.3 Raw materials'],
           ['air', '6.5 Cebu Air Cargo'],
           ['std', '6.4 Standards database'],
-        ].map(([k, label]) => (
+        ].concat(routeFuel ? [["route", "Route and fuel"]] : []).map(([k, label]) => (
           <button
             key={k}
             type="button"
@@ -1365,6 +1367,18 @@ export function ElCalculatorView({ onInsert, constants, seed }) {
           </button>
         ))}
       </div>
+      {routeFuel && tool !== "route" ? (
+        <CalcPrintBar
+          title="EL Calculator"
+          rows={calculatorPrintRows(tool, {
+            weld: weldCalc,
+            paint: paintCalc,
+            raw: rawCalc,
+            air: airFreight,
+            standards: standards.length,
+          })}
+        />
+      ) : null}
 
       {tool === 'weld' && (
         <div className="ce-card wiz-card">
@@ -1670,6 +1684,10 @@ export function ElCalculatorView({ onInsert, constants, seed }) {
           </table>
         </div>
       )}
+
+      {tool === 'route' && routeFuel ? (
+        <RouteFuelPanel vehicles={vehicles} fuelPrices={fuelPrices} tolls={tolls} onInsert={onInsert} />
+      ) : null}
     </div>
   );
 }
