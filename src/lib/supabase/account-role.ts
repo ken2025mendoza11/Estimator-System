@@ -1,6 +1,7 @@
 import { readSupabaseIdentity } from "./access-token";
 import { supabase, supabaseConfigError } from "./client";
 import { ensureSupabaseAccess } from "./session";
+import { linkedAccountActive, ownAccountStatus } from "../estimator/activeUser.js";
 
 export type AccountStatus = "active" | "pending" | "declined" | "disabled";
 
@@ -218,30 +219,43 @@ export async function loadAccountAccess(hint?: { name?: string }): Promise<Accou
 async function legacyAccount(userId: string, name: string, email: string | null): Promise<AccountAccess> {
   const byKey = await supabase
     .from("app_user_roles")
-    .select("role, email, status")
+    .select("role, email, status, user_key")
     .eq("user_key", userId)
     .maybeSingle();
   if (byKey.error) return openAccount(userId, name);
-  const rows: RoleRow[] = byKey.data ? [byKey.data] : [];
+  const rows: RoleRow[] = byKey.data ? [{ ...byKey.data, user_key: byKey.data.user_key || userId }] : [];
   const cleanEmail = email?.trim();
   if (cleanEmail && !/[,()]/.test(cleanEmail)) {
     const byEmail = await supabase
       .from("app_user_roles")
-      .select("role, email, status")
+      .select("role, email, status, user_key")
       .ilike("email", cleanEmail)
       .limit(5);
     if (!byEmail.error && byEmail.data) rows.push(...byEmail.data);
   }
-  if (rows.length) {
+  const own = ownAccountStatus(userId, rows);
+  if (own) {
     return {
       userId,
-      role: pickRole(rows),
+      role: pickRole(rows.filter((row) => (row.user_key || userId) === userId)),
       name,
-      status: pickStatus(rows),
+      status: own,
       note: "",
-      profileComplete: true,
+      profileComplete: own === "active",
+      welcomeSeen: own === "active",
+      duplicate: own !== "active" && rows.some((row) => row.user_key && row.user_key !== userId),
+    };
+  }
+  if (rows.length && !linkedAccountActive(userId, rows)) {
+    return {
+      userId,
+      role: "staff",
+      name,
+      status: "pending",
+      note: "Duplicate. This email already has an account.",
+      profileComplete: false,
       welcomeSeen: true,
-      duplicate: false,
+      duplicate: true,
     };
   }
   const registered = await supabase.rpc("register_pending", {
@@ -252,8 +266,32 @@ async function legacyAccount(userId: string, name: string, email: string | null)
     return openAccount(userId, name, { status: "pending", note: registered.error.message });
   }
   const result = (registered.data || {}) as RegisterResult;
+  if (result.user_key && result.user_key !== userId) {
+    return {
+      userId,
+      role: "staff",
+      name,
+      status: "pending",
+      note: String(result.reason || "Duplicate. This email already has an account."),
+      profileComplete: false,
+      welcomeSeen: true,
+      duplicate: true,
+    };
+  }
   const statusText = String(result.status || "pending").toLowerCase();
   const status = statusText === "active" || statusText === "declined" || statusText === "disabled" ? statusText : "pending";
+  if (status === "active" && !linkedAccountActive(userId, [{ user_key: result.user_key || userId, status }])) {
+    return {
+      userId,
+      role: "staff",
+      name,
+      status: "pending",
+      note: "Duplicate. This email already has an account.",
+      profileComplete: false,
+      welcomeSeen: true,
+      duplicate: true,
+    };
+  }
   const role = LEVELS.includes(result.role as AccountAccess["role"]) ? (result.role as AccountAccess["role"]) : "staff";
   return {
     userId,
@@ -261,8 +299,8 @@ async function legacyAccount(userId: string, name: string, email: string | null)
     name,
     status,
     note: result.ok === false ? String(result.reason || "") : "",
-    profileComplete: true,
-    welcomeSeen: true,
+    profileComplete: status === "active",
+    welcomeSeen: status === "active",
     duplicate: false,
   };
 }

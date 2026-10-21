@@ -11,6 +11,7 @@ import {
   planCalcInsert,
   rawResult,
   roundUpHalfKg,
+  weldMetalLabel,
   weldResult,
 } from "./elCalcs.js";
 
@@ -71,6 +72,8 @@ test("groove weld metal is 0.61 kg/m before reinforcement and 0.671 kg/m after 1
   assert.equal(money2(bare.kgPerM), 0.61);
   const reinforced = weldResult({ ...shared, reinforcement: 10 });
   assert.equal(kg3(reinforced.kgPerM), 0.671);
+  assert.equal(weldMetalLabel(reinforced.kgPerM, 10), "0.671 kg/m (includes the 10% reinforcement)");
+  assert.equal(weldMetalLabel(bare.kgPerM, 0).includes("reinforcement"), false);
 });
 
 test("plate 2.4 × 1.2 m × 6 mm is 135.65 kg and cutting waste defaults to 0", () => {

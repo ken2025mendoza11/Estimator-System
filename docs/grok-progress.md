@@ -24,6 +24,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
 | 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | https://github.com/ken2025mendoza11/Estimator-System/pull/17 |
 | 18 | Phase 11: past estimates and document formats | skipped | | |
+| 19 | Follow-up: seed examples, weld label, active user id | done | `grok/phase-followup` | |
 
 ## Step 1 done
 
@@ -44,7 +45,17 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 17 is done on `grok/phase-login-ui`, stacked on `grok/phase-10`. Step 18 is SKIPPED: Ken said `skip` after the step stayed blocked with no sample past estimates and no template gap analysis. The master prompt has no Step 19. The plan stops here.
+Item in progress: none. Step 19 is done on `grok/phase-followup`, stacked on `grok/phase-login-ui`. Step 18 stays SKIPPED.
+
+## Step 19 done
+
+Stacked on `grok/phase-login-ui` (https://github.com/ken2025mendoza11/Estimator-System/pull/17 is still open). Do not merge to `main`.
+
+- The seed still writes with `SUPABASE_SERVICE_ROLE_KEY` and never prints it. It keeps one legacy CE, one RCE and one inspection, and adds the four direct-v1 examples. Their totals are 27,362.51, 95,682.28, 31,692.31 and 154,737.10.
+- A 10 mm groove with 10% reinforcement stays 0.671 kg/m. The label says that figure includes the 10% reinforcement.
+- `is_active_user()` and the account check match `auth.uid()` only. A pending duplicate with an active user's email is not active. A declined user is not active. The new SQL is `supabase/p19-active-user-2026-10-20.sql`. Its rollback restores only that function.
+
+Ken's three open questions are answered above. No further step is queued.
 
 ## Step 3 done
 
