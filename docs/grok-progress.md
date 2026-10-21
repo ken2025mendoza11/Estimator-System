@@ -23,7 +23,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 15 | Phase 9: Route and fuel calculator | done | `grok/phase-9` | https://github.com/ken2025mendoza11/Estimator-System/pull/15 |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
 | 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | https://github.com/ken2025mendoza11/Estimator-System/pull/17 |
-| 18 | Phase 11: past estimates and document formats | blocked until Ken supplies sample files | | |
+| 18 | Phase 11: past estimates and document formats | skipped | | |
 
 ## Step 1 done
 
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 17 is done on `grok/phase-login-ui`, stacked on `grok/phase-10`. Ken said `continue` on 20 Oct 2026. Step 18 stays blocked: no sample past estimates and no template gap analysis were attached.
+Item in progress: none. Step 17 is done on `grok/phase-login-ui`, stacked on `grok/phase-10`. Step 18 is SKIPPED: Ken said `skip` after the step stayed blocked with no sample past estimates and no template gap analysis. The master prompt has no Step 19. The plan stops here.
 
 ## Step 3 done
 
