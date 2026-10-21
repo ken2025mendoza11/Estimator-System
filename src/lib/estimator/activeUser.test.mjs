@@ -90,3 +90,9 @@ test("is_admin and caller_role match the auth user id and the rollback restores 
 	assert.equal(roleRollback.includes("drop table"), false);
 	assert.equal(access.includes("linkedAccountRole(userId, rows)"), true);
 });
+
+test("the phase 1B rollback keeps the role columns and the allowlist table", () => {
+	const body = readFileSync(new URL("../../../supabase/p1b-access-2026-10-20-rollback.sql", import.meta.url), "utf8");
+	assert.equal(body.includes("drop column"), false);
+	assert.equal(body.includes("drop table if exists public.email_allowlist"), false);
+});

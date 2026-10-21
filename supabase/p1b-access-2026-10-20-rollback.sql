@@ -1,9 +1,10 @@
+-- The 5 columns (status, profile, requested_at, decided_at, decided_by) and public.email_allowlist are kept for data safety.
 -- Rollback for supabase/p1b-access-2026-10-20.sql
 -- Step: 4 / Phase 1B
 -- Restores save_workspace_doc from the Step 3 file (exists conflict, admin writes skipped).
 -- Restores is_admin() from apply-v2.sql (same signature, no status check).
 -- Restores direct insert/update/delete for signed-in users.
--- Drops only the Step 4 functions, the allowlist table, and the new role columns.
+-- Drops only the Step 4 functions. The role columns and the allowlist table stay.
 -- Does not delete documents or role rows.
 -- Apply on the TEST project first.
 
@@ -318,15 +319,8 @@ drop function if exists public.approval_signature_error(jsonb, jsonb);
 drop function if exists public.caller_role();
 drop function if exists public.is_active_user();
 drop function if exists public.email_is_allowed(text);
-drop table if exists public.email_allowlist;
 
 alter table public.app_user_roles drop constraint if exists app_user_roles_status_chk;
-alter table public.app_user_roles
-  drop column if exists decided_at,
-  drop column if exists decided_by,
-  drop column if exists profile,
-  drop column if exists requested_at,
-  drop column if exists status;
 
 drop policy if exists authenticated_insert on public.workspace_docs;
 drop policy if exists authenticated_update on public.workspace_docs;
