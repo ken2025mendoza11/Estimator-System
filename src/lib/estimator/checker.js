@@ -16,6 +16,7 @@ import {
 } from "./ceTotals.js";
 import { roundMoney } from "./money.js";
 import { phase8Findings } from "./phase8.js";
+import { phase10Findings } from "./phase10.js";
 
 export const CHECKER_RULES = [
 	{ id: "zero-missing", label: "Zero and empty amounts", severity: "error" },
@@ -46,7 +47,10 @@ export const CHECKER_RULES = [
 	{ id: "quote-missing", label: "Quotation reference missing from the library", severity: "warning" },
 	{ id: "availability", label: "Availability key", severity: "info" },
 	{ id: "client-location", label: "Client location", severity: "info" },
-	{ id: "pending-open", label: "Pending record still open", severity: "warning" }
+	{ id: "pending-open", label: "Pending record still open", severity: "warning" },
+	{ id: "sow-untagged", label: "Scope heading has no activity", severity: "warning" },
+	{ id: "sow-unknown", label: "Scope heading activity is not a task", severity: "warning" },
+	{ id: "sow-uncovered", label: "Task is not covered by a heading", severity: "warning" }
 ];
 
 const CATS = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
@@ -472,6 +476,7 @@ export function runChecker(input) {
 		}
 	}
 	phase8Findings(opts).forEach((row) => emit(row.id, row.severity, row.message, row.extra));
+	phase10Findings(opts).forEach((row) => emit(row.id, row.severity, row.message, row.extra));
 	return {
 		findings,
 		errors: findings.filter((row) => row.severity === "error"),

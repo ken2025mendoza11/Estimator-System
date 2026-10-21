@@ -41,6 +41,8 @@ import { MobileDocScreen } from "./MobileDocScreen";
 import { Phase7Admin } from "./Phase7Admin";
 import { Phase8Admin } from "./Phase8Admin";
 import { Phase9Admin } from "./Phase9Admin";
+import { Phase10Admin } from "./Phase10Admin";
+import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { Phase8CePanel } from "./Phase8Panels";
 import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
 import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
@@ -48,6 +50,7 @@ import { blocksFinalApproval, canSubmit, normalizeCheckerConfig, runChecker, ver
 import { browserSpell } from "../lib/estimator/spellBrowser";
 import { annexesForExport, availabilityKeysFrom, listMasterlistItems } from "../lib/estimator/phase8";
 import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/estimator/routeFuel";
+import { orderExportSections, refreshSchedule, scheduleExportSection } from "../lib/estimator/phase10";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
@@ -3475,6 +3478,8 @@ function freezeCeSnapshot(doc, extra) {
 		thirdPartyShow: doc?.thirdPartyShow || { mode: "off", keys: [] },
 		pricing: doc?.pricing,
 		sowText: doc?.sowText || "",
+		sow: Array.isArray(doc?.sow) ? JSON.parse(JSON.stringify(doc.sow)) : [],
+		...(doc?.schedule && typeof doc.schedule === "object" ? { schedule: JSON.parse(JSON.stringify(doc.schedule)) } : {}),
 		fileAttachments: (() => {
 			try {
 				return JSON.parse(JSON.stringify(doc?.fileAttachments || {}));
@@ -4782,7 +4787,9 @@ function defaultAdminConfig() {
 			availability: false,
 			clientLocations: false,
 			pendingRecords: false,
-			routeFuel: false
+			routeFuel: false,
+			sowTagging: false,
+			schedule: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4894,7 +4901,9 @@ function normalizeAdminConfig(raw) {
 			availability: src.features?.availability === true,
 			clientLocations: src.features?.clientLocations === true,
 			pendingRecords: src.features?.pendingRecords === true,
-			routeFuel: src.features?.routeFuel === true
+			routeFuel: src.features?.routeFuel === true,
+			sowTagging: src.features?.sowTagging === true,
+			schedule: src.features?.schedule === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -5229,7 +5238,8 @@ function AdminHub({ config, onChange }) {
 					["phase6", "Phase 6"],
 					["phase7", "Phase 7"],
 					["phase8", "Phase 8"],
-					["phase9", "Phase 9"]
+					["phase9", "Phase 9"],
+					["phase10", "Phase 10"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -5284,6 +5294,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "phase9" && /* @__PURE__ */ jsx(Phase9Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase10" && /* @__PURE__ */ jsx(Phase10Admin, {
 				cfg,
 				patch
 			})
@@ -8614,6 +8628,14 @@ function reducer(state, action) {
 		case "SET_QUOTATION_REFS": return {
 			...state,
 			quotationRefs: Array.isArray(action.refs) ? action.refs : []
+		};
+		case "SET_SOW": return {
+			...state,
+			sow: Array.isArray(action.sow) ? action.sow : []
+		};
+		case "SET_SCHEDULE": return {
+			...state,
+			schedule: action.schedule && typeof action.schedule === "object" ? action.schedule : {}
 		};
 		default: return state;
 	}
@@ -14588,6 +14610,20 @@ function computeSchedule(tasks) {
 		subtaskSchedule
 	};
 }
+function taskPlan(tasks) {
+	const { taskSchedule } = computeSchedule(tasks || []);
+	return (tasks || []).map((task) => {
+		const row = taskSchedule[task.id] || { start: 1, end: 1, duration: 1 };
+		return {
+			id: task.id,
+			title: task.title || "Task",
+			predecessor: task.predecessor || "",
+			start: row.start,
+			end: row.end,
+			duration: row.duration
+		};
+	});
+}
 function computePeakByCategory(tasks, category) {
 	const { subtaskSchedule } = computeSchedule(tasks);
 	let maxCost = 0;
@@ -18499,6 +18535,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const availabilityOn = adminConfig?.features?.availability === true;
 	const locationsOn = adminConfig?.features?.clientLocations === true;
 	const pendingOn = adminConfig?.features?.pendingRecords === true;
+	const sowOn = adminConfig?.features?.sowTagging === true;
+	const scheduleOn = adminConfig?.features?.schedule === true;
 	const [annexOff, setAnnexOff] = useState({});
 	const grand = projectTotal(state.tasks, state.pricing);
 	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat, state.pricing), 0);
@@ -18530,8 +18568,17 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const snapshot = {
 			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 			ceStatus,
-			tasks: JSON.parse(JSON.stringify(state.tasks))
+			tasks: JSON.parse(JSON.stringify(state.tasks)),
+			sowText,
+			sow: Array.isArray(state.sow) ? JSON.parse(JSON.stringify(state.sow)) : []
 		};
+		if (scheduleOn) snapshot.schedule = refreshSchedule({
+			previous: state.schedule,
+			tasks: taskPlan(state.tasks),
+			startDate: state.schedule?.startDate || state.projectInfo?.date || "",
+			holidays: adminConfig?.phHolidays || [],
+			status: ceStatus
+		});
 		if (checkerOn && report?.findings) {
 			const stored = versionWithReport(snapshot, report, { reason: warnReason });
 			setVersionHistory((prev) => [...prev, stored]);
@@ -18806,6 +18853,17 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			if (section.exportTitle) return;
 			section.exportTitle = section.title || "";
 		});
+		if (adminConfig?.features?.schedule === true) {
+			sections.push(scheduleExportSection(refreshSchedule({
+				previous: state.schedule,
+				tasks: taskPlan(state.tasks),
+				startDate: state.schedule?.startDate || state.projectInfo?.date || "",
+				holidays: adminConfig?.phHolidays || [],
+				status: ceStatus
+			})));
+			const ordered = orderExportSections(sections);
+			sections.splice(0, sections.length, ...ordered);
+		}
 		return {
 			companyLogo: documentControl?.logoDataUrl || "",
 			docRevision: info.revNo || "",
@@ -19089,14 +19147,16 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				quotations: quotationsOn,
 				availability: availabilityOn,
 				clientLocations: locationsOn,
-				pendingRecords: pendingOn
+				pendingRecords: pendingOn,
+				sowTagging: sowOn
 			},
 			quotations: masterlist.quotations || [],
 			quotationRefs: state.quotationRefs || ceData?.quotationRefs || [],
 			items: listMasterlistItems(masterlist).map((item) => ({ id: item.id, availabilityKey: item.availabilityKey || "" })),
 			clientName: state.meta?.client || "",
 			clients: masterlist.clients || [],
-			pendingRecords: masterlist.pendingRecords || []
+			pendingRecords: masterlist.pendingRecords || [],
+			sow: state.sow || []
 		});
 	};
 	const blockFinal = () => {
@@ -19830,10 +19890,18 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								hiddenWorkTypes: state.hiddenWorkTypes,
 								rateExceptions: state.rateExceptions || []
 							}),
-							tab === "SOW" && /* @__PURE__ */ jsx(SOWTab, {
-								sowText,
-								setSowText
-							}),
+							tab === "SOW" && /* @__PURE__ */ jsxs(Fragment, { children: [
+								/* @__PURE__ */ jsx(SOWTab, {
+									sowText,
+									setSowText
+								}),
+								sowOn ? /* @__PURE__ */ jsx(Phase10Sow, {
+									sow: state.sow || [],
+									tasks: state.tasks || [],
+									sowText,
+									onChange: (sow) => dispatch({ type: "SET_SOW", sow })
+								}) : null
+							] }),
 							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch: isEditorLocked ? null : summaryDispatch, pricing: state.pricing }), noteNode("BOL", "Notes", true)] }),
 							tab === "BOTE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
@@ -27456,7 +27524,7 @@ function navKeyForView(view) {
 	if (view === "rce-form" || view === "rce-detail" || view === "rce-inbox") return "monitoring";
 	return view;
 }
-function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false }) {
+function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false, scheduleOn = false }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [bellOpen, setBellOpen] = useState(false);
 	const activeKey = navKeyForView(currentView);
@@ -27555,7 +27623,13 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 						className: "ce-navitem" + (activeKey === "reports" ? " ce-navitem-active" : ""),
 						onClick: () => go("reports"),
 						children: [/* @__PURE__ */ jsx(FileText, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: "Reports" })]
-					}, "reports") : null]
+					}, "reports") : null, scheduleOn ? /* @__PURE__ */ jsxs("button", {
+						type: "button",
+						"data-nav": "project-schedule",
+						className: "ce-navitem" + (activeKey === "project-schedule" ? " ce-navitem-active" : ""),
+						onClick: () => go("project-schedule"),
+						children: [/* @__PURE__ */ jsx(FileText, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: "Project schedule" })]
+					}, "project-schedule") : null]
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "ce-sidebar-foot",
@@ -27826,6 +27900,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			const prior = prev[id] || {};
 			const prevStatus = String(prior.ceStatus || "");
 			const nextStatus = String(doc?.ceStatus || prevStatus || "");
+			const schedule = adminConfig?.features?.schedule === true ? refreshSchedule({
+				previous: doc?.schedule || prior.schedule,
+				tasks: taskPlan(doc?.tasks),
+				startDate: doc?.schedule?.startDate || doc?.projectInfo?.date || prior.schedule?.startDate || "",
+				holidays: adminConfig?.phHolidays || [],
+				status: nextStatus
+			}) : doc?.schedule;
 			const priorTimeline = Array.isArray(prior.timeline) ? prior.timeline : [];
 			const nextTimeline = Array.isArray(doc?.timeline) ? doc.timeline : [];
 			let timeline = priorTimeline.length >= nextTimeline.length ? priorTimeline : nextTimeline;
@@ -27842,6 +27923,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				...prev,
 				[id]: {
 					...doc,
+					...(adminConfig?.features?.schedule === true ? { schedule } : {}),
 					timeline,
 					snapshots: doc?.snapshots || prior.snapshots || [],
 					ceSubmittedStamps: doc?.ceSubmittedStamps || prior.ceSubmittedStamps || []
@@ -29713,6 +29795,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				testMode: Boolean(testDeployment) && isAdminAccount,
 				canAdmin: isAdminAccount,
 				reportsOn: adminConfig.features?.reports === true,
+				scheduleOn: adminConfig.features?.schedule === true,
 				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel)),
 				onClearAll: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
 				splitOpen: dockOpen,
@@ -29846,6 +29929,21 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					currentView === "reports" && adminConfig.features?.reports === true && /* @__PURE__ */ jsx(Phase6Reports, {
 						ceList,
 						documents
+					}),
+					currentView === "project-schedule" && adminConfig.features?.schedule === true && /* @__PURE__ */ jsx(Phase10Schedule, {
+						plans: (ceList || []).map((ce) => {
+							const doc = documents[ce.id] || {};
+							return {
+								id: ce.id,
+								title: ce.project || doc.meta?.title || ce.id,
+								schedule: doc.schedule || refreshSchedule({
+									tasks: taskPlan(doc.tasks),
+									startDate: doc.projectInfo?.date || "",
+									holidays: adminConfig.phHolidays || [],
+									status: ce.status || doc.ceStatus || ""
+								})
+							};
+						})
 					}),
 					currentView === "dashboard" && /* @__PURE__ */ jsx(EstimateHome, {
 						ceList,
