@@ -51,6 +51,21 @@ After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 w
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
 
+## Step 25 done
+
+Branch `grok/phase-25` from `grok/phase-24`. Draft PR: (pending).
+
+Root cause of the 403 on load (reproduced on the TEST data in jsdom and in PGlite with the repo SQL):
+the app saved right after load, with no edits. Approval reminders went into the shared notifications list, the first persist run was not taken as the baseline, and every document whose stored `ord` differed from its list position (QUEUE-LEAD, QUEUE-HEAD, the five sample inspections) looked changed. The seed never wrote `cost_estimates` / `ce_documents`, so the `ce_documents` approval trigger took the INSERT path and read the seeded prepared step (`byUserId` `SAMPLE-USER-ADMIN`, not a real account) as a new signature: 42501 "Approval signer does not match the signed-in account." for every role.
+
+Fixes:
+- Load and view do not save: `alignRevisionOrd` (an ord-only difference is not a change), the first persist is a baseline, and reminders are kept local.
+- Seed: the prepared signer is the real Test Admin id, and the seed writes the `cost_estimates` / `ce_documents` mirror rows (`scripts/seed-mirror.mjs`). No SQL change.
+- Approve / Approve with comment / Request edit show only to the step's named assignee, or to the exact role when the step has no name (`decisionAccess.js`), in the editor panel, approvals table and dashboard preview.
+- Filed and Noted inspections have no DRAFT mark (`needsDraftWatermark` with `docType: "oif"`).
+
+Tests: `src/lib/estimator/step25.test.mjs`, plus one case in `workspace-docs.test.ts`. `npm test` 373 + 97, 0 failures. `tsc` 0. `eslint` 0 errors. Build ok. Golden totals unchanged.
+
 ## Step 24 done
 
 Stacked on `grok/phase-23` (https://github.com/ken2025mendoza11/Estimator-System/pull/22 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/23. Do not merge to `main`.

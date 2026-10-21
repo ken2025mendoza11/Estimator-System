@@ -357,7 +357,34 @@ export function assembleWorkspace(
     taskTemplates,
     scopeTemplates,
   } as WorkspacePayload;
+  alignRevisionOrd(workspace, live, revisions);
   return { workspace, revisions };
+}
+
+/**
+ * Step 25: the stored `ord` (seed or an older client) can differ from the list
+ * position the client sends. Only the ord moved, so the document is not
+ * changed: take the client's hash for it. Otherwise the first save after load
+ * rewrote every such document, including sealed estimates the user cannot sign.
+ */
+export function alignRevisionOrd(workspace: WorkspacePayload, rows: StoredDoc[], revisions: RevisionMap): void {
+  let local: LocalDoc[];
+  try {
+    local = splitWorkspace(workspace);
+  } catch {
+    return;
+  }
+  const byKey = new Map(rows.map((row) => [docKey(row.kind, row.id), row]));
+  for (const doc of local) {
+    const key = docKey(doc.kind, doc.id);
+    const prev = revisions[key];
+    const row = byKey.get(key);
+    if (!prev || !row || prev.deleted || prev.hash === doc.hash) continue;
+    if (row.ord === doc.ord) continue;
+    if (docHash(doc.kind, row.payload, doc.ord) === doc.hash) {
+      revisions[key] = { ...prev, hash: doc.hash };
+    }
+  }
 }
 
 export function planSave(

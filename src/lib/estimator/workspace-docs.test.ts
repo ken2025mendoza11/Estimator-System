@@ -222,3 +222,17 @@ test("a dirty document keeps the version the edit started from", () => {
   assert.equal(server[docKey("ce", "CE-2026-001")].version, 5);
 });
 
+
+test("Step 25: a stored ord that differs from the list position does not cause a save on load", () => {
+  const docs = splitWorkspace(sample());
+  const rows = docs.map((doc) => ({
+    kind: doc.kind,
+    id: doc.id,
+    payload: doc.payload,
+    ord: doc.kind === "ce" || doc.kind === "inspection" ? doc.ord + 100 : doc.ord,
+    version: 1,
+  }));
+  const { workspace, revisions } = assembleWorkspace(rows, sample());
+  const plan = planSave(splitWorkspace(workspace), revisions, new Set(), new Set());
+  assert.equal(plan.writes.length, 0);
+});

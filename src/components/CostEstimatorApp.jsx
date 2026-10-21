@@ -23,6 +23,7 @@ import { ceEditorOpen } from "../lib/estimator/phase8";
 import { actingLevelFor, ceOnMyList } from "../lib/estimator/previewAccess";
 import { signOut } from "../lib/auth/client";
 import { readReminderStamps, signOutEstimator, writeReminderStamps } from "../lib/estimator/clientSession";
+import { showDecisionButtons } from "../lib/estimator/decisionAccess";
 import { canShowHeaderEdit, leaveNeedsPrompt, sameDocument, shouldSendDocChange, stableJson } from "../lib/estimator/viewOnlySave";
 import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
 import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
@@ -19495,7 +19496,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 							approvalV2 && (ceStatus === "For approval" || approvalNow?.status === "in-progress" || (approvalNow?.comments || []).length > 0) && /* @__PURE__ */ jsxs("span", {
 								className: "ce-award-box",
 								children: [
-									actorCanDecide(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
+									showDecisionButtons(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
 										type: "button",
 										className: "ce-btn-primary ce-btn-sm",
 										onClick: () => {
@@ -19511,7 +19512,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										},
 										children: "Approve"
 									}),
-									actorCanDecide(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
+									showDecisionButtons(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
@@ -19528,7 +19529,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										},
 										children: "Approve with comment"
 									}),
-									actorCanDecide(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
+									showDecisionButtons(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
@@ -21052,7 +21053,7 @@ function exportOifToPDF(form = {}, hostDoc) {
 			y += 6;
 		} catch (err) {}
 	});
-	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: form.status, approvalStatus: form.approval?.status })) stampDraftWatermark(doc);
+	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: form.status, approvalStatus: form.approval?.status, docType: "oif" })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`Inspection_${form.oifNo || form.id || "report"}.pdf`);
 	return doc;
 }
@@ -21115,7 +21116,7 @@ async function previewOifPdf(form) {
 		unit: "mm",
 		format: "a4"
 	}));
-	if (needsDraftWatermark({ flagOn: exportEngineOn, status: form?.status, approvalStatus: form?.approval?.status })) stampDraftWatermark(doc);
+	if (needsDraftWatermark({ flagOn: exportEngineOn, status: form?.status, approvalStatus: form?.approval?.status, docType: "oif" })) stampDraftWatermark(doc);
 	return doc.output("bloburl");
 }
 function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [], facts = [], docNoun = "document", backLabel = "Back to document", emptyFiles = "No files were saved with this version.", missingDoc = "This revision was not kept as its own copy. History is still available.", buildPdf, exportPdf, exportExcel, ceBundle = null }) {
@@ -24580,7 +24581,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	const rows = Array.from({ length: rowCount }, (_, i) => filtered[i] || null);
 	const approvalRows = (ceList || []).filter((ce) => {
 		const approval = documents?.[ce.id]?.approval || ce.approval;
-		if (approval?.engine === "v2") return approval.status === "in-progress" && actorCanDecide(approval, { actor: me, level: actingLevel });
+		if (approval?.engine === "v2") return approval.status === "in-progress" && showDecisionButtons(approval, { actor: me, level: actingLevel });
 		return approval?.status === "in-progress" && canActOnStep(currentApprovalStep(approval), actingLevel);
 	});
 	const showApprovals = approvalRows.length > 0 || actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin";
@@ -27799,6 +27800,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		};
 		if (skipFirstPersist.current) {
 			skipFirstPersist.current = false;
+			// Step 25: the normalised first state is the baseline, not an edit.
+			persistRef.current?.(payload, { baseline: true });
 			return;
 		}
 		persistRef.current?.(payload);
@@ -27986,6 +27989,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		...(adminConfig?.users || []),
 		...(!impersonating && accountUserId && editorName ? [{ name: editorName, userId: accountUserId }] : [])
 	];
+	const [localReminders, setLocalReminders] = useState([]);
+	const shownNotices = [...localReminders, ...notifications || []];
 	useEffect(() => {
 		if (!engineFlag) return;
 		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
@@ -28001,7 +28006,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (slots.length) hits.push({ id: ce.id, slots });
 		});
 		if (!hits.length) return;
-		setNotifications((prev) => {
+		// Step 25: reminders are shown in this browser only. They never change the shared notification list on load.
+		setLocalReminders((prev) => {
 			let next = prev;
 			hits.forEach(({ id, slots }) => {
 				slots.forEach((slot) => {
@@ -29779,7 +29785,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			children: /* @__PURE__ */ jsxs(AppLayout, {
 				currentView,
 				setCurrentView,
-				notifications,
+				notifications: shownNotices,
 				actingUser: editorName,
 				actingLevel,
 				users: isAdminAccount ? [
@@ -29797,8 +29803,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				canAdmin: isAdminAccount,
 				reportsOn: adminConfig.features?.reports === true,
 				scheduleOn: adminConfig.features?.schedule === true,
-				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel)),
-				onClearAll: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
+				onMarkRead: () => {
+					setLocalReminders((prev) => markNoticesRead(prev, editorName, actingLevel));
+					setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel));
+				},
+				onClearAll: () => {
+					setLocalReminders((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel)));
+					setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel)));
+				},
 				splitOpen: dockOpen,
 				onToggleSplit: () => setDockOpen((v) => !v),
 				saveState,
@@ -29861,7 +29873,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 							}), !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)) && /* @__PURE__ */ jsx("p", {
 								className: "ce-empty",
 								children: "No notices yet."
-							}), (notifications || []).filter((n) => noticeVisible(n, editorName, actingLevel)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
+							}), shownNotices.filter((n) => noticeVisible(n, editorName, actingLevel)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
 								type: "button",
 								className: "ce-bell-item",
 								onClick: () => {
