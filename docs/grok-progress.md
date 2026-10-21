@@ -22,7 +22,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 14 | Phase 8: Quotations, availability, locations, pending records | done | `grok/phase-8` | https://github.com/ken2025mendoza11/Estimator-System/pull/14 |
 | 15 | Phase 9: Route and fuel calculator | done | `grok/phase-9` | https://github.com/ken2025mendoza11/Estimator-System/pull/15 |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
-| 17 | LOGIN-UI: sign-in and sign-up UI | pending | | |
+| 17 | LOGIN-UI: sign-in and sign-up UI | blocked until Step 4 is on main | | |
 | 18 | Phase 11: past estimates and document formats | blocked until Ken supplies sample files | | |
 
 ## Step 1 done
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 16 is done on `grok/phase-10`, stacked on `grok/phase-9`. Do not start Step 17 until Ken says `continue`.
+Item in progress: none. Step 17 is blocked. `estimator/main` is still `88f5e91`, so Step 4 is not on main. Do not start Step 17 or Step 18 until Ken says `continue` after Step 4 is on main.
 
 ## Step 3 done
 
@@ -680,5 +680,22 @@ Risks:
 1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
 2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
 3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
+## Step 17 blocked
+
+No branch and no PR. No login files were edited.
+
+The master prompt says Step 17 ships on and needs Step 4 on `main`, otherwise it is blocked. `estimator/main` is still `88f5e91` (the baseline before Step 1). Step 4 is only on the open stack: https://github.com/ken2025mendoza11/Estimator-System/pull/4 (`grok/phase-1b`).
+
+Nothing was built: no `/login` redesign, no profile step, no pending screen, no welcome tour, no access queue, no `plui-signup` SQL.
+
+Reply `continue` only after Step 4 is on `main`. Step 18 stays blocked until sample files are attached.
+
+### Questions still open
+
+1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
+2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
+3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
 
 
