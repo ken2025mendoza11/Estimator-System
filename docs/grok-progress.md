@@ -28,7 +28,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 20 | Admin and caller role match the signed-in user id | done | `grok/phase-20` | https://github.com/ken2025mendoza11/Estimator-System/pull/19 |
 | 21 | Keep access rollback from dropping profile columns | done | `grok/phase-21` | https://github.com/ken2025mendoza11/Estimator-System/pull/20 |
 | 22 | TEST sample data set | done | `grok/phase-22` | https://github.com/ken2025mendoza11/Estimator-System/pull/21 |
-| 23 | Preview test fixes | done | `grok/phase-23` | |
+| 23 | Preview test fixes | done | `grok/phase-23` | https://github.com/ken2025mendoza11/Estimator-System/pull/22 |
 
 ## Step 1 done
 
@@ -53,7 +53,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 23 done
 
-Stacked on `grok/phase-22` (https://github.com/ken2025mendoza11/Estimator-System/pull/21 is still open). Draft PR is on `grok/phase-23`. Do not merge to `main`.
+Stacked on `grok/phase-22` (https://github.com/ken2025mendoza11/Estimator-System/pull/21 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/22. Do not merge to `main`.
 
 - Seeded cost estimates point at an RCE that the seed also writes into `rce_requests` before any CE write. Drafts use `SAMPLE-RCE-PENDING`. Every other sample CE uses `SAMPLE-RCE-ACCEPTED`. A load no longer hits `cost_estimates_rce_id_fkey`.
 - The save and stale banners sit in the page flow. Monitoring tabs (Cost Estimate, Inspection, RCE Request, Executive Dashboard) stay above them and stay clickable.
