@@ -695,7 +695,9 @@ SQL written, not run: `supabase/plui-signup-2026-10-20.sql`, then the rollback f
 
 `microsoftLinkFlow` ships off. The login mockup PDF was not in the workspace, so the screens follow the written scope and the existing `ce-*` classes.
 
-Tests: `npm test` 320 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 205 warnings (201 plus one `@ts-nocheck` warning on each of `loginUi.js`, `loginUi.test.mjs`, `AccessScreens.jsx`, and `AccessQueue.jsx`). Build ok.
+A later commit on the same PR keeps a duplicate sign-in as a pending row (`duplicate_of` set, never active), leaves the nine new columns in place on rollback, checks the SQL with a PASS/FAIL block, and shows the Manila greeting and pending stamp from `phTime`.
+
+Tests: `npm test` 323 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 205 warnings (201 plus one `@ts-nocheck` warning on each of `loginUi.js`, `loginUi.test.mjs`, `AccessScreens.jsx`, and `AccessQueue.jsx`). Build ok.
 
 ### Questions still open
 

@@ -142,7 +142,7 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow }) 
 									Decline as duplicate
 								</button>
 								<button type="button" className="ce-login-btn ce-login-btn-quiet" onClick={() => run(pair.userKey, () => approveInstead(pair.userKey, "staff"))}>
-									Approve instead
+									Approve this one instead
 								</button>
 								{linking ? (
 									<button type="button" className="ce-login-btn ce-login-btn-quiet" onClick={() => run(pair.userKey, () => requestAccountLink(pair.userKey))}>
@@ -162,7 +162,7 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow }) 
 									Decline as duplicate
 								</button>
 								<button type="button" className="ce-login-btn ce-login-btn-quiet" onClick={() => run(pair.left.userKey, () => approveInstead(pair.left.userKey, "staff"))}>
-									Approve instead
+									Approve this one instead
 								</button>
 								{linking ? (
 									<button type="button" className="ce-login-btn ce-login-btn-quiet" onClick={() => run(pair.left.userKey, () => requestAccountLink(pair.left.userKey))}>

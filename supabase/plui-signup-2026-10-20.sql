@@ -89,7 +89,8 @@ $$;
 revoke all on function public.write_access_audit(text, text, text) from public, anon, authenticated;
 
 -- Same signature as p1b. A different signed-in id with an email that already
--- has a row is not admitted and is not written onto that row.
+-- has a row is stored as pending, with duplicate_of pointing at that row.
+-- It is never inserted as active, and the other row is not rewritten.
 create or replace function public.register_pending(p_profile jsonb default '{}'::jsonb)
 returns jsonb
 language plpgsql
@@ -98,6 +99,7 @@ set search_path = public
 as $$
 declare
   existing public.app_user_roles%rowtype;
+  other_key text;
   actor_email text := nullif(lower(trim(coalesce(auth.jwt() ->> 'email', ''))), '');
 begin
   if auth.uid() is null then
@@ -115,28 +117,27 @@ begin
       'user_key', existing.user_key,
       'profileComplete', coalesce(existing.profile_complete, existing.status = 'active'),
       'welcomeSeen', existing.welcome_seen_at is not null,
+      'duplicate', existing.duplicate_of is not null,
+      'duplicateOf', coalesce(existing.duplicate_of, ''),
       'reason', coalesce(existing.decline_reason, '')
-    );
-  end if;
-  if actor_email is not null and exists (
-    select 1
-    from public.app_user_roles roles
-    where roles.email is not null
-      and roles.email <> ''
-      and lower(roles.email) = actor_email
-  ) then
-    perform public.write_access_audit('duplicate_refused', auth.uid()::text, actor_email);
-    return jsonb_build_object(
-      'ok', false,
-      'status', 'declined',
-      'duplicate', true,
-      'reason', 'Duplicate. This email already has an account.'
     );
   end if;
   if not public.email_is_allowed(actor_email) then
     return jsonb_build_object('ok', false, 'status', 'declined', 'reason', 'Your account is not allowed to open the estimator.');
   end if;
-  insert into public.app_user_roles (user_key, email, role, status, requested_at, profile, profile_complete, display_name)
+  if actor_email is not null then
+    select roles.user_key into other_key
+    from public.app_user_roles roles
+    where roles.user_key <> auth.uid()::text
+      and roles.email is not null
+      and roles.email <> ''
+      and lower(roles.email) = actor_email
+    order by case when roles.status = 'active' then 0 else 1 end, roles.requested_at nulls last
+    limit 1;
+  end if;
+  insert into public.app_user_roles (
+    user_key, email, role, status, requested_at, profile, profile_complete, display_name, duplicate_of
+  )
   values (
     auth.uid()::text,
     actor_email,
@@ -145,16 +146,27 @@ begin
     now(),
     coalesce(p_profile, '{}'::jsonb),
     false,
-    nullif(left(trim(coalesce(p_profile ->> 'name', '')), 120), '')
+    nullif(left(trim(coalesce(p_profile ->> 'name', '')), 120), ''),
+    other_key
   );
-  perform public.write_access_audit('register_pending', auth.uid()::text, actor_email);
+  perform public.write_access_audit(
+    case when other_key is null then 'register_pending' else 'duplicate_pending' end,
+    auth.uid()::text,
+    coalesce(other_key, actor_email)
+  );
   return jsonb_build_object(
     'ok', true,
     'status', 'pending',
     'role', 'staff',
     'user_key', auth.uid()::text,
     'profileComplete', false,
-    'welcomeSeen', false
+    'welcomeSeen', false,
+    'duplicate', other_key is not null,
+    'duplicateOf', coalesce(other_key, ''),
+    'reason', case
+      when other_key is null then ''
+      else 'Duplicate. This email already has an account.'
+    end
   );
 end;
 $$;
@@ -710,3 +722,86 @@ $$;
 
 revoke all on function public.set_public_branding(text, text, text) from public, anon;
 grant execute on function public.set_public_branding(text, text, text) to authenticated;
+
+-- One active row per email. Pending duplicates are allowed.
+create unique index if not exists app_user_roles_one_active_email
+  on public.app_user_roles (lower(email))
+  where status = 'active' and email is not null and btrim(email) <> '';
+
+-- A pending account is authenticated, but it cannot read estimates.
+drop policy if exists authenticated_select on public.workspace_docs;
+create policy authenticated_select on public.workspace_docs
+  for select to authenticated
+  using (public.is_active_user());
+
+do $$
+declare
+  branding text;
+  grant_body text;
+  decline_body text;
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'workspace_docs'
+      and policyname = 'authenticated_select'
+      and cmd = 'SELECT'
+      and coalesce(qual, '') ilike '%is_active_user%'
+  ) then
+    raise exception 'FAIL: pending user can still read workspace_docs';
+  end if;
+
+  grant_body := pg_get_functiondef(to_regprocedure('public.grant_role(text,text)'));
+  decline_body := pg_get_functiondef(to_regprocedure('public.decline_user_with_reason(text,text)'));
+  if position('not public.is_admin()' in grant_body) = 0 then
+    raise exception 'FAIL: non-admin can call grant_role';
+  end if;
+  if position('not public.is_admin()' in decline_body) = 0 then
+    raise exception 'FAIL: non-admin can call decline_user_with_reason';
+  end if;
+  if position('Another active account already uses this email.' in grant_body) = 0 then
+    raise exception 'FAIL: grant_role does not refuse a second active account with the same email';
+  end if;
+
+  branding := pg_get_functiondef(to_regprocedure('public.get_public_branding()'));
+  if position('''name''' in branding) = 0
+     or position('''logo''' in branding) = 0
+     or position('''contact''' in branding) = 0
+     or position('email' in branding) > 0
+     or position('signature' in branding) > 0
+     or position('role' in branding) > 0 then
+    raise exception 'FAIL: anon get_public_branding does not return only the 3 fields';
+  end if;
+  if not has_function_privilege('anon', 'public.get_public_branding()', 'execute') then
+    raise exception 'FAIL: anon cannot call get_public_branding';
+  end if;
+
+  if has_table_privilege('authenticated', 'public.account_link_requests', 'select')
+     or has_table_privilege('anon', 'public.account_link_requests', 'select') then
+    raise exception 'FAIL: a user can read another user''s account_link_requests';
+  end if;
+
+  if not exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'app_user_roles_one_active_email'
+  ) then
+    raise exception 'FAIL: no two active rows share lower(email) is not enforced';
+  end if;
+  if exists (
+    select 1
+    from public.app_user_roles
+    where status = 'active' and email is not null and btrim(email) <> ''
+    group by lower(email)
+    having count(*) > 1
+  ) then
+    raise exception 'FAIL: two active rows share lower(email)';
+  end if;
+
+  if position('duplicate_of' in pg_get_functiondef(to_regprocedure('public.register_pending(jsonb)'))) = 0
+     or position('''pending''' in pg_get_functiondef(to_regprocedure('public.register_pending(jsonb)'))) = 0 then
+    raise exception 'FAIL: register_pending does not keep a duplicate pending';
+  end if;
+
+  raise notice 'PASS: signup profile, one active email, and public branding';
+end $$;

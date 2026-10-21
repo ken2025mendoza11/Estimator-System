@@ -2,6 +2,8 @@
 
 /** Sign-in and sign-up helpers. No sessions, totals, or network calls. */
 
+import { phParts } from "./phTime.js";
+
 export const WELCOME_STOPS = [
 	{ id: "estimates", title: "Cost estimates", body: "Open an estimate from the board. The totals on a saved estimate do not change because you signed in." },
 	{ id: "requests", title: "Requests", body: "RCE requests and inspection reports stay with the job. Your role decides which ones you can open." },
@@ -18,6 +20,83 @@ export const QUEUE_TABS = [
 ];
 
 const REMINDER_MS = 3 * 60 * 60 * 1000;
+const PERSONAL_DOMAINS = [
+	"gmail.com",
+	"googlemail.com",
+	"yahoo.com",
+	"yahoo.com.ph",
+	"hotmail.com",
+	"outlook.com",
+	"live.com",
+	"icloud.com",
+	"me.com",
+	"aol.com"
+];
+
+function manilaParts(date) {
+	const when = date instanceof Date ? date : new Date(date);
+	return phParts(Number.isNaN(when.getTime()) ? new Date() : when);
+}
+
+/** Greeting from Asia/Manila. The browser time zone is not used. */
+export function phGreeting(date = new Date()) {
+	const p = manilaParts(date);
+	const minutes = Number(p.hour) * 60 + Number(p.minute);
+	if (minutes >= 5 * 60 && minutes < 12 * 60) return "Magandang umaga";
+	if (minutes >= 12 * 60 && minutes < 13 * 60) return "Magandang tanghali";
+	if (minutes >= 13 * 60 && minutes < 18 * 60) return "Magandang hapon";
+	return "Magandang gabi";
+}
+
+function domainOf(email) {
+	const text = String(email || "").trim().toLowerCase();
+	const at = text.lastIndexOf("@");
+	if (at < 1) return "";
+	return text.slice(at + 1);
+}
+
+/**
+ * personal, company, or other.
+ * Company only when a domain list is set and matches. An empty list is never company.
+ */
+export function classifyEmail(email, companyDomains) {
+	const domain = domainOf(email);
+	if (!domain) return "other";
+	if (PERSONAL_DOMAINS.includes(domain)) return "personal";
+	const list = Array.isArray(companyDomains)
+		? companyDomains.map((item) => String(item || "").trim().toLowerCase().replace(/^@/, "")).filter(Boolean)
+		: [];
+	if (list.length && list.includes(domain)) return "company";
+	return "other";
+}
+
+function manilaIso(year, month, day, hour, minute = 0) {
+	return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 8, minute, 0)).toISOString();
+}
+
+/**
+ * Next admin reminder, 3 hours later, only inside 08:00–22:00 Asia/Manila.
+ * A time outside that window moves to the next 08:00.
+ */
+export function nextAdminReminder(submittedAt) {
+	const start = submittedAt instanceof Date ? submittedAt : new Date(submittedAt);
+	const plus = new Date(start.getTime() + REMINDER_MS);
+	const p = manilaParts(plus);
+	const minutes = Number(p.hour) * 60 + Number(p.minute);
+	if (minutes >= 8 * 60 && minutes < 22 * 60) {
+		return { at: plus.toISOString(), label: `${p.hour}:${p.minute}` };
+	}
+	let year = Number(p.year);
+	let month = Number(p.month);
+	let day = Number(p.day);
+	if (minutes >= 22 * 60) {
+		const next = new Date(Date.UTC(year, month - 1, day + 1));
+		year = next.getUTCFullYear();
+		month = next.getUTCMonth() + 1;
+		day = next.getUTCDate();
+	}
+	return { at: manilaIso(year, month, day, 8), label: "08:00" };
+}
 
 export function signatureReady(value) {
 	const text = String(value || "");
@@ -119,10 +198,18 @@ export function reminderDue(requestedAt, remindedAt, now) {
 	const at = now instanceof Date ? now.getTime() : Date.parse(now || "");
 	if (!Number.isFinite(start) || !Number.isFinite(at)) return false;
 	if (at - start < REMINDER_MS) return false;
-	if (!remindedAt) return true;
+	if (!remindedAt) {
+		const open = manilaParts(new Date(at));
+		const minutes = Number(open.hour) * 60 + Number(open.minute);
+		if (minutes < 8 * 60 || minutes >= 22 * 60) return false;
+		return true;
+	}
 	const last = Date.parse(remindedAt);
 	if (!Number.isFinite(last)) return true;
-	return at - last >= REMINDER_MS;
+	if (at - last < REMINDER_MS) return false;
+	const open = manilaParts(new Date(at));
+	const minutes = Number(open.hour) * 60 + Number(open.minute);
+	return minutes >= 8 * 60 && minutes < 22 * 60;
 }
 
 export function normalizeBranding(row) {

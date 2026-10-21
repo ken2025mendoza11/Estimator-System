@@ -7,9 +7,12 @@ import {
 	accessCopy,
 	accessState,
 	compareAccounts,
+	classifyEmail,
 	linkAllowed,
 	nameScore,
+	nextAdminReminder,
 	normalizeBranding,
+	phGreeting,
 	profileErrors,
 	profileReady,
 	queueRows,
@@ -18,6 +21,8 @@ import {
 
 const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
 const login = readFileSync(new URL("../../routes/login.tsx", import.meta.url), "utf8");
+const pending = readFileSync(new URL("../../components/AccessScreens.jsx", import.meta.url), "utf8");
+const rollback = readFileSync(new URL("../../../supabase/plui-signup-2026-10-20-rollback.sql", import.meta.url), "utf8");
 const sql = readFileSync(new URL("../../../supabase/plui-signup-2026-10-20.sql", import.meta.url), "utf8");
 
 test("a profile needs a name, a department, a mobile number, and a signature", () => {
@@ -103,4 +108,49 @@ test("the sign-up SQL adds the required functions and does not alter clients", (
 	assert.equal(sql.includes("alter table public.clients"), false);
 	assert.equal(sql.includes("alter table public.masterlist_items"), false);
 	assert.equal(sql.includes("linked', false") || sql.includes("'linked', false"), true);
+	assert.equal(sql.includes("duplicate_of"), true);
+	assert.equal(sql.includes("duplicate_refused"), false);
+	assert.equal(rollback.includes("drop column"), false);
+	assert.equal(rollback.includes("register_pending"), true);
+	assert.equal(rollback.includes("grant_role"), true);
+	assert.equal(rollback.includes("list_user_access"), true);
+	assert.equal(login.includes("phGreeting"), true);
+	assert.equal(pending.includes("phStamp"), true);
+	assert.equal(sql.includes("FAIL: pending user can still read workspace_docs"), true);
+	assert.equal(sql.includes("PASS: signup profile, one active email, and public branding"), true);
+});
+
+function manila(wall) {
+	return new Date(`${wall}:00+08:00`);
+}
+
+test("the greeting follows Asia/Manila and ignores the browser zone", () => {
+	assert.equal(phGreeting(manila("2026-10-20T04:59")), "Magandang gabi");
+	assert.equal(phGreeting(manila("2026-10-20T05:00")), "Magandang umaga");
+	assert.equal(phGreeting(manila("2026-10-20T11:59")), "Magandang umaga");
+	assert.equal(phGreeting(manila("2026-10-20T12:00")), "Magandang tanghali");
+	assert.equal(phGreeting(manila("2026-10-20T12:59")), "Magandang tanghali");
+	assert.equal(phGreeting(manila("2026-10-20T13:00")), "Magandang hapon");
+	assert.equal(phGreeting(manila("2026-10-20T17:59")), "Magandang hapon");
+	assert.equal(phGreeting(manila("2026-10-20T18:00")), "Magandang gabi");
+	assert.equal(phGreeting(new Date("2026-10-20T16:30:00.000Z")), "Magandang gabi");
+});
+
+test("email is personal or other, and company only when the list is set", () => {
+	assert.equal(classifyEmail("person@gmail.com"), "personal");
+	assert.equal(classifyEmail("person@gmail.com", []), "personal");
+	assert.equal(classifyEmail("person@gmail.com", ["gmail.com"]), "personal");
+	assert.equal(classifyEmail("staff@acme.com"), "other");
+	assert.equal(classifyEmail("staff@acme.com", []), "other");
+	assert.equal(classifyEmail("staff@acme.com", ["@acme.com"]), "company");
+	assert.equal(classifyEmail("not-an-email", ["acme.com"]), "other");
+});
+
+test("an admin reminder stays inside 08:00–22:00 Philippine time", () => {
+	const submitted = "2026-10-20T13:30:00.000Z";
+	const next = nextAdminReminder(submitted);
+	assert.equal(next.label, "08:00");
+	assert.equal(next.at, "2026-10-21T00:00:00.000Z");
+	assert.equal(reminderDue(submitted, null, new Date("2026-10-20T16:30:00.000Z")), false);
+	assert.equal(reminderDue(submitted, null, new Date("2026-10-21T00:00:00.000Z")), true);
 });

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { markWelcomeSeen, updatePendingProfile } from "../lib/supabase/account-role";
 import { WELCOME_STOPS, accessCopy, accessState, profileErrors, signatureReady } from "../lib/estimator/loginUi";
+import { phStamp } from "../lib/estimator/phTime";
 
 function Stamp({ tone, title, caption }) {
 	return (
@@ -144,7 +145,8 @@ function ProfileStep({ onChanged }) {
 
 export function AccessGate({ account, onChanged }) {
 	const state = accessState(account);
-	const needsProfile = account?.profileComplete === false && state !== "duplicate" && state !== "declined" && state !== "disabled" && state !== "not-allowed";
+	const waiting = account?.status === "pending";
+	const needsProfile = account?.profileComplete === false && waiting;
 	if (needsProfile) {
 		return (
 			<main className="ce-app ce-login">
@@ -159,12 +161,15 @@ export function AccessGate({ account, onChanged }) {
 				<p className="ce-login-kicker">Estimator System</p>
 				<h1 className="ce-serif ce-login-title">{text.heading}</h1>
 				<p className="ce-login-copy">{text.copy}</p>
-				{state === "pending" ? (
-					<div className="ce-login-stamps" aria-hidden="false">
-						<Stamp tone="red" title="PENDING" caption="MANILA" />
-						<Stamp tone="blue" title="ESTIMATOR" caption="QUEZON" />
-						<Stamp tone="gold" title="PH" caption="CEBU" />
-					</div>
+				{waiting ? (
+					<>
+						<p className="ce-login-copy">{phStamp(new Date(), "Pending")}</p>
+						<div className="ce-login-stamps" aria-hidden="false">
+							<Stamp tone="red" title="PENDING" caption="MANILA" />
+							<Stamp tone="blue" title="ESTIMATOR" caption="QUEZON" />
+							<Stamp tone="gold" title="PH" caption="CEBU" />
+						</div>
+					</>
 				) : null}
 			</div>
 		</main>

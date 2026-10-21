@@ -45,9 +45,10 @@ type RoleRow = {
   profile_complete?: boolean | null;
   welcome_seen_at?: string | null;
   decline_reason?: string | null;
+  duplicate_of?: string | null;
 };
 
-const RICH_COLUMNS = "role, email, status, user_key, display_name, profile_complete, welcome_seen_at, decline_reason";
+const RICH_COLUMNS = "role, email, status, user_key, display_name, profile_complete, welcome_seen_at, decline_reason, duplicate_of";
 
 function pickRole(rows: RoleRow[]): AccountAccess["role"] {
   const found = new Set(rows.map((row) => String(row.role || "").toLowerCase()));
@@ -95,7 +96,7 @@ function fromRich(userId: string, fallbackName: string, row: RoleRow, note = "")
     note: reason,
     profileComplete: status === "active" ? row.profile_complete !== false : row.profile_complete === true,
     welcomeSeen: status === "active" ? Boolean(row.welcome_seen_at) : true,
-    duplicate: /duplicate/i.test(reason),
+    duplicate: Boolean(row.duplicate_of) || /duplicate/i.test(reason),
   };
 }
 
@@ -115,14 +116,14 @@ type RegisterResult = {
 };
 
 function fromRegister(userId: string, name: string, result: RegisterResult): AccountAccess {
-  const otherKey = result.user_key && result.user_key !== userId;
-  const duplicate = result.duplicate === true || Boolean(otherKey);
+  const otherKey = Boolean(result.user_key && result.user_key !== userId);
+  const duplicate = result.duplicate === true || otherKey;
   const statusText = String(result.status || "pending").toLowerCase();
   const status = statusText === "active" || statusText === "declined" || statusText === "disabled" ? statusText : "pending";
   const role = LEVELS.includes(result.role as AccountAccess["role"])
     ? (result.role as AccountAccess["role"])
     : "staff";
-  if (duplicate) {
+  if (otherKey || (duplicate && status !== "pending")) {
     return {
       userId,
       role: "staff",
@@ -130,6 +131,18 @@ function fromRegister(userId: string, name: string, result: RegisterResult): Acc
       status: "declined",
       note: String(result.reason || "Duplicate. This email already has an account."),
       profileComplete: true,
+      welcomeSeen: true,
+      duplicate: true,
+    };
+  }
+  if (duplicate) {
+    return {
+      userId,
+      role: "staff",
+      name,
+      status: "pending",
+      note: String(result.reason || "Duplicate. This email already has an account."),
+      profileComplete: result.profileComplete === true,
       welcomeSeen: true,
       duplicate: true,
     };

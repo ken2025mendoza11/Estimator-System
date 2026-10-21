@@ -1,6 +1,7 @@
--- Undo supabase/plui-signup-2026-10-20.sql only.
+-- Undo the Step 17 functions and tables only.
+-- The nine new app_user_roles columns stay, so a profile already saved is not deleted.
 -- Restores register_pending, grant_role, and list_user_access to the Phase 1B bodies.
--- Does not drop app_user_roles, email_allowlist, or any document.
+-- Does not drop app_user_roles or email_allowlist.
 
 drop function if exists public.set_public_branding(text, text, text);
 drop function if exists public.get_public_branding();
@@ -23,16 +24,7 @@ drop table if exists public.public_branding;
 drop table if exists public.access_audit_log;
 drop table if exists public.account_link_requests;
 
-alter table public.app_user_roles
-  drop column if exists duplicate_of,
-  drop column if exists reminded_at,
-  drop column if exists decline_reason,
-  drop column if exists welcome_seen_at,
-  drop column if exists profile_complete,
-  drop column if exists signature,
-  drop column if exists mobile,
-  drop column if exists department,
-  drop column if exists display_name;
+-- The new columns, the one-active-email index, and the pending read rule stay.
 
 create or replace function public.register_pending(p_profile jsonb default '{}'::jsonb)
 returns jsonb

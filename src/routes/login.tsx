@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { authClient, authEnabled, signIn } from "@/lib/auth/client";
 import { getSignInOptions } from "@/lib/auth/sign-in-options";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { normalizeBranding } from "@/lib/estimator/loginUi";
+import { normalizeBranding, phGreeting } from "@/lib/estimator/loginUi";
+import { phStamp } from "@/lib/estimator/phTime";
 import { loadPublicBranding } from "@/lib/supabase/account-role";
 
 export const Route = createFileRoute("/login")({
@@ -44,6 +45,8 @@ function Login() {
         {brand.logo ? <img className="ce-login-logo" alt="" src={brand.logo} /> : null}
         <p className="ce-login-kicker">{brand.name}</p>
         <h1 className="ce-serif ce-login-title">Sign in to continue</h1>
+        <p className="ce-login-copy">{phGreeting()}</p>
+        <p className="ce-login-copy">{phStamp(new Date(), "Philippines")}</p>
         <p className="ce-login-copy">
           Your cost estimates, masterlist, and RCE requests save to your account
           automatically.
