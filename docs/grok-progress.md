@@ -22,7 +22,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 14 | Phase 8: Quotations, availability, locations, pending records | done | `grok/phase-8` | https://github.com/ken2025mendoza11/Estimator-System/pull/14 |
 | 15 | Phase 9: Route and fuel calculator | done | `grok/phase-9` | https://github.com/ken2025mendoza11/Estimator-System/pull/15 |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
-| 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | |
+| 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | https://github.com/ken2025mendoza11/Estimator-System/pull/17 |
 | 18 | Phase 11: past estimates and document formats | blocked until Ken supplies sample files | | |
 
 ## Step 1 done
@@ -683,7 +683,7 @@ Risks:
 
 ## Step 17 done
 
-Ken approved doing this on the open stack. Step 4 is on `grok/phase-1b`, not on `main`. This branch is `grok/phase-login-ui`, based on `grok/phase-10`.
+Ken approved doing this on the open stack. Step 4 is on `grok/phase-1b`, not on `main`. Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/17. Do not merge to `main`.
 
 - The sign-in page keeps the session loader and the same `signIn` calls. The TEST banner and the fake-user buttons show only when test sign-in is on.
 - A new person fills in full name, department, mobile, and an e-signature, then waits. The waiting screen uses Philippine stamp marks. After an administrator accepts them, a three-stop welcome shows once.
