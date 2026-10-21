@@ -17,6 +17,7 @@ import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
 import { buildDirectCes } from "./seed-documents.mjs";
 import { buildSampleSet, rceRequestRow, roleRowFor } from "./seed-samples.mjs";
+import { SIGNATURE_BUCKET, signaturePng, signatureTargets } from "./seed-signatures.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = resolve(root, "src/lib/estimator/__fixtures__/legacy-ce.json");
@@ -238,6 +239,38 @@ async function sb(path, { method = "GET", body, prefer } = {}, retry = true) {
   return text ? JSON.parse(text) : null;
 }
 
+/** TEST only: make the private bucket if it is missing, then upload one PNG per person. */
+export async function seedSignatures(people) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY.trim();
+  const base = process.env.VITE_SUPABASE_URL.trim().replace(/\/+$/, "");
+  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const found = await fetch(`${base}/storage/v1/bucket/${SIGNATURE_BUCKET}`, { headers });
+  if (!found.ok) {
+    const made = await fetch(`${base}/storage/v1/bucket`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: SIGNATURE_BUCKET, name: SIGNATURE_BUCKET, public: false }),
+    });
+    const text = await made.text();
+    if (!made.ok && !/already exists|duplicate/i.test(text)) {
+      throw new Error(`Storage bucket ${SIGNATURE_BUCKET} could not be created (${made.status}). ${text.slice(0, 200)}`);
+    }
+  }
+  const targets = signatureTargets(people, stableUserUuid);
+  for (const target of targets) {
+    const res = await fetch(`${base}/storage/v1/object/${SIGNATURE_BUCKET}/${target.path}`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "image/png", "x-upsert": "true", "cache-control": "no-cache" },
+      body: signaturePng(target.name),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Signature upload failed for ${target.name} (${res.status}). ${text.slice(0, 200)}`);
+    }
+  }
+  return targets.length;
+}
+
 async function upsertRceRequest(row) {
   await sb("rce_requests?on_conflict=id", {
     method: "POST",
@@ -252,9 +285,11 @@ async function upsertDoc(kind, id, payload, ord) {
   );
   const row = { kind, doc_id: id, payload, ord, deleted_at: null };
   if (Array.isArray(existing) && existing.length) {
+    // Bump the version so an open browser sees a reseed as a newer copy, not as its own.
+    const version = Number(existing[0]?.version) || 0;
     await sb(`workspace_docs?kind=eq.${encodeURIComponent(kind)}&doc_id=eq.${encodeURIComponent(id)}`, {
       method: "PATCH",
-      body: { payload, ord, deleted_at: null },
+      body: { payload, ord, deleted_at: null, version: version + 1 },
     });
     return;
   }
@@ -275,6 +310,8 @@ function adminConfig(users, extras = []) {
     users: [
       ...users.map((user) => ({
         id: user.userKey || user.userId,
+        // Signature lookups read userId (the auth uid), never the roster id.
+        ...(user.userKey ? { userId: user.userKey } : {}),
         name: user.name,
         email: user.email,
         designation: user.label,
@@ -393,6 +430,11 @@ async function seedSupabase(ce, users) {
   for (const doc of sample.docs) {
     await upsertDoc(doc.kind, doc.id, doc.payload, doc.ord);
   }
+  const signed = await seedSignatures([
+    ...users,
+    ...sample.users.filter((user) => (user.accountStatus || "active") === "active"),
+  ]);
+  console.log(`Uploaded ${signed} sample signature images to the TEST bucket.`);
 }
 
 export async function main() {

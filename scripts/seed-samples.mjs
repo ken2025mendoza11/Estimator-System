@@ -176,7 +176,11 @@ function sampleTasks(jobType) {
 	];
 }
 
-function signatureInfo(final) {
+function signatureInfo(final, submittedBy = "") {
+	// A submitted estimate carries the preparer's stamp, the same as the app's submit step.
+	if (!final && submittedBy) {
+		return { preparedBy: submittedBy, preparedStamp: `${submittedBy} 2026-10-21 08:00`, preparedTitle: "Estimator" };
+	}
 	if (!final) return {};
 	return {
 		preparedBy: LOGIN_NAMES.staff,
@@ -195,7 +199,7 @@ function ceDoc({ id, status, jobType, ord, extra = {} }) {
 	const priced = status !== "Draft";
 	const approval = extra.approval || (status === "Done" ? { status: "accepted" } : null);
 	const rceId = extra.rceId || (status === "Draft" ? PENDING_RCE_ID : ACCEPTED_RCE_ID);
-	const signs = signatureInfo(status === "Done" || approval?.status === "accepted");
+	const signs = signatureInfo(status === "Done" || approval?.status === "accepted", status === "For approval" ? assignee : "");
 	return {
 		kind: "ce",
 		id,
