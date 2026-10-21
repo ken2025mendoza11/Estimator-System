@@ -24,7 +24,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
 | 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | https://github.com/ken2025mendoza11/Estimator-System/pull/17 |
 | 18 | Phase 11: past estimates and document formats | skipped | | |
-| 19 | Follow-up: seed examples, weld label, active user id | done | `grok/phase-followup` | |
+| 19 | Follow-up: seed examples, weld label, active user id | done | `grok/phase-followup` | https://github.com/ken2025mendoza11/Estimator-System/pull/18 |
 
 ## Step 1 done
 
@@ -49,7 +49,7 @@ Item in progress: none. Step 19 is done on `grok/phase-followup`, stacked on `gr
 
 ## Step 19 done
 
-Stacked on `grok/phase-login-ui` (https://github.com/ken2025mendoza11/Estimator-System/pull/17 is still open). Do not merge to `main`.
+Stacked on `grok/phase-login-ui` (https://github.com/ken2025mendoza11/Estimator-System/pull/17 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/18. Do not merge to `main`.
 
 - The seed still writes with `SUPABASE_SERVICE_ROLE_KEY` and never prints it. It keeps one legacy CE, one RCE and one inspection, and adds the four direct-v1 examples. Their totals are 27,362.51, 95,682.28, 31,692.31 and 154,737.10.
 - A 10 mm groove with 10% reinforcement stays 0.671 kg/m. The label says that figure includes the 10% reinforcement.
