@@ -53,7 +53,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 25 done
 
-Branch `grok/phase-25` from `grok/phase-24`. Draft PR: (pending).
+Branch `grok/phase-25` from `grok/phase-24`. Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/24 (base `grok/phase-24`). Fix commit `c5a0e71`.
 
 Root cause of the 403 on load (reproduced on the TEST data in jsdom and in PGlite with the repo SQL):
 the app saved right after load, with no edits. Approval reminders went into the shared notifications list, the first persist run was not taken as the baseline, and every document whose stored `ord` differed from its list position (QUEUE-LEAD, QUEUE-HEAD, the five sample inspections) looked changed. The seed never wrote `cost_estimates` / `ce_documents`, so the `ce_documents` approval trigger took the INSERT path and read the seeded prepared step (`byUserId` `SAMPLE-USER-ADMIN`, not a real account) as a new signature: 42501 "Approval signer does not match the signed-in account." for every role.
