@@ -40,12 +40,14 @@ import { Phase6Reports } from "./Phase6Reports";
 import { MobileDocScreen } from "./MobileDocScreen";
 import { Phase7Admin } from "./Phase7Admin";
 import { Phase8Admin } from "./Phase8Admin";
+import { Phase9Admin } from "./Phase9Admin";
 import { Phase8CePanel } from "./Phase8Panels";
 import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
 import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
 import { blocksFinalApproval, canSubmit, normalizeCheckerConfig, runChecker, versionWithReport } from "../lib/estimator/checker";
 import { browserSpell } from "../lib/estimator/spellBrowser";
 import { annexesForExport, availabilityKeysFrom, listMasterlistItems } from "../lib/estimator/phase8";
+import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/estimator/routeFuel";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
@@ -4779,7 +4781,8 @@ function defaultAdminConfig() {
 			quotations: false,
 			availability: false,
 			clientLocations: false,
-			pendingRecords: false
+			pendingRecords: false,
+			routeFuel: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4792,6 +4795,9 @@ function defaultAdminConfig() {
 		checker: normalizeCheckerConfig(null),
 		availabilityKeys: [],
 		pendingEscalateDays: 3,
+		vehicles: [],
+		fuelPrices: [],
+		tolls: [],
 		notifyMatrix: normalizeNotifyMatrix(null),
 		directRates: directFormula({}),
 		calcConstants: defaultCalcConstants(),
@@ -4887,7 +4893,8 @@ function normalizeAdminConfig(raw) {
 			quotations: src.features?.quotations === true,
 			availability: src.features?.availability === true,
 			clientLocations: src.features?.clientLocations === true,
-			pendingRecords: src.features?.pendingRecords === true
+			pendingRecords: src.features?.pendingRecords === true,
+			routeFuel: src.features?.routeFuel === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -4902,6 +4909,9 @@ function normalizeAdminConfig(raw) {
 		checker: normalizeCheckerConfig(src.checker),
 		availabilityKeys: availabilityKeysFrom(src.availabilityKeys),
 		pendingEscalateDays: Number(src.pendingEscalateDays) > 0 ? Math.round(Number(src.pendingEscalateDays)) : 3,
+		vehicles: normalizeVehicles(src.vehicles),
+		fuelPrices: normalizeFuelPrices(src.fuelPrices),
+		tolls: normalizeTolls(src.tolls),
 		notifyMatrix: normalizeNotifyMatrix(src.notifyMatrix),
 		directRates: directFormula(src.directRates),
 		calcConstants: normalizeCalcConstants(src.calcConstants),
@@ -5218,7 +5228,8 @@ function AdminHub({ config, onChange }) {
 					["phase5", "Phase 5"],
 					["phase6", "Phase 6"],
 					["phase7", "Phase 7"],
-					["phase8", "Phase 8"]
+					["phase8", "Phase 8"],
+					["phase9", "Phase 9"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -5269,6 +5280,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "phase8" && /* @__PURE__ */ jsx(Phase8Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase9" && /* @__PURE__ */ jsx(Phase9Admin, {
 				cfg,
 				patch
 			})
@@ -30201,7 +30216,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					currentView === "el-calculator" && /* @__PURE__ */ jsx(ElCalculatorView, {
 						onInsert: handleElInsert,
 						constants: adminConfig.calcConstants,
-						seed: elSeed
+						seed: elSeed,
+						routeFuel: adminConfig?.features?.routeFuel === true,
+						vehicles: adminConfig.vehicles,
+						fuelPrices: adminConfig.fuelPrices,
+						tolls: adminConfig.tolls
 					}),
 					elOffer && /* @__PURE__ */ jsx(AddToCeDialog, {
 						offer: elOffer,
