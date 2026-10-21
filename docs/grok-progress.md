@@ -22,7 +22,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 14 | Phase 8: Quotations, availability, locations, pending records | done | `grok/phase-8` | https://github.com/ken2025mendoza11/Estimator-System/pull/14 |
 | 15 | Phase 9: Route and fuel calculator | done | `grok/phase-9` | https://github.com/ken2025mendoza11/Estimator-System/pull/15 |
 | 16 | Phase 10: SOW tagging, Gantt, project schedule, export order | done | `grok/phase-10` | https://github.com/ken2025mendoza11/Estimator-System/pull/16 |
-| 17 | LOGIN-UI: sign-in and sign-up UI | blocked until Step 4 is on main | | |
+| 17 | LOGIN-UI: sign-in and sign-up UI | done | `grok/phase-login-ui` | |
 | 18 | Phase 11: past estimates and document formats | blocked until Ken supplies sample files | | |
 
 ## Step 1 done
@@ -44,7 +44,7 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
-Item in progress: none. Step 17 is blocked. `estimator/main` is still `88f5e91`, so Step 4 is not on main. Do not start Step 17 or Step 18 until Ken says `continue` after Step 4 is on main.
+Item in progress: none. Step 17 is done on `grok/phase-login-ui`, stacked on `grok/phase-10`. Do not start Step 18 until Ken says `continue`. Step 18 stays blocked until sample files are attached.
 
 ## Step 3 done
 
@@ -681,21 +681,28 @@ Risks:
 2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
 3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
 
-## Step 17 blocked
+## Step 17 done
 
-No branch and no PR. No login files were edited.
+Ken approved doing this on the open stack. Step 4 is on `grok/phase-1b`, not on `main`. This branch is `grok/phase-login-ui`, based on `grok/phase-10`.
 
-The master prompt says Step 17 ships on and needs Step 4 on `main`, otherwise it is blocked. `estimator/main` is still `88f5e91` (the baseline before Step 1). Step 4 is only on the open stack: https://github.com/ken2025mendoza11/Estimator-System/pull/4 (`grok/phase-1b`).
+- The sign-in page keeps the session loader and the same `signIn` calls. The TEST banner and the fake-user buttons show only when test sign-in is on.
+- A new person fills in full name, department, mobile, and an e-signature, then waits. The waiting screen uses Philippine stamp marks. After an administrator accepts them, a three-stop welcome shows once.
+- The admin queue has Pending, Possible duplicates, Active, Declined, Disabled, and Allowlist. A pending account older than three hours raises a reminder when an administrator opens the queue.
+- The same email is a strong match. A similar name is only a warning. Granting a role refuses a second active account with that email. A Microsoft sign-in does not take over a Google account and does not rewrite its user id. Link requests stay off unless `microsoftLinkFlow` is turned on, and even then they are only saved.
+- The public sign-in name, logo, and contact come from `get_public_branding()`. Before this SQL is applied, sign-in stays as it was and people who are already signed in stay signed in.
 
-Nothing was built: no `/login` redesign, no profile step, no pending screen, no welcome tour, no access queue, no `plui-signup` SQL.
+SQL written, not run: `supabase/plui-signup-2026-10-20.sql`, then the rollback file only if it must be undone. Apply on the TEST project after `p1b-access-2026-10-20.sql`. It does not alter `clients` or `masterlist_items`.
 
-Reply `continue` only after Step 4 is on `main`. Step 18 stays blocked until sample files are attached.
+`microsoftLinkFlow` ships off. The login mockup PDF was not in the workspace, so the screens follow the written scope and the existing `ce-*` classes.
+
+Tests: `npm test` 320 + 96, 0 failures. `tsc` 0. `eslint` 0 errors, 205 warnings (201 plus one `@ts-nocheck` warning on each of `loginUi.js`, `loginUi.test.mjs`, `AccessScreens.jsx`, and `AccessQueue.jsx`). Build ok.
 
 ### Questions still open
 
 1. The seed writes `app_user_roles` with `SUPABASE_SERVICE_ROLE_KEY`. Confirm that env name.
 2. The seed loads one RCE, one legacy CE, and one inspection. Say if more of each are wanted.
 3. Groove 10 mm with the stated 10% reinforcement is 0.671 kg/m of weld metal, not 0.61. 0.61 is that joint with reinforcement 0. Say if the screen should show 0.61 instead.
+
 
 
 

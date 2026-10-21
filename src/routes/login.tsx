@@ -1,8 +1,10 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authClient, authEnabled, signIn } from "@/lib/auth/client";
 import { getSignInOptions } from "@/lib/auth/sign-in-options";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { normalizeBranding } from "@/lib/estimator/loginUi";
+import { loadPublicBranding } from "@/lib/supabase/account-role";
 
 export const Route = createFileRoute("/login")({
   loader: () => getSignInOptions(),
@@ -13,11 +15,21 @@ function Login() {
   const { user, isPending } = useCurrentUserState();
   const { providers, setupError, testLogin } = Route.useLoaderData();
   const [signInError, setSignInError] = useState<string | null>(null);
+  const [brand, setBrand] = useState(() => normalizeBranding(null));
+  useEffect(() => {
+    let cancelled = false;
+    loadPublicBranding().then((row) => {
+      if (!cancelled) setBrand(normalizeBranding(row));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   if (isPending) {
     return (
       <main className="ce-app ce-login">
         <div className="ce-login-card">
-          <p className="ce-login-kicker">Estimator System</p>
+          <p className="ce-login-kicker">{brand.name}</p>
           <h1 className="ce-serif ce-login-title">Opening session…</h1>
         </div>
       </main>
@@ -28,12 +40,15 @@ function Login() {
   return (
     <main className="ce-app ce-login">
       <div className="ce-login-card">
-        <p className="ce-login-kicker">Estimator System</p>
+        {testLogin ? <p className="ce-login-banner" role="status">TEST</p> : null}
+        {brand.logo ? <img className="ce-login-logo" alt="" src={brand.logo} /> : null}
+        <p className="ce-login-kicker">{brand.name}</p>
         <h1 className="ce-serif ce-login-title">Sign in to continue</h1>
         <p className="ce-login-copy">
           Your cost estimates, masterlist, and RCE requests save to your account
           automatically.
         </p>
+        {brand.contact ? <p className="ce-login-copy">{brand.contact}</p> : null}
         {setupError ? (
           <p className="ce-login-copy" role="alert">{setupError}</p>
         ) : authEnabled && providers.length > 0 ? (
@@ -54,9 +69,6 @@ function Login() {
                 Continue with {p.label}
               </button>
             ))}
-            {signInError ? (
-              <p className="ce-login-copy" role="alert">{signInError}</p>
-            ) : null}
           </div>
         ) : (
           <p className="ce-login-copy">Sign-in is disabled.</p>
@@ -96,10 +108,10 @@ function Login() {
                 Sign in as {account.label}
               </button>
             ))}
-            {signInError ? (
-              <p className="ce-login-copy" role="alert">{signInError}</p>
-            ) : null}
           </div>
+        ) : null}
+        {signInError ? (
+          <p className="ce-login-copy" role="alert">{signInError}</p>
         ) : null}
       </div>
     </main>
