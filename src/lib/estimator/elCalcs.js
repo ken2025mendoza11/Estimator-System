@@ -193,6 +193,16 @@ export function weldResult(input, constants) {
   };
 }
 
+/** Groove label. The kilograms already include reinforcement when it is above 0. */
+export function weldMetalLabel(kgPerM, reinforcement) {
+  const weight = finite(kgPerM);
+  if (weight == null) return "—";
+  const text = `${weight.toFixed(3)} kg/m`;
+  const pct = finite(reinforcement);
+  if (pct == null || pct <= 0) return text;
+  return `${text} (includes the ${pct}% reinforcement)`;
+}
+
 /** Coverage in m²/L is volume-solids percent × 10 / DFT (µm). */
 export function paintResult(input) {
   const src = input || {};

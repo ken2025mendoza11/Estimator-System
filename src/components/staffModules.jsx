@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { todayLocal } from "../lib/estimator/workflow";
-import { airResult, normalizeCalcConstants, paintResult, rawResult, weldResult } from "../lib/estimator/elCalcs";
+import { airResult, normalizeCalcConstants, paintResult, rawResult, weldMetalLabel, weldResult } from "../lib/estimator/elCalcs";
 import { calculatorPrintRows } from "../lib/estimator/routeFuel";
 import { CalcPrintBar, RouteFuelPanel } from "./RouteFuelPanel";
 import {
@@ -1452,7 +1452,7 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
           <FieldErrors messages={weldCalc.messages} />
           <div className="el-result">
             {weld.jointType === 'groove' ? (
-              <div>Weld metal <b>{weldCalc.kgPerM == null ? '—' : `${weldCalc.kgPerM.toFixed(3)} kg/m`}</b></div>
+              <div>Weld metal <b>{weldMetalLabel(weldCalc.kgPerM, weld.reinforcement)}</b></div>
             ) : null}
             Required consumable <b>{weldCalc.kg == null ? '—' : `${weldCalc.kg.toFixed(3)} kg`}</b>
             {onInsert && weldCalc.ok && weldCalc.kg != null ? (

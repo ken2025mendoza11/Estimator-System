@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { hashPassword } from "better-auth/crypto";
 import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
+import { buildDirectCes } from "./seed-documents.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = resolve(root, "src/lib/estimator/__fixtures__/legacy-ce.json");
@@ -210,6 +211,7 @@ async function seedUsers(password) {
 }
 
 async function sb(path, { method = "GET", body, prefer } = {}, retry = true) {
+  // Confirmed server key name. Never log the value.
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY.trim();
   const base = process.env.VITE_SUPABASE_URL.trim().replace(/\/+$/, "");
   const res = await fetch(`${base}/rest/v1/${path}`, {
@@ -318,6 +320,23 @@ async function seedSupabase(ce, users) {
     summary: { id, client, status, project, lastEdited, lastEditedBy, location, rceId },
     document: { ...document, ceStatus: status },
   }, 0);
+  const examples = JSON.parse(readFileSync(resolve(root, "src/lib/estimator/__fixtures__/ce-examples.json"), "utf8"));
+  for (const direct of buildDirectCes(examples)) {
+    const { id: directId, client: directClient, status: directStatus, project: directProject, lastEdited: directEdited, lastEditedBy: directEditor, location: directLocation, rceId: directRce, ...directDocument } = direct;
+    await upsertDoc("ce", directId, {
+      summary: {
+        id: directId,
+        client: directClient,
+        status: directStatus,
+        project: directProject,
+        lastEdited: directEdited,
+        lastEditedBy: directEditor,
+        location: directLocation,
+        rceId: directRce,
+      },
+      document: { ...directDocument, ceStatus: directStatus },
+    }, 0);
+  }
   await upsertDoc("inspection", "OIF-TEST-001", {
     id: "OIF-TEST-001",
     oifNo: "OIF-TEST-001",
