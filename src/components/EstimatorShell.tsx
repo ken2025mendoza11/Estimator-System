@@ -8,10 +8,11 @@ import {
   saveWorkspaceToSupabase,
 } from "@/lib/estimator/supabase-workspace";
 import { docKey, changedDocKeys, mergeServerWithDirty, revisionsForDirtyPush, WorkspaceSaveError, type RevisionMap } from "@/lib/estimator/workspace-docs";
-import { loadAccountAccess, type AccountAccess } from "@/lib/supabase/account-role";
+import { loadAccountAccess, markWelcomeSeen, type AccountAccess } from "@/lib/supabase/account-role";
 import { getSignInOptions } from "@/lib/auth/sign-in-options";
 import { supabaseConfigError } from "@/lib/supabase/client";
 import { ensureSupabaseAccess } from "@/lib/supabase/session";
+import { AccessGate, WelcomeTour } from "@/components/AccessScreens";
 import CostEstimatorApp from "@/components/CostEstimatorApp";
 
 const LEGACY_BACKUP_KEY = "estimator-workspace-backup";
@@ -107,7 +108,11 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
     name: "",
     status: "active",
     note: "",
+    profileComplete: true,
+    welcomeSeen: true,
+    duplicate: false,
   });
+  const [accountRefresh, setAccountRefresh] = useState(0);
   const [testDeployment, setTestDeployment] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -256,7 +261,7 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
       .then((row) => {
         if (cancelled) return;
         setAccount(row);
-        if (row.status !== "active") {
+        if (row.status !== "active" || row.profileComplete === false) {
           setSessionReady(false);
           setReady(true);
           return;
@@ -275,7 +280,7 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
     return () => {
       cancelled = true;
     };
-  }, [signedInId, signedInName, isPending]);
+  }, [signedInId, signedInName, isPending, accountRefresh]);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -462,25 +467,8 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
     );
   }
 
-  if (account.status !== "active") {
-    const heading = account.status === "pending"
-      ? "Waiting for admin approval"
-      : "This account cannot open the estimator";
-    const copy = account.note
-      || (account.status === "pending"
-        ? "An administrator has to grant your role before any records are loaded."
-        : account.status === "declined"
-          ? "An administrator declined this account."
-          : "An administrator disabled this account.");
-    return (
-      <main className="ce-app ce-login">
-        <div className="ce-login-card">
-          <p className="ce-login-kicker">Estimator System</p>
-          <h1 className="ce-serif ce-login-title">{heading}</h1>
-          <p className="ce-login-copy">{copy}</p>
-        </div>
-      </main>
-    );
+  if (account.status !== "active" || account.profileComplete === false) {
+    return <AccessGate account={account} onChanged={() => setAccountRefresh((value) => value + 1)} />;
   }
 
   return (
@@ -517,6 +505,15 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
           )}
         </div>
       )}
+      {account.welcomeSeen === false ? (
+        <WelcomeTour
+          onDone={() => {
+            markWelcomeSeen().finally(() => {
+              setAccount((prev) => ({ ...prev, welcomeSeen: true }));
+            });
+          }}
+        />
+      ) : null}
       <CostEstimatorApp
       key={bootKey}
       initialWorkspace={workspace}

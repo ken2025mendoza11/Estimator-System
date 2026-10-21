@@ -43,6 +43,7 @@ import { Phase8Admin } from "./Phase8Admin";
 import { Phase9Admin } from "./Phase9Admin";
 import { Phase10Admin } from "./Phase10Admin";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
+import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
 import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
 import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
@@ -54,7 +55,6 @@ import { orderExportSections, refreshSchedule, scheduleExportSection } from "../
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
-import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
 let reopenCalcLine = null;
@@ -4789,7 +4789,8 @@ function defaultAdminConfig() {
 			pendingRecords: false,
 			routeFuel: false,
 			sowTagging: false,
-			schedule: false
+			schedule: false,
+			microsoftLinkFlow: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4903,7 +4904,8 @@ function normalizeAdminConfig(raw) {
 			pendingRecords: src.features?.pendingRecords === true,
 			routeFuel: src.features?.routeFuel === true,
 			sowTagging: src.features?.sowTagging === true,
-			schedule: src.features?.schedule === true
+			schedule: src.features?.schedule === true,
+			microsoftLinkFlow: src.features?.microsoftLinkFlow === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -24248,64 +24250,6 @@ Import anyway? Cancel skips the whole file.`)) return;
 		]
 	});
 }
-function AccountAccessQueue() {
-	const [rows, setRows] = useState([]);
-	const [note, setNote] = useState("");
-	const [busy, setBusy] = useState("");
-	const reload = useCallback(() => {
-		listUserAccess().then((next) => {
-			setRows(Array.isArray(next) ? next : []);
-			setNote(next.length ? "" : "No accounts yet. If the access SQL is not applied, this list stays empty and everyone already signed in stays active.");
-		}).catch((err) => setNote(err instanceof Error ? err.message : "The account list could not be loaded."));
-	}, []);
-	useEffect(() => {
-		reload();
-	}, [reload]);
-	const run = (key, action) => {
-		setBusy(key);
-		setNote("");
-		action().then((result) => {
-			if (result && result.ok === false) setNote(result.reason || "That change was not saved.");
-			reload();
-		}).catch((err) => setNote(err instanceof Error ? err.message : "That change was not saved.")).finally(() => setBusy(""));
-	};
-	return /* @__PURE__ */ jsxs("section", {
-		className: "ce-card",
-		style: { margin: "1rem", padding: "1rem" },
-		children: [
-			/* @__PURE__ */ jsx("h2", { className: "ce-serif", children: "Account access" }),
-			/* @__PURE__ */ jsx("p", { children: "Grant a role to a pending account, or decline and disable one. Staff, lead, and head can save after a role is granted." }),
-			note ? /* @__PURE__ */ jsx("p", { className: "wiz-hint", children: note }) : null,
-			/* @__PURE__ */ jsx("ul", { children: rows.map((row) => /* @__PURE__ */ jsxs("li", {
-				children: [
-					`${row.email || row.userKey} · ${row.role || "staff"} · ${row.status || "pending"}`,
-					" ",
-					["staff", "lead", "head", "admin"].map((role) => /* @__PURE__ */ jsx("button", {
-						type: "button",
-						className: "ce-btn-ghost",
-						disabled: busy === row.userKey,
-						onClick: () => run(row.userKey, () => grantUserRole(row.userKey, role)),
-						children: `Grant ${role}`
-					}, role)),
-					/* @__PURE__ */ jsx("button", {
-						type: "button",
-						className: "ce-btn-ghost",
-						disabled: busy === row.userKey,
-						onClick: () => run(row.userKey, () => declineUser(row.userKey)),
-						children: "Decline"
-					}),
-					/* @__PURE__ */ jsx("button", {
-						type: "button",
-						className: "ce-btn-ghost",
-						disabled: busy === row.userKey,
-						onClick: () => run(row.userKey, () => disableUser(row.userKey)),
-						children: "Disable"
-					})
-				]
-			}, row.userKey || row.email)) })
-		]
-	});
-}
 function Modal({ title, onClose, children }) {
 	return /* @__PURE__ */ jsx("div", {
 		className: "modal-overlay",
@@ -30340,7 +30284,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						taskTemplates
 					}),
 					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsxs(Fragment, { children: [
-						/* @__PURE__ */ jsx(AccountAccessQueue, {}),
+						/* @__PURE__ */ jsx(AccessQueue, {
+							microsoftLinkFlow: adminConfig?.features?.microsoftLinkFlow === true,
+							onMicrosoftLinkFlow: (checked) => {
+								if (!isAdminAccount) return;
+								setAdminConfig((prev) => normalizeAdminConfig({
+									...prev,
+									features: { ...prev.features || {}, microsoftLinkFlow: checked === true }
+								}));
+							}
+						}),
 						/* @__PURE__ */ jsx(AdminHub, {
 							config: adminConfig,
 							onChange: (next) => {

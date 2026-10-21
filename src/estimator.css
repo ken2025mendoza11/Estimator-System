@@ -1186,6 +1186,40 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-login-btn { min-height: 44px; width: 100%; background: var(--ink); color: #fff; border: 1px solid var(--ink); border-radius: 0.5rem; cursor: pointer; font: inherit; font-weight: 650; padding: 0.55rem 1rem; }
 .ce-login-btn:hover { opacity: 0.88; }
 .ce-login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ce-login-banner { margin: 0 0 0.8rem; padding: 0.45rem 0.7rem; background: #7f1d1d; color: #fff; font-weight: 700; letter-spacing: 0.08em; border-radius: 0.4rem; }
+.ce-login-logo { display: block; width: 3rem; height: 3rem; object-fit: contain; margin-bottom: 0.6rem; }
+.ce-login-field { display: flex; flex-direction: column; gap: 0.25rem; margin: 0 0 0.7rem; }
+.ce-login-field .ce-input, .ce-login-btn, .ce-login-btn-quiet { min-height: 44px; }
+.ce-login-btn-quiet { background: transparent; color: var(--ink); }
+.ce-login-btn:focus-visible, .ce-login-field .ce-input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.ce-login-sign { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.7rem; }
+.ce-login-pad { width: 100%; height: 120px; touch-action: none; background: #fff; border: 1px solid var(--border); border-radius: 0.4rem; }
+.ce-login-stamps { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.ce-login-stamp { width: 5.5rem; height: auto; animation: ce-stamp-in 0.4s ease; }
+.ce-login-stamp rect:first-child { fill: #fff; stroke-width: 3; }
+.ce-login-stamp rect:nth-child(2) { stroke-width: 1; }
+.ce-login-stamp text { font: 700 11px system-ui, sans-serif; }
+.ce-login-stamp-red rect { stroke: #9f1239; }
+.ce-login-stamp-red text { fill: #9f1239; }
+.ce-login-stamp-blue rect { stroke: #1e3a8a; }
+.ce-login-stamp-blue text { fill: #1e3a8a; }
+.ce-login-stamp-gold rect { stroke: #92400e; }
+.ce-login-stamp-gold text { fill: #92400e; }
+.ce-login-tour { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 1rem; background: #1c1917cc; }
+.ce-login-queue { margin: 1rem; padding: 1rem; }
+.ce-login-tabs, .ce-login-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.ce-login-tabs .ce-login-btn { width: auto; }
+.ce-login-people { list-style: none; padding: 0; margin: 0.8rem 0; display: flex; flex-direction: column; gap: 0.8rem; }
+.ce-login-compare { border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.8rem; margin: 0.6rem 0; }
+.ce-login-check { display: flex; gap: 0.5rem; align-items: center; min-height: 44px; margin: 0.4rem 0 0.8rem; }
+@keyframes ce-stamp-in { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 360px) {
+  .ce-login { padding: 0.75rem; }
+  .ce-login-title { font-size: 1.45rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ce-login-stamp { animation: none; }
+}
 .ce-sealed input, .ce-sealed textarea, .ce-sealed select, .ce-sealed .ProseMirror, .ce-sealed .ce-add-row, .ce-sealed .ce-iconbtn { pointer-events: none; }
 .ce-sealed .ce-award-box, .ce-sealed .ce-award-box * { pointer-events: auto; }
 
