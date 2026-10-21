@@ -16,6 +16,7 @@ import { hashPassword } from "better-auth/crypto";
 import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
 import { buildDirectCes } from "./seed-documents.mjs";
+import { buildSampleSet } from "./seed-samples.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = resolve(root, "src/lib/estimator/__fixtures__/legacy-ce.json");
@@ -252,19 +253,34 @@ async function upsertDoc(kind, id, payload, ord) {
   await sb("workspace_docs", { method: "POST", body: { ...row, version: 1 } });
 }
 
-function adminConfig(users) {
+function adminConfig(users, extras = []) {
   return {
-    users: users.map((user) => ({
-      id: user.userKey || user.userId,
-      name: user.name,
-      email: user.email,
-      designation: user.label,
-      department: "Costing",
-      level: user.role,
-      status: "active",
-    })),
-    pending: [],
+    users: [
+      ...users.map((user) => ({
+        id: user.userKey || user.userId,
+        name: user.name,
+        email: user.email,
+        designation: user.label,
+        department: "Costing",
+        level: user.role,
+        status: "active",
+      })),
+      ...extras.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        designation: user.role,
+        department: "Costing",
+        level: user.dbRole,
+        status: user.accountStatus,
+        sample: true,
+      })),
+    ],
+    pending: extras
+      .filter((user) => user.accountStatus === "pending")
+      .map((user) => ({ id: user.id, name: user.name, email: user.email, sample: true })),
     designations: ["Cost Estimator", "Department Head"],
+    features: { approvalEngineV2: true },
     approvalFlows: {
       ce: [
         { id: "ce-1", title: "Prepared by Estimator", role: "staff" },
@@ -285,10 +301,29 @@ function adminConfig(users) {
 }
 
 async function seedSupabase(ce, users) {
+  const sample = buildSampleSet();
+  const roleRows = [
+    ...users.map((user) => ({
+      user_key: user.userKey,
+      email: user.email,
+      role: user.role,
+      status: "active",
+      display_name: user.name,
+      decline_reason: null,
+    })),
+    ...sample.users.map((user) => ({
+      user_key: user.id,
+      email: user.email,
+      role: user.dbRole,
+      status: user.accountStatus,
+      display_name: user.name,
+      decline_reason: user.declineReason || null,
+    })),
+  ];
   await sb("app_user_roles?on_conflict=user_key", {
     method: "POST",
     prefer: "resolution=merge-duplicates,return=minimal",
-    body: users.map((user) => ({ user_key: user.userKey, email: user.email, role: user.role })),
+    body: roleRows,
   });
   const { id, client, status, project, lastEdited, lastEditedBy, location, rceId, ...document } = ce;
   await upsertDoc("masterlist", "company", {
@@ -300,7 +335,7 @@ async function seedSupabase(ce, users) {
     clients: [{ id: "ml-client", fullName: "Test Client" }],
     customCategories: [],
   }, 0);
-  await upsertDoc("admin", "company", adminConfig(users), 0);
+  await upsertDoc("admin", "company", adminConfig(users, sample.users), 0);
   await upsertDoc("rce", "RCE-TEST-001", {
     id: "RCE-TEST-001",
     client,
@@ -347,6 +382,9 @@ async function seedSupabase(ce, users) {
     activity: { onsite: true, shopwork: false, supplyOnly: false },
     photos: [],
   }, 0);
+  for (const doc of sample.docs) {
+    await upsertDoc(doc.kind, doc.id, doc.payload, doc.ord);
+  }
 }
 
 export async function main() {
