@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { mailForRoster, sendRelease1Mail } from "./release1Mail.server.js";
 import { documentsFromRows, loadStoredCe, markupEstimateId, storedDocumentLabel } from "./release1Store.server.js";
-import { ESTIMATOR_TEST_PROJECT_REF, TEST_SIGN_IN_DATABASE, seedWriteTarget } from "../../../scripts/seed-safety.mjs";
+import { ESTIMATOR_TEST_PROJECT_REF, TEST_SIGN_IN_ENDPOINTS, seedWriteTarget } from "../../../scripts/seed-safety.mjs";
 
 const root = new URL("../../../", import.meta.url);
 /** @param {string} path */
@@ -13,9 +13,9 @@ const roster = [{ userId: "sales-1", email: "sales@estimator-test.invalid", name
 
 test("the seed refuses the live project and the live sign-in database, and allows only the test pair", () => {
 	assert.equal(ESTIMATOR_TEST_PROJECT_REF, "nqxijgsbpffewizzefwi");
-	assert.equal(TEST_SIGN_IN_DATABASE, "estimator-test-auth");
+	assert.deepEqual(TEST_SIGN_IN_ENDPOINTS, ["ep-jolly-sound-azpo5a4b"]);
 	const testUrl = `https://${ESTIMATOR_TEST_PROJECT_REF}.supabase.co`;
-	const testDb = `postgres://seed-user:secret-not-logged@db.example/${TEST_SIGN_IN_DATABASE}?sslmode=require`;
+	const testDb = "postgres://seed-user:secret-not-logged@ep-jolly-sound-azpo5a4b-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require";
 
 	const liveProject = seedWriteTarget({
 		VITE_SUPABASE_URL: `https://${LIVE_PROJECT}.supabase.co`,
@@ -23,7 +23,7 @@ test("the seed refuses the live project and the live sign-in database, and allow
 	});
 	assert.equal(liveProject.ok, false);
 	assert.equal(liveProject.supabaseProject, LIVE_PROJECT);
-	assert.equal(liveProject.signInDatabase, TEST_SIGN_IN_DATABASE);
+	assert.equal(liveProject.signInEndpoint, "ep-jolly-sound-azpo5a4b");
 	assert.match(liveProject.message, /not the estimator-test project/);
 	assert.equal(liveProject.lines[0], `Supabase project: ${LIVE_PROJECT}`);
 	assert.equal(liveProject.lines.join("\n").includes("secret-not-logged"), false);
@@ -37,21 +37,15 @@ test("the seed refuses the live project and the live sign-in database, and allow
 
 	const liveDb = seedWriteTarget({
 		VITE_SUPABASE_URL: testUrl,
-		DATABASE_URL: "postgres://estimator-test-auth:secret-not-logged@db.example/estimator-auth?sslmode=require",
+		DATABASE_URL: "postgres://seed-user:secret-not-logged@ep-wandering-morning-aotsri1h-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
 	});
 	assert.equal(liveDb.ok, false);
 	assert.equal(liveDb.supabaseProject, ESTIMATOR_TEST_PROJECT_REF);
-	assert.equal(liveDb.signInDatabase, "estimator-auth");
-	assert.match(liveDb.message, /estimator-test-auth/);
-	assert.equal(liveDb.lines[1], "Sign-in database: estimator-auth");
+	assert.equal(liveDb.signInEndpoint, "ep-wandering-morning-aotsri1h");
+	assert.match(liveDb.message, /not an allowed estimator-test sign-in endpoint/);
+	assert.equal(liveDb.lines[1], "Sign-in endpoint: ep-wandering-morning-aotsri1h");
 	assert.equal(liveDb.lines.join("\n").includes("secret-not-logged"), false);
-
-	const longerName = seedWriteTarget({
-		VITE_SUPABASE_URL: `${testUrl}/`,
-		DATABASE_URL: "postgres://db.example/estimator-test-auth-backup",
-	});
-	assert.equal(longerName.ok, false);
-	assert.equal(longerName.signInDatabase, "estimator-test-auth-backup");
+	assert.equal(liveDb.lines.join("\n").includes("neon.tech"), false);
 
 	const allowed = seedWriteTarget({
 		VITE_SUPABASE_URL: `${testUrl}/`,
@@ -61,7 +55,7 @@ test("the seed refuses the live project and the live sign-in database, and allow
 	assert.equal(allowed.message, "");
 	assert.deepEqual(allowed.lines, [
 		`Supabase project: ${ESTIMATOR_TEST_PROJECT_REF}`,
-		`Sign-in database: ${TEST_SIGN_IN_DATABASE}`,
+		"Sign-in endpoint: ep-jolly-sound-azpo5a4b",
 	]);
 
 	const seed = text("scripts/seed-test.mjs");
