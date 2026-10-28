@@ -32,6 +32,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 24 | View-only autosave, sign-out, signatures | done | `grok/phase-24` | https://github.com/ken2025mendoza11/Estimator-System/pull/23 |
 | 25 | No save on load, assigned approvals, inspection DRAFT | done | `grok/phase-25` | https://github.com/ken2025mendoza11/Estimator-System/pull/24 |
 | 26 | Accounts and roles foundation | done | `grok/phase-26` | https://github.com/ken2025mendoza11/Estimator-System/pull/25 |
+| 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | |
 
 ## Step 1 done
 
@@ -53,6 +54,22 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 27 done
+
+Stacked on `grok/phase-26` (https://github.com/ken2025mendoza11/Estimator-System/pull/25 is still open). Draft PR: opened against `grok/phase-26`. Do not merge to `main`.
+
+- Flag `release1SalesView` is off in the app. The TEST seed turns it on. While it is on, the estimate hides Contingency %, Discount %, Awarded, Lost, and the JO number. The stored percents stay in the net, so an old estimate with contingency or discount keeps the same total. Nothing is migrated.
+- Sales cannot Revise or Edit an approved estimate from the editor, the monitoring row, or the library. Cost Estimating can still start a revision. The save is refused in the app when the flag is on, and on the server after the SQL is applied.
+- An approved estimate opens view-only. PDF and Excel are on that page. Excel still writes the stored percents. No email is sent.
+- Final CE approval writes an in-app notice "CE approved" to the Sales owner's account id. A name is not used. If no account id is stored, no notice is sent. A new RCE submitted by a Sales account stores `salesOwnerId`. The approval timeline stores that account id, and the screen still shows the person's name.
+- SQL (not run): `supabase/p27-ce-lock-2026-10-28.sql` and its rollback. Apply after the Step 26 SQL. It replaces `doc_write_guard`. An approved CE cannot change, except a non-sales revision that does not change tasks, contingency, discount, award, or the approval. Sales is `account_department = 'Sales'`, or a blank fixed department whose free-text department is exactly `sales`. The app still saves when this function is missing.
+
+Tests: `src/lib/estimator/salesView.test.mjs`. `npm test` 382 + 97, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Screens (not captured here): Admin → Release 1, the new Sales view checkbox. An approved CE with the flag on: no contingency, discount, Awarded, Lost, or JO number, and the net still uses the stored percents. A Sales account on that CE: view only, PDF and Excel, no Revise. The bell notice "CE approved" addressed by account id.
+
+Ken: apply `p26` first if it is not on `estimator-test` yet, then `p27`. Turn `release1SalesView` on in Admin, or re-run `npm run seed:test` on TEST. The seed was not run here.
 
 ## Step 26 done
 
