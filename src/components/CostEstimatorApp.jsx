@@ -50,6 +50,7 @@ import { Phase9Admin } from "./Phase9Admin";
 import { Phase10Admin } from "./Phase10Admin";
 import { Release1Admin } from "./Release1Admin";
 import { accountId, findAccount, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
+import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "../lib/estimator/salesView";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -69,6 +70,8 @@ let reopenCalcLine = null;
 let calcConstantsNow = null;
 let equipmentRatesOn = false;
 let release1DepartmentsOn = false;
+let release1SalesViewOn = false;
+let release1SalesActor = false;
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
 	return String(template ?? "").replace(/\{(\w+)\}/g, (_, key) => {
@@ -3512,7 +3515,7 @@ function monHistoryEntries(members) {
 				at: ev?.at || "",
 				label: action,
 				detail: [ev?.rev ? `Rev ${ev.rev}` : "", ev?.remarks || ""].filter(Boolean).join(" · "),
-				who: ev?.who || "",
+				who: ev?.whoName || ev?.who || "",
 				rev: ev?.rev || ""
 			});
 		});
@@ -3828,7 +3831,7 @@ function foldMonitoringRows(rows) {
 			latestStamp: latestStamp(stamps),
 			history: monHistoryEntries(members),
 			versions: monVersionList(members, live),
-			canRevise: live.status === "Done" && !!live.ceId
+			canRevise: live.status === "Done" && !!live.ceId && !release1SalesActor
 		};
 	});
 }
@@ -4795,7 +4798,8 @@ function defaultAdminConfig() {
 			sowTagging: false,
 			schedule: false,
 			microsoftLinkFlow: false,
-			release1Departments: false
+			release1Departments: false,
+			release1SalesView: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4911,7 +4915,8 @@ function normalizeAdminConfig(raw) {
 			sowTagging: src.features?.sowTagging === true,
 			schedule: src.features?.schedule === true,
 			microsoftLinkFlow: src.features?.microsoftLinkFlow === true,
-			release1Departments: src.features?.release1Departments === true
+			release1Departments: src.features?.release1Departments === true,
+			release1SalesView: src.features?.release1SalesView === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -6690,7 +6695,8 @@ var NOTICE_EVENTS = {
 	TRANSFERRED: "Transferred",
 	ASSIST: "Assist opened",
 	APPROVAL: "Needs your approval",
-	NO_QUOTE: "No quote"
+	NO_QUOTE: "No quote",
+	CE_APPROVED: "CE approved"
 };
 function nowIso() {
 	return (/* @__PURE__ */ new Date()).toISOString();
@@ -6704,7 +6710,7 @@ function noteSecurityActor(sessionUserId, actedByUserId) {
 	sessionUserIdForWrites = sessionUserId || "";
 	actedByUserIdForWrites = actedByUserId || "";
 }
-function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "" }) {
+function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "", whoName = "" }) {
 	const entry = {
 		id: uid2("tl"),
 		at: nowIso(),
@@ -6714,6 +6720,7 @@ function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "" })
 		snapshot,
 		rev: rev || ""
 	};
+	if (whoName) entry.whoName = whoName;
 	if (actedByUserIdForWrites) entry.actedByUserId = actedByUserIdForWrites;
 	return entry;
 }
@@ -18973,13 +18980,14 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		provisionalIds,
 		rateExceptions: state.rateExceptions || []
 	};
-	const runIssuePack = async () => {
-		const gaps = listEntryGaps(state.tasks);
+	const runIssuePack = async (mode = "preview") => {
+		const viewPack = release1SalesViewOn && (!!readOnly || !!isEditorLocked);
+		const gaps = viewPack ? [] : listEntryGaps(state.tasks);
 		if (gaps.length) {
 			window.alert(`These rows are missing quantity, days, or rate:\n\n${gaps.join("\n")}`);
 			return;
 		}
-		const { failures, warnings } = buildCePreflight(state.tasks, preflightOpts);
+		const { failures, warnings } = viewPack ? { failures: [], warnings: [] } : buildCePreflight(state.tasks, preflightOpts);
 		if (failures.length) {
 			setCheckerOpen(true);
 			window.alert("Fix Fail items before exporting the issue pack.");
@@ -19023,6 +19031,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			}),
 			...(engineOn ? { approval: approvalNow || null } : {})
 		};
+		if (mode === "excel") {
+			exportIssueExcel(payload);
+			return;
+		}
 		let url = "";
 		try {
 			url = await previewIssuePdf(payload);
@@ -19208,7 +19220,22 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 					/* @__PURE__ */ jsx("span", {
 						className: isEditorLocked ? "ce-edit-flag off" : "ce-edit-flag on",
 						children: estimateOpen ? headerEditing ? "You can edit — header changes are not saved yet" : "You can edit this estimate" : "View only — you cannot edit this estimate"
-					})
+					}),
+					release1SalesViewOn && !estimateOpen ? /* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							void runIssuePack("preview");
+						},
+						children: "PDF"
+					}), /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							void runIssuePack("excel");
+						},
+						children: "Excel"
+					})] }) : null
 				]
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
@@ -19570,26 +19597,26 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								},
 								children: "Internal update"
 							}),
-							ceStatus === "Done" && /* @__PURE__ */ jsxs("span", {
+							ceStatus === "Done" && !release1SalesActor && /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									const instruction = window.prompt("Revision instruction from sales or the approver");
+									if (!instruction || !instruction.trim()) return;
+									dispatch({
+										type: "PATCH_PROJECT_INFO",
+										patch: {
+											revisionPending: true,
+											revisionNote: instruction.trim()
+										}
+									});
+									setCeStatus("For revision");
+								},
+								children: "Revise"
+							}),
+							ceStatus === "Done" && !release1SalesViewOn && /* @__PURE__ */ jsxs("span", {
 								className: "ce-award-box",
 								children: [
-									/* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-ghost ce-btn-sm",
-										onClick: () => {
-											const instruction = window.prompt("Revision instruction from sales or the approver");
-											if (!instruction || !instruction.trim()) return;
-											dispatch({
-												type: "PATCH_PROJECT_INFO",
-												patch: {
-													revisionPending: true,
-													revisionNote: instruction.trim()
-												}
-											});
-											setCeStatus("For revision");
-										},
-										children: "Revise"
-									}),
 									/* @__PURE__ */ jsxs("label", { children: ["Awarded", /* @__PURE__ */ jsx("input", {
 										type: "radio",
 										name: "award",
@@ -19851,6 +19878,12 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										directOn ? /* @__PURE__ */ jsxs("div", {
 											className: "ce-commercial",
 											children: [/* @__PURE__ */ jsx("b", { children: "Total" }), /* @__PURE__ */ jsx("div", { className: "ce-mono", children: fmt(grand) })]
+										}) : release1SalesViewOn ? /* @__PURE__ */ jsxs("div", {
+											className: "ce-commercial",
+											children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("b", { children: "Net" }), /* @__PURE__ */ jsx("div", {
+												className: "ce-mono",
+												children: fmt(grand * (1 + num2(state.commercial?.contingencyPct) / 100) * (1 - num2(state.commercial?.discountPct) / 100))
+											})] })]
 										}) : /* @__PURE__ */ jsxs("div", {
 											className: "ce-commercial",
 											children: [
@@ -25554,7 +25587,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 									children: [(selectedCE.timeline || []).length === 0 && /* @__PURE__ */ jsx("li", { children: "No timeline rows yet." }), (selectedCE.timeline || []).map((t) => /* @__PURE__ */ jsxs("li", { children: [
 										/* @__PURE__ */ jsx("b", { children: t.action }),
 										" · ",
-										t.who,
+										t.whoName || t.who,
 										t.remarks ? ` \u2014 ${t.remarks}` : "",
 										/* @__PURE__ */ jsx("time", { children: t.at })
 									] }, t.id))]
@@ -25579,17 +25612,17 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 									onClick: () => onOpenArchivedCE(selectedCE.id),
 									type: "button",
 									children: "Open this CE"
-								}), ceFullySigned(documents?.[selectedCE.id]) ? /* @__PURE__ */ jsx("button", {
+								}), ceFullySigned(documents?.[selectedCE.id]) && !release1SalesActor ? /* @__PURE__ */ jsx("button", {
 									className: "ce-btn-ghost ce-btn-sm",
 									onClick: () => setReviseOpen(true),
 									type: "button",
 									children: "Revision"
-								}) : /* @__PURE__ */ jsx("button", {
+								}) : !ceFullySigned(documents?.[selectedCE.id]) ? /* @__PURE__ */ jsx("button", {
 									className: "ce-btn-ghost ce-btn-sm",
 									onClick: () => onOpenArchivedCE(selectedCE.id),
 									type: "button",
 									children: "Edit"
-								})]
+								}) : null]
 							}), reviseOpen && ceFullySigned(documents?.[selectedCE.id]) && /* @__PURE__ */ jsxs("label", {
 								className: "ce-field",
 								style: {
@@ -27503,12 +27536,12 @@ function navKeyForView(view) {
 	if (view === "rce-form" || view === "rce-detail" || view === "rce-inbox") return "monitoring";
 	return view;
 }
-function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false, scheduleOn = false }) {
+function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, actingUserId = "", users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false, scheduleOn = false }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [bellOpen, setBellOpen] = useState(false);
 	const activeKey = navKeyForView(currentView);
-	const visibleNotices = (notifications || []).filter((n) => noticeVisible(n, actingUser, actingLevel));
-	const unread = unreadNotices(notifications, actingUser, actingLevel).length;
+	const visibleNotices = (notifications || []).filter((n) => noticeVisible(n, actingUser, actingLevel, actingUserId));
+	const unread = unreadNotices(notifications, actingUser, actingLevel, actingUserId).length;
 	const go = (next) => {
 		if (!next || next === currentView) return;
 		if ((currentView === "editor" || currentView === "scope-editor") && onRequestLeave) {
@@ -27738,6 +27771,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	calcConstantsNow = adminConfig.calcConstants;
 	equipmentRatesOn = adminConfig.features?.equipmentRates === true;
 	release1DepartmentsOn = adminConfig.features?.release1Departments === true;
+	release1SalesViewOn = adminConfig.features?.release1SalesView === true;
+	release1SalesActor = release1SalesViewOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
 		setElSeed(calc);
@@ -27888,6 +27923,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			rceId: partial.rceId || "",
 			ceId: partial.ceId || "",
 			view: partial.view || "monitoring",
+			...(partial.toUserId ? { toUserId: String(partial.toUserId) } : {}),
 			...(partial.monitoringTab ? { monitoringTab: partial.monitoringTab } : {})
 		}));
 	};
@@ -27916,7 +27952,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			const last = timeline[timeline.length - 1];
 			if (nextStatus && nextStatus !== prevStatus && last?.action !== nextStatus) {
 				timeline = appendTimeline(timeline, timelineEntry({
-					who: editorName,
+					...(release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName }),
 					action: nextStatus === "For revision" ? "Revision" : nextStatus,
 					remarks: nextStatus === "For revision" ? doc?.projectInfo?.revisionNote || "" : "",
 					rev: nextStatus === "For revision" ? doc?.projectInfo?.revNo || "" : ""
@@ -27933,6 +27969,19 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		};
 		const current = documents?.[id];
 		if (current && sameDocument(current, buildDoc(current))) return;
+		if (current && release1SalesViewOn && ceIsSealed((ceList || []).find((row) => row.id === id)?.status, current)) {
+			const ceRow = (ceList || []).find((row) => row.id === id) || null;
+			const nextBody = buildDoc(current);
+			const nextSummary = {
+				...ceRow || {},
+				lastEdited: ceRow?.lastEdited || "",
+				lastEditedBy: editorName,
+				client: doc?.meta?.client || ceRow?.client,
+				project: doc?.meta?.title || ceRow?.project,
+				status: doc?.ceStatus || ceRow?.status
+			};
+			if (!lockedCeChangeAllowed({ summary: ceRow, document: current }, { summary: nextSummary, document: nextBody }, { sales: release1SalesActor })) return;
+		}
 		setDocuments((prev) => ({
 			...prev,
 			[id]: buildDoc(prev[id] || {})
@@ -28112,6 +28161,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			rev,
 			snapshot: plainSnapshot(newRCE)
 		}));
+		const salesSubmitter = release1SalesViewOn && !!accountUserId && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+		const keptOwner = existing?.salesOwnerId || (salesSubmitter ? accountUserId : "");
 		const row = {
 			...existing,
 			...newRCE,
@@ -28128,6 +28179,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			cancelPending: false,
 			approval,
 			timeline: tl,
+			...(keptOwner ? { salesOwnerId: keptOwner } : {}),
 			remarksHistory: pushRemarkHistory(existing?.remarksHistory, {
 				who: editorName,
 				from: existing?.otherRemarks || "",
@@ -28597,6 +28649,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			return;
 		}
 		const today = todayLocal();
+		const salesOwnerId = salesOwnerAccountId({
+			rce,
+			users: adminConfig?.users,
+			departmentsOn: release1DepartmentsOn
+		});
 		const newCE = {
 			id,
 			client: payload.client,
@@ -28611,6 +28668,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			sourceCeId: payload.sourceCeId || null,
 			isNew: true,
 			status: "Ongoing",
+			...(salesOwnerId ? { salesOwnerId } : {}),
 			...(engineFlag && rce ? { rceStamp: rceStamp(rce) } : {}),
 			...(urgent?.ok ? { urgentTag: urgent.tag } : {})
 		};
@@ -28785,6 +28843,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						OIF: oifFiles
 					},
 					ceStatus: "Ongoing",
+					...(salesOwnerId ? { salesOwnerId } : {}),
 					...(urgent?.ok ? { urgentTag: urgent.tag } : {}),
 					commercial: {
 						contingencyPct: defaultContingencyPct(adminConfig?.documentControl),
@@ -29294,6 +29353,32 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			view: "editor"
 		});
 	};
+	const approvalWho = () => release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName };
+	const salesOwnerForCe = (ceId, doc) => {
+		const ce = (ceList || []).find((row) => row.id === ceId);
+		const rceKey = ce?.rceId || doc?.rceId || doc?.rceNo || "";
+		const rce = (rceList || []).find((row) => (row.id || row.rceNo) === rceKey);
+		return salesOwnerAccountId({
+			ce,
+			doc,
+			rce,
+			users: adminConfig?.users,
+			departmentsOn: release1DepartmentsOn
+		});
+	};
+	const notifySalesCeApproved = (ceId, doc, rev, ownerId) => {
+		if (!release1SalesViewOn) return;
+		const built = ceApprovedNotice({ ceId, salesOwnerId: ownerId, rev });
+		if (!built) return;
+		notice({
+			type: NOTICE_EVENTS.CE_APPROVED,
+			title: built.title,
+			body: built.body,
+			ceId: built.ceId,
+			toUserId: built.toUserId,
+			view: "editor"
+		});
+	};
 	const handleCeApprovalDecision = (ceId, decision, remarks) => {
 		const ce = ceList.find((c) => c.id === ceId);
 		const doc = documents[ceId] || {};
@@ -29359,10 +29444,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				rev: projectInfo.revNo || doc.projectInfo?.revNo || "0",
 				status: "Done"
 			}) : doc.snapshots;
+			const ownerId = salesOwnerForCe(ceId, { ...doc, projectInfo });
 			setCeList((prev) => prev.map((c) => c.id === ceId ? {
 				...c,
 				status: nextStatus,
-				approval: result.approval
+				approval: result.approval,
+				...(ownerId && !c.salesOwnerId ? { salesOwnerId: ownerId } : {})
 			} : c));
 			setDocuments((prev) => ({
 				...prev,
@@ -29372,8 +29459,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					ceStatus: nextStatus,
 					approval: result.approval,
 					snapshots: frozen,
+					...(ownerId && !doc.salesOwnerId ? { salesOwnerId: ownerId } : {}),
 					timeline: appendTimeline(doc.timeline, timelineEntry({
-						who: editorName,
+						...approvalWho(),
 						action: result.editRequested ? "Edit requested" : result.final ? "Approved" : decision === "fix-comment" ? "Comment fixed" : "Step approved",
 						remarks: decision === "fix-comment" ? "" : remarks,
 						rev: projectInfo.revNo || ""
@@ -29381,6 +29469,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				}
 			}));
 			if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: nextStatus } : cur);
+			if (result.final && nextStatus === "Done") notifySalesCeApproved(ceId, doc, projectInfo.revNo || "", ownerId || doc.salesOwnerId);
 			return { ...result, nextStatus };
 		}
 		const step = currentApprovalStep(approval);
@@ -29435,10 +29524,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			rev: projectInfo.revNo || doc.projectInfo?.revNo || "0",
 			status: "Done"
 		}) : doc.snapshots;
+		const ownerId = salesOwnerForCe(ceId, { ...doc, projectInfo });
 		setCeList((prev) => prev.map((c) => c.id === ceId ? {
 			...c,
 			status: nextStatus,
-			approval: result.approval
+			approval: result.approval,
+			...(ownerId && !c.salesOwnerId ? { salesOwnerId: ownerId } : {})
 		} : c));
 		setDocuments((prev) => ({
 			...prev,
@@ -29448,8 +29539,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				ceStatus: nextStatus,
 				approval: result.approval,
 				snapshots: frozen,
+				...(ownerId && !doc.salesOwnerId ? { salesOwnerId: ownerId } : {}),
 				timeline: appendTimeline(doc.timeline, timelineEntry({
-					who: editorName,
+					...approvalWho(),
 					action: result.rejected ? "Sent back" : result.final ? "Approved" : "Step approved",
 					remarks,
 					rev: projectInfo.revNo || ""
@@ -29460,6 +29552,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			...cur,
 			status: nextStatus
 		} : cur);
+		if (result.final && nextStatus === "Done") notifySalesCeApproved(ceId, doc, projectInfo.revNo || "", ownerId || doc.salesOwnerId);
 		if (result.rejected) notice({
 			type: NOTICE_EVENTS.CE_REJECTED,
 			title: "CE rejected",
@@ -29693,7 +29786,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const handleReviseArchivedCE = (ceId, remark) => {
 		const note = String(remark || "").trim();
-		if (!note) return;
+		if (!note || release1SalesActor) return;
 		const source = (ceList || []).find((ce) => ce.id === ceId);
 		const srcDoc = documents?.[ceId];
 		if (!source || !srcDoc || !(source.status === "Done" || ceFullySigned(srcDoc))) return;
@@ -29720,7 +29813,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					projectInfo: info,
 					ceStatus: "For revision",
 					timeline: appendTimeline(doc.timeline, timelineEntry({
-						who: editorName,
+						...(release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName }),
 						action: "Revision",
 						remarks: note,
 						rev: srcDoc.projectInfo?.revNo || ""
@@ -29749,6 +29842,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				if (!id || !result?.ok) return;
 				if (summary.kind === "ce") {
 					const nextStatus = result.final ? "Done" : "For approval";
+					const ownerId = salesOwnerForCe(id, documents[id] || {});
+					if (result.final && nextStatus === "Done") notifySalesCeApproved(id, documents[id] || {}, "", ownerId);
 					setDocuments((prev) => {
 						const doc = prev[id] || {};
 						return {
@@ -29794,6 +29889,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				setCurrentView,
 				notifications: shownNotices,
 				actingUser: editorName,
+				actingUserId: accountUserId,
 				actingLevel,
 				users: isAdminAccount ? [
 					...lockedName && !(adminConfig.users || []).some((u) => u.name === lockedName) ? [{
@@ -29811,12 +29907,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				reportsOn: adminConfig.features?.reports === true,
 				scheduleOn: adminConfig.features?.schedule === true,
 				onMarkRead: () => {
-					setLocalReminders((prev) => markNoticesRead(prev, editorName, actingLevel));
-					setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel));
+					setLocalReminders((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));
+					setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));
 				},
 				onClearAll: () => {
-					setLocalReminders((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel)));
-					setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel)));
+					setLocalReminders((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel, accountUserId)));
+					setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel, accountUserId)));
 				},
 				splitOpen: dockOpen,
 				onToggleSplit: () => setDockOpen((v) => !v),
@@ -29873,14 +29969,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 								children: [/* @__PURE__ */ jsx("b", { children: "Inbox" }), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
-									disabled: !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)),
-									onClick: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
+									disabled: !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel, accountUserId)),
+									onClick: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel, accountUserId))),
 									children: "Clear all"
 								})]
-							}), !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)) && /* @__PURE__ */ jsx("p", {
+							}), !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel, accountUserId)) && /* @__PURE__ */ jsx("p", {
 								className: "ce-empty",
 								children: "No notices yet."
-							}), shownNotices.filter((n) => noticeVisible(n, editorName, actingLevel)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
+							}), shownNotices.filter((n) => noticeVisible(n, editorName, actingLevel, accountUserId)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
 								type: "button",
 								className: "ce-bell-item",
 								onClick: () => {

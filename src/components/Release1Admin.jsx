@@ -52,6 +52,15 @@ export function Release1Admin({ cfg, patch }) {
 				<input type="checkbox" checked={on} onChange={(event) => setFlag(event.target.checked)} />
 				<span>Fixed departments and approver backups</span>
 			</label>
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={features.release1SalesView === true}
+					onChange={(event) => patch({ features: { ...features, release1SalesView: event.target.checked === true } })}
+				/>
+				<span>Sales view of an approved estimate</span>
+			</label>
+			<p className="wiz-hint">Hides contingency, discount, Awarded, Lost, and the JO number. Sales can open an approved estimate, download PDF or Excel, and cannot revise it. The stored percents still apply to the net.</p>
 			{on ? (
 				<div>
 					<h4 className="ce-serif admin-subhead">Department</h4>

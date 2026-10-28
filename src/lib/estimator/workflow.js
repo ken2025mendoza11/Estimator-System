@@ -28,6 +28,7 @@ export const NOTICE_EVENTS = {
   ASSIST: 'Assist opened',
   APPROVAL: 'Needs your approval',
   NO_QUOTE: 'No quote',
+  CE_APPROVED: 'CE approved',
 };
 
 export function nowIso() {
@@ -68,11 +69,13 @@ export function timelineEntry({
   remarks = '',
   snapshot = null,
   rev = '',
+  whoName = '',
 }) {
   return {
     id: uid('tl'),
     at: nowIso(),
     who: who || '',
+    ...(whoName ? { whoName } : {}),
     action,
     remarks: remarks || '',
     snapshot,
@@ -96,8 +99,10 @@ export function pushNotice(list, notice) {
   ].slice(0, 80);
 }
 
-export function noticeVisible(notice, user, level) {
+export function noticeVisible(notice, user, level, userId = '') {
   if (!notice) return false;
+  const toId = notice.toUserId == null ? '' : String(notice.toUserId).trim();
+  if (toId) return toId === String(userId || '').trim();
   const to = notice.to == null || String(notice.to).trim() === '' ? '*' : String(notice.to);
   const role = String(notice.toRole || '').trim().toLowerCase();
   if (to !== '*') return to === user;
@@ -114,13 +119,13 @@ function noticeRoleMatches(level, role) {
   return lvl === role;
 }
 
-export function unreadNotices(list, user, level) {
-  return (list || []).filter((n) => !n.read && noticeVisible(n, user, level));
+export function unreadNotices(list, user, level, userId = '') {
+  return (list || []).filter((n) => !n.read && noticeVisible(n, user, level, userId));
 }
 
-export function markNoticesRead(list, user, level) {
+export function markNoticesRead(list, user, level, userId = '') {
   return (list || []).map((n) =>
-    noticeVisible(n, user, level) ? { ...n, read: true } : n
+    noticeVisible(n, user, level, userId) ? { ...n, read: true } : n
   );
 }
 

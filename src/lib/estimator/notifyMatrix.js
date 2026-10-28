@@ -17,7 +17,8 @@ export const DEFAULT_NOTIFY_MATRIX = [
 	{ event: "Take-over declined", enabled: true },
 	{ event: "Closing requested", enabled: true },
 	{ event: "Reminder", enabled: true },
-	{ event: "RCE changed", enabled: true }
+	{ event: "RCE changed", enabled: true },
+	{ event: "CE approved", enabled: true }
 ];
 
 export function normalizeNotifyMatrix(raw) {
