@@ -7,7 +7,7 @@ const root = new URL("../../../", import.meta.url);
 /** @param {string} path */
 const text = (path) => readFileSync(new URL(path, root), "utf8");
 const TEST_ENDPOINT = "ep-jolly-sound-azpo5a4b";
-const LIVE_ENDPOINT = "ep-wandering-morning-aotsri1h";
+const LIVE_ENDPOINT = "ep-wandering-morning-aocsri1h";
 const REGION = "c-3.ap-southeast-1.aws.neon.tech";
 
 /** @param {string} endpoint @param {boolean} [pooler] */
@@ -44,6 +44,11 @@ test("the seed allows the test Neon endpoint with or without the pooler and refu
 	assert.equal(live.lines.join("\n").includes("secret-not-logged"), false);
 	assert.equal(live.message.includes("secret-not-logged"), false);
 	assert.equal(live.message.includes(REGION), false);
+
+	const liveDirect = seedWriteTarget({ VITE_SUPABASE_URL: supabase, DATABASE_URL: neonUrl(LIVE_ENDPOINT, false) });
+	assert.equal(liveDirect.ok, false);
+	assert.equal(liveDirect.signInEndpoint, LIVE_ENDPOINT);
+	assert.match(liveDirect.message, /not an allowed estimator-test sign-in endpoint/);
 
 	const unknown = seedWriteTarget({
 		VITE_SUPABASE_URL: supabase,
