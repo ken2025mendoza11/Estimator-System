@@ -40,7 +40,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
 | 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
 | 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
-| 35 | Release 1 fix round 2 | done | `grok/phase-35` | |
+| 35 | Release 1 fix round 2 | done | `grok/phase-35` | https://github.com/ken2025mendoza11/Estimator-System/pull/34 |
 
 ## Step 1 done
 
@@ -65,7 +65,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 35 done
 
-Stacked on `grok/phase-34` (https://github.com/ken2025mendoza11/Estimator-System/pull/33 is still open). Draft PR into `grok/phase-34`. Do not merge to `main`.
+Stacked on `grok/phase-34` (https://github.com/ken2025mendoza11/Estimator-System/pull/33 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/34. Do not merge to `main`.
 
 - `release1_advance_sample_counters` is only for the service role. It sets the proposal sequence only when the new value is higher than the value already used. The job-order year counter still uses `greatest`, so it does not go backwards.
 - Escalation and an expiring proposal write the same in-app notice phase 33 showed (`Escalated` or `Proposal expiring`, `toUserId`, ISO time). The server saves that onto the notifications record. A matrix row set to false skips the notice. Mail is still sent only to a roster address.
