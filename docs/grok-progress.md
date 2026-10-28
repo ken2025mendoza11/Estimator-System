@@ -37,7 +37,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
 | 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
 | 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
-| 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | Draft PR: pending |
+| 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
 
 ## Step 1 done
 
@@ -62,7 +62,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 32 done
 
-Stacked on `grok/phase-31` (https://github.com/ken2025mendoza11/Estimator-System/pull/30 is still open). Draft PR: pending. Do not merge to `main`.
+Stacked on `grok/phase-31` (https://github.com/ken2025mendoza11/Estimator-System/pull/30 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/31. Do not merge to `main`.
 
 - Flag `release1Monitor` is off in the app. The TEST seed turns it on. While it is off, Reports stays as it was.
 - While it is on, Reports lists proposals and job orders with status, age, and the account id that holds them. A backup that has already stepped in is the holder. Pending approvals show who holds the step and for how long. At 12 hours the row is coloured `#b45309`.
