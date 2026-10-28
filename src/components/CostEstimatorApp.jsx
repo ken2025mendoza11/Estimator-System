@@ -28111,13 +28111,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		return row;
 	};
 	const primaryApproverName = (doc) => personName(doc?.steps?.[Number(doc?.currentIndex) || 0]?.userId, adminConfig.users || []);
-	const sendRelease1Mail = (toUserId, template, label, force) => {
+	const sendRelease1Mail = (toUserId, template, docId, kind, force) => {
 		if (!force && !release1MonitorOn) return;
-		if (!toUserId || !template) return;
+		if (!toUserId || !template || !docId) return;
 		void fetch("/api/release1-mail", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ toUserId, template, docId: String(label || "") })
+			body: JSON.stringify({ toUserId, template, docId: String(docId), kind: String(kind || "") })
 		}).catch(() => {});
 	};
 	const patchRce = (id, fn) => {
@@ -29676,7 +29676,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			toUserId: built.toUserId,
 			view: "editor"
 		});
-		sendRelease1Mail(built.toUserId, "ce-approved", String(built.ceId || ceId), true);
+		sendRelease1Mail(built.toUserId, "ce-approved", String(built.ceId || ceId), "ce", true);
 	};
 	const handleCeApprovalDecision = (ceId, decision, remarks) => {
 		const ce = ceList.find((c) => c.id === ceId);
@@ -30099,7 +30099,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: result.toUserId,
 				view: "editor"
 			});
-			sendRelease1Mail(result.toUserId, "needs-approval", ceId);
+			sendRelease1Mail(result.toUserId, "needs-approval", markup.id || ceId, "markup");
 		}
 		if (release1MonitorOn && markup.status === "Approved") {
 			notice({
@@ -30110,7 +30110,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: markup.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(markup.ownerId, "approved", ceId);
+			sendRelease1Mail(markup.ownerId, "approved", markup.id || ceId, "markup");
 		}
 		if (release1MonitorOn && action === "return") {
 			notice({
@@ -30121,7 +30121,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: markup.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(markup.ownerId, "returned", ceId);
+			sendRelease1Mail(markup.ownerId, "returned", markup.id || ceId, "markup");
 		}
 	};
 	const handleProposal = async (action, payload) => {
@@ -30251,7 +30251,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: result.toUserId,
 				view: "editor"
 			});
-			sendRelease1Mail(result.toUserId, "needs-approval", proposal.controlNo || ceId);
+			sendRelease1Mail(result.toUserId, "needs-approval", proposal.controlNo || ceId, "proposal");
 		}
 		if (release1MonitorOn && proposal.status === "Approved") {
 			notice({
@@ -30262,7 +30262,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: proposal.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(proposal.ownerId, "approved", proposal.controlNo);
+			sendRelease1Mail(proposal.ownerId, "approved", proposal.controlNo, "proposal");
 		}
 		if (release1MonitorOn && action === "return") {
 			notice({
@@ -30273,7 +30273,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: proposal.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(proposal.ownerId, "returned", proposal.controlNo);
+			sendRelease1Mail(proposal.ownerId, "returned", proposal.controlNo, "proposal");
 		}
 	};
 	const handleJobOrder = async (action, payload) => {
@@ -30400,7 +30400,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: result.toUserId,
 				view: "editor"
 			});
-			sendRelease1Mail(result.toUserId, "needs-approval", jobOrder.joNo);
+			sendRelease1Mail(result.toUserId, "needs-approval", jobOrder.joNo, "jobOrder");
 		}
 		if (release1MonitorOn && jobOrder.status === "Approved") {
 			notice({
@@ -30411,7 +30411,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: jobOrder.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(jobOrder.ownerId, "approved", jobOrder.joNo);
+			sendRelease1Mail(jobOrder.ownerId, "approved", jobOrder.joNo, "jobOrder");
 		}
 		if (release1MonitorOn && action === "return") {
 			notice({
@@ -30422,7 +30422,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: jobOrder.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(jobOrder.ownerId, "returned", jobOrder.joNo);
+			sendRelease1Mail(jobOrder.ownerId, "returned", jobOrder.joNo, "jobOrder");
 		}
 	};
 	const handleMonitor = (action, row, toUserId) => {

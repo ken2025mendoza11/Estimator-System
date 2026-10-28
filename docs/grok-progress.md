@@ -41,6 +41,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
 | 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
 | 35 | Release 1 fix round 2 | done | `grok/phase-35` | https://github.com/ken2025mendoza11/Estimator-System/pull/34 |
+| 36 | Release 1 fix round 3 | done | `grok/phase-36` | https://github.com/ken2025mendoza11/Estimator-System/pull/35 |
 
 ## Step 1 done
 
@@ -62,6 +63,21 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 36 done
+
+Stacked on `grok/phase-35` (https://github.com/ken2025mendoza11/Estimator-System/pull/34 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/35. Do not merge to `main`.
+
+- A `ce-approved` email reads the stored cost estimate (`kind` `ce`) and uses the CE number. The browser sends `kind` with `docId`. A markup email uses the markup label (`ceId`, else the markup id), not a proposal or job order that shares that estimate.
+- If the notifications save hits a version conflict, the server re-reads that record, adds the notices again, and retries up to 3 times. The response reports `noticeSave` (`ok`, `attempts`, `conflict`). Markups, proposals, and job orders are saved once, so a retry does not write them again with a stale version.
+- A deleted draft stays stored (`deleted`, `deletedAt`, timeline `who` and `at`). It is hidden from the Sales worklist, proposal aging, and the dashboard counts. A deleted Lost does not change that sales rep's win rate. The overall win rate stays on cost estimates only. Screens still show names, not account ids.
+- Vercel preview: compared phase 30 (`e29c48b`) with phase 35 (`4384a04`). No `vercel.json` at either commit. `package.json` differs only in the test script. The build script, dependencies, `vite.config.ts`, tsconfig, eslint config, and the build scripts are unchanged. Tracked files went from 384 to 408. The largest file added is `src/lib/estimator/jobOrder.js` at 23,110 bytes. Nothing in this repo explains a preview that stops about 2 seconds after it starts while `npm run build` passes. Vercel settings were not changed.
+
+SQL (not run): none new. Order is unchanged: 1 `p1a` through 17 `p35`. Roll back from 17. The p34 rollback still deletes saved markups (`delete from workspace_docs where kind = 'markup'`).
+
+Tests: `src/lib/estimator/phase36.test.mjs` (`a ce-approved email uses the CE number and a markup email uses the markup label`, `a notification version conflict is re-read and saved on the next try`, `a deleted draft stays stored and is left out of the sales worklist and dashboard`). `npm ci` then `npm test` 430 + 99, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Open: SQL is not applied. The mail key is empty. Ken has not set the scheduler. Do not configure a cron from this repo. `checkerV2` and `docSuffixes` stay off until Ken turns them on with the other flags. The Vercel preview failure is not explained by this repo.
 
 ## Step 35 done
 

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireUserId } from "@/lib/auth/verify.server";
 import { mailForRoster, release1RequestAllowed, sendRelease1Mail } from "@/lib/estimator/release1Mail.server";
-import { appendInAppNotices, executeServerEscalation, noticesToMail } from "@/lib/estimator/release1Monitor";
+import { appendInAppNotices, executeServerEscalation, noticesToMail, saveInAppNotices } from "@/lib/estimator/release1Monitor";
 import { loadRelease1Store, saveRelease1Store } from "@/lib/estimator/release1Store.server";
 
 /**
@@ -34,11 +34,33 @@ export const Route = createFileRoute("/api/release1-escalate")({
 				const result = await executeServerEscalation({
 					read: async () => loaded.documents,
 					save: async (documents, alerts, at) => {
-						const notifications = appendInAppNotices(loaded.documents?.notifications, alerts, at, loaded.documents?.notifyMatrix);
-						return saveRelease1Store(loaded, { ...documents, notifications });
+						const docs = await saveRelease1Store(loaded, documents);
+						const notes = await saveInAppNotices({
+							loaded,
+							alerts,
+							now: at,
+							build: appendInAppNotices,
+							save: (current, notifications) => saveRelease1Store(current, { notifications }),
+							reload: async () => {
+								const again = await loadRelease1Store();
+								return again.ok ? again : loaded;
+							},
+						});
+						const docFailed = (docs.failed || []).filter((row) => row.kind !== "notifications");
+						const noteFailed = (notes.failed || []).filter((row) => row.kind === "notifications");
+						return {
+							ok: docFailed.length === 0 && notes.ok === true,
+							saved: [...(docs.saved || []), ...(notes.saved || [])],
+							failed: [...docFailed, ...noteFailed],
+							attempts: notes.attempts,
+							conflict: notes.conflict === true,
+						};
 					},
 				});
-				const pending = noticesToMail(result.notices, result.saved && typeof result.saved === "object" ? result.saved as { failed?: { id?: string }[] } : { failed: result.notices.map((notice) => ({ id: String(notice.doc?.id || notice.doc?.controlNo || notice.doc?.joNo || "") })) });
+				const saved: { failed?: { id?: string }[], attempts?: number, ok?: boolean, conflict?: boolean } = result.saved && typeof result.saved === "object"
+					? result.saved as { failed?: { id?: string }[], attempts?: number, ok?: boolean, conflict?: boolean }
+					: { failed: result.notices.map((notice) => ({ id: String(notice.doc?.id || notice.doc?.controlNo || notice.doc?.joNo || "") })) };
+				const pending = noticesToMail(result.notices, saved);
 				const mail = [];
 				for (const notice of pending) {
 					const label = String(notice.doc?.controlNo || notice.doc?.joNo || notice.doc?.ceId || notice.doc?.id || "");
@@ -56,6 +78,7 @@ export const Route = createFileRoute("/api/release1-escalate")({
 					escalated: result.notices.filter((notice) => notice.template === "escalated"),
 					expiring: result.notices.filter((notice) => notice.template === "expiring"),
 					notices: pending.length,
+					noticeSave: { ok: saved.ok === true, attempts: saved.attempts || 0, conflict: saved.conflict === true },
 					mail,
 				});
 			},
