@@ -29,6 +29,38 @@ export function formatDocNo(kind, companyCode, year, serial) {
   return "";
 }
 
+const JO_TYPES = ["SW", "F", "T", "O"];
+
+/**
+ * JO-<3-digit seq>-<type>-<client code>-<YY>-<proposal control>.
+ * The first issue has no REV. The first revision is REV001.
+ * @param {number | string} seq
+ * @param {string} type
+ * @param {string} clientCode
+ * @param {number | string} year
+ * @param {string} controlNo
+ * @param {number | string} [rev]
+ * @returns {string}
+ */
+export function formatJobOrderNo(seq, type, clientCode, year, controlNo, rev) {
+  const n = Math.trunc(Number(seq));
+  if (!Number.isFinite(n) || n < 1 || n > 999) return "";
+  const kind = String(type || "").trim().toUpperCase();
+  if (!JO_TYPES.includes(kind)) return "";
+  const code = String(clientCode || "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,8}$/.test(code)) return "";
+  const digits = String(year || "").replace(/\D/g, "");
+  const yy = digits.length >= 2 ? digits.slice(-2) : "";
+  if (!yy) return "";
+  const control = String(controlNo || "").trim();
+  if (!/^\d{4}$/.test(control)) return "";
+  const base = `JO-${String(n).padStart(3, "0")}-${kind}-${code}-${yy}-${control}`;
+  const revision = Math.trunc(Number(rev) || 0);
+  if (!revision) return base;
+  if (revision < 1 || revision > 999) return "";
+  return `${base}-REV${String(revision).padStart(3, "0")}`;
+}
+
 /**
  * True when PostgREST says next_doc_no is not deployed yet.
  * @param {unknown} error

@@ -36,6 +36,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
 | 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
 | 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
+| 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
 
 ## Step 1 done
 
@@ -57,6 +58,19 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 31 done
+
+Stacked on `grok/phase-30` (https://github.com/ken2025mendoza11/Estimator-System/pull/29 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/30. Do not merge to `main`.
+
+- Flag `release1JobOrder` is off in the app. The TEST seed turns it on.
+- While it is on, Sales can generate a job order from an approved or sent proposal. The number is `JO-<3 digits>-<SW|F|T|O>-<client code>-<YY>-<proposal control>`. The first issue has no REV. The first revision is `REV001`. The 3-digit sequence comes from `next_job_order_seq`. If that function is missing, the button explains that and does not write a job order.
+- The order links one or more cost estimates. A PO or NTP file name is required before submit. The attached estimate keeps quantities and names only. Rates, unit costs, and amounts are removed. The job order text has no prices.
+- Edit before the final approver keeps the number. Revise after approval makes `REV001`. Cancel needs a reason. Approval uses the Job order list. A backup is logged by account id and signs `for <name>`.
+- An approved job order sets the linked estimate status to Awarded and the proposal to Won. Cancel clears both (estimate back to Done, proposal back to Approved). Cost-estimate line totals are not changed.
+- SQL (not run): `supabase/p31-job-order-2026-10-28.sql` and its rollback.
+
+Tests: `src/lib/estimator/jobOrder.test.mjs`. `npm test` 396 + 98, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
 
 ## Step 30 done
 

@@ -39,7 +39,7 @@ import { foldFamilyRows } from "../lib/estimator/monitoringFamilies";
 import { cleanHolidayDate } from "../lib/estimator/phCalendar";
 import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/estimator/priceCheck";
 import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
-import { allocateCeSuffix, allocateDocNumber, allocateProposalControl, claimProposalPr } from "../lib/estimator/supabase-workspace";
+import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr } from "../lib/estimator/supabase-workspace";
 import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
 import { Phase6Admin } from "./Phase6Admin";
 import { Phase6Reports } from "./Phase6Reports";
@@ -54,8 +54,10 @@ import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "..
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
 import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
 import { MarkupPanel } from "./MarkupPanel";
-import { canGenerateProposal, cancelProposal, createProposal, decideProposal, markProposalExpired, markProposalLost, markProposalSent, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
+import { canGenerateProposal, cancelProposal, createProposal, decideProposal, markProposalExpired, markProposalLost, markProposalSent, markProposalWon, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
 import { ProposalPanel } from "./ProposalPanel";
+import { canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
+import { JobOrderPanel } from "./JobOrderPanel";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -82,6 +84,8 @@ let release1MarkupOn = false;
 let release1MarkupSales = false;
 let release1ProposalOn = false;
 let release1ProposalSales = false;
+let release1JobOrderOn = false;
+let release1JobOrderSales = false;
 let release1ActorId = "";
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
@@ -4813,7 +4817,8 @@ function defaultAdminConfig() {
 			release1SalesView: false,
 			release1WithdrawRequest: false,
 			release1Markup: false,
-			release1Proposal: false
+			release1Proposal: false,
+			release1JobOrder: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4933,7 +4938,8 @@ function normalizeAdminConfig(raw) {
 			release1SalesView: src.features?.release1SalesView === true,
 			release1WithdrawRequest: src.features?.release1WithdrawRequest === true,
 			release1Markup: src.features?.release1Markup === true,
-			release1Proposal: src.features?.release1Proposal === true
+			release1Proposal: src.features?.release1Proposal === true,
+			release1JobOrder: src.features?.release1JobOrder === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -18410,7 +18416,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, proposal = null, onProposal = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -19302,6 +19308,28 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 							});
 						},
 						children: "Generate Proposal"
+					}) : null,
+					release1JobOrderOn && onJobOrder && canGenerateJobOrder({ flagOn: true, sales: release1JobOrderSales, proposalStatus: proposal?.status, existing: jobOrder }) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => {
+							const type = window.prompt("Job order type: SW, F, T, or O");
+							const clientCode = window.prompt("Client code");
+							if (!type || !clientCode) return;
+							onJobOrder("create", {
+								type,
+								clientCode,
+								ceIds: [ceData?.id].filter(Boolean),
+								client: ceData?.client || state.meta?.client || "",
+								project: ceData?.project || state.meta?.title || "",
+								prNo: proposal?.prNo || "",
+								controlNo: proposal?.controlNo || "",
+								year: phYear(),
+								ceQuantity: state.tasks || [],
+								salesPosition: "Sales Rep"
+							});
+						},
+						children: "Generate Job Order"
 					}) : null
 				]
 			}) : null,
@@ -19317,6 +19345,12 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				actorId: release1ActorId,
 				liveRev: String(state.projectInfo?.revNo || ""),
 				onProposal
+			}) : null,
+			release1JobOrderOn && onJobOrder ? /* @__PURE__ */ jsx(JobOrderPanel, {
+				jobOrder,
+				sales: release1JobOrderSales,
+				actorId: release1ActorId,
+				onJobOrder
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
 				style: { position: "relative" },
@@ -27866,6 +27900,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1MarkupSales = release1MarkupOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ProposalOn = adminConfig.features?.release1Proposal === true;
 	release1ProposalSales = release1ProposalOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1JobOrderOn = adminConfig.features?.release1JobOrder === true;
+	release1JobOrderSales = release1JobOrderOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
@@ -27891,6 +27927,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [scopeEditId, setScopeEditId] = useState(null);
 	const [notifications, setNotifications] = useState(() => Array.isArray(extras.notifications) ? extras.notifications : []);
 	const [proposals, setProposals] = useState(() => Array.isArray(extras.proposals) ? extras.proposals : []);
+	const [jobOrders, setJobOrders] = useState(() => Array.isArray(extras.jobOrders) ? extras.jobOrders : []);
 	const [dbWipeRequests, setDbWipeRequests] = useState(() => Array.isArray(extras.dbWipeRequests) ? extras.dbWipeRequests : []);
 	const [dbFocusSheet, setDbFocusSheet] = useState(null);
 	const [wizardRce, setWizardRce] = useState(null);
@@ -27932,7 +27969,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					scopeTemplates,
 					notifications,
 					dbWipeRequests,
-					proposals
+					proposals,
+					jobOrders
 				}
 			}
 		};
@@ -27955,6 +27993,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		notifications,
 		dbWipeRequests,
 		proposals,
+		jobOrders,
 		persistTick
 	]);
 	const [selectedRCE, setSelectedRCE] = useState(null);
@@ -30072,6 +30111,85 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			view: "editor"
 		});
 	};
+	const handleJobOrder = async (action, payload) => {
+		if (!release1JobOrderOn || !activeCE?.id) return;
+		const ceId = activeCE.id;
+		const current = (jobOrders || []).find((row) => (row.ceIds || []).includes(ceId) && row.status !== "Cancelled") || null;
+		const proposal = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled") || null;
+		let result = { ok: false, message: "Job order was not saved." };
+		if (action === "create") {
+			if (current) return;
+			let seq = 0;
+			try {
+				seq = await allocateJobOrderSeq() || 0;
+			} catch (err) {
+				window.alert(err?.message || "Could not take a job order number.");
+				return;
+			}
+			if (!seq) {
+				window.alert("Job order numbers are not on this database yet.");
+				return;
+			}
+			result = createJobOrder({
+				byUserId: release1ActorId,
+				seq,
+				dateIssued: todayLocal(),
+				year: phYear(),
+				controlNo: proposal?.controlNo || "",
+				prNo: proposal?.prNo || "",
+				client: activeCE.client || "",
+				project: activeCE.project || "",
+				ceIds: [ceId],
+				...payload || {}
+			});
+			if (result.ok && result.jobOrder) {
+				const claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				if (!claimed.ok) {
+					window.alert(claimed.message || "That job order number is already used.");
+					return;
+				}
+			}
+		} else if (action === "patch") result = patchJobOrder(current, payload);
+		else if (action === "submit") result = submitJobOrder(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists });
+		else if (action === "approve" || action === "return") result = decideJobOrder(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: editorName });
+		else if (action === "revise") result = reviseJobOrder(current, { byUserId: release1ActorId });
+		else if (action === "cancel") result = cancelJobOrder(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		if (!result?.ok || !result.jobOrder) {
+			window.alert(result?.message || "Job order was not saved.");
+			return;
+		}
+		const jobOrder = result.jobOrder;
+		setJobOrders((prev) => {
+			const list = Array.isArray(prev) ? prev : [];
+			const index = list.findIndex((row) => row.id === jobOrder.id || row.joNo === current?.joNo);
+			if (index < 0) return [jobOrder, ...list];
+			return list.map((row, i) => i === index ? jobOrder : row);
+		});
+		if (result.effect?.award) {
+			const ids = new Set(result.effect.ceIds || []);
+			setCeList((prev) => prev.map((row) => ids.has(row.id) ? { ...row, status: "Awarded", awardStatus: "Awarded", awardJo: result.effect.joNo } : row));
+			setActiveCE((cur) => cur && ids.has(cur.id) ? { ...cur, status: "Awarded", awardStatus: "Awarded", awardJo: result.effect.joNo } : cur);
+			setProposals((prev) => prev.map((row) => {
+				if (row.controlNo !== result.effect.proposalControl) return row;
+				const won = markProposalWon(row, { byUserId: release1ActorId, remarks: result.effect.joNo });
+				return won.ok && won.proposal ? won.proposal : row;
+			}));
+		}
+		if (result.effect?.clear) {
+			const ids = new Set(result.effect.ceIds || []);
+			setCeList((prev) => prev.map((row) => ids.has(row.id) && row.awardStatus === "Awarded" ? { ...row, status: "Done", awardStatus: "", awardJo: "" } : row));
+			setActiveCE((cur) => cur && ids.has(cur.id) && cur.awardStatus === "Awarded" ? { ...cur, status: "Done", awardStatus: "", awardJo: "" } : cur);
+			setProposals((prev) => prev.map((row) => row.controlNo === result.effect.proposalControl && row.status === "Won" ? { ...row, status: "Approved" } : row));
+		}
+		if (result.toUserId) notice({
+			type: "Needs your approval",
+			title: "Job order approval",
+			body: `${jobOrder.joNo} is waiting`,
+			ceId,
+			toUserId: result.toUserId,
+			view: "editor"
+		});
+	};
 	const openArchived = (ceId) => {
 		const archived = ceList.find((ce) => ce.id === ceId);
 		if (archived) setActiveCE(archived);
@@ -30529,7 +30647,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onAcceptSalesCeRequest: handleAcceptSalesCeRequest,
 						onMarkup: handleMarkup,
 						proposal: (proposals || []).find((row) => row.ceId === activeCE?.id && row.status !== "Cancelled") || null,
-						onProposal: handleProposal
+						onProposal: handleProposal,
+						jobOrder: (jobOrders || []).find((row) => (row.ceIds || []).includes(activeCE?.id) && row.status !== "Cancelled") || null,
+						onJobOrder: handleJobOrder
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);

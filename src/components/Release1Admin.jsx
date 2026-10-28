@@ -92,6 +92,15 @@ export function Release1Admin({ cfg, patch }) {
 				<span className="ce-field-label">Proposal clauses</span>
 				<textarea className="ce-input" rows={4} value={cfg.proposalClauses || ""} onChange={(event) => patch({ proposalClauses: event.target.value })} />
 			</label>
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={features.release1JobOrder === true}
+					onChange={(event) => patch({ features: { ...features, release1JobOrder: event.target.checked === true } })}
+				/>
+				<span>Job order from an approved proposal</span>
+			</label>
+			<p className="wiz-hint">The job order number comes from the database. It shows quantities only. An approved job order marks the estimate Awarded and the proposal Won. Cancel clears both.</p>
 			{on ? (
 				<div>
 					<h4 className="ce-serif admin-subhead">Department</h4>
