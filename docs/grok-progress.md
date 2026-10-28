@@ -33,7 +33,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 25 | No save on load, assigned approvals, inspection DRAFT | done | `grok/phase-25` | https://github.com/ken2025mendoza11/Estimator-System/pull/24 |
 | 26 | Accounts and roles foundation | done | `grok/phase-26` | https://github.com/ken2025mendoza11/Estimator-System/pull/25 |
 | 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
-| 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | |
+| 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
 
 ## Step 1 done
 
@@ -58,7 +58,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 28 done
 
-Stacked on `grok/phase-27` (https://github.com/ken2025mendoza11/Estimator-System/pull/26 is still open). Draft PR: pending. Do not merge to `main`.
+Stacked on `grok/phase-27` (https://github.com/ken2025mendoza11/Estimator-System/pull/26 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/27. Do not merge to `main`.
 
 - Flag `release1WithdrawRequest` is off in the app. The TEST seed turns it on. While it is off, withdraw still closes after the first approval.
 - While it is on, Withdraw shows after submit (Pending, For approval, Rejected, For revision) and stays up after a reviewer approves. It closes when the final approver approves, and when the request is already Cancelled. A remark is required. The timeline `who` is the account id.
