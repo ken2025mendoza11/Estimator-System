@@ -315,6 +315,31 @@ async function upsertDoc(kind, id, payload, ord) {
   await sb("workspace_docs", { method: "POST", body: { ...row, version: 1 } });
 }
 
+function accountDepartmentFor(role) {
+  if (role === "head") return "Management";
+  if (role === "admin") return "Admin";
+  if (role === "staff" || role === "lead") return "Cost Estimating";
+  return "";
+}
+
+function approverListsFor(users) {
+  const active = users.filter((user) => (user.accountStatus || "active") === "active");
+  const idOf = (role) => {
+    const user = active.find((row) => row.role === role);
+    return user ? user.userKey || user.userId : "";
+  };
+  const staff = idOf("staff");
+  const lead = idOf("lead");
+  const head = idOf("head");
+  const admin = idOf("admin");
+  const pair = (userId, backupUserId) => (userId ? [{ userId, backupUserId: backupUserId && backupUserId !== userId ? backupUserId : "" }] : []);
+  return {
+    markup: pair(staff, lead),
+    proposal: pair(head, admin),
+    jobOrder: pair(lead, head),
+  };
+}
+
 function adminConfig(users, extras = []) {
   const seen = new Set(users.map((user) => user.email));
   const extraUsers = extras.filter((user) => !seen.has(user.email));
@@ -335,6 +360,7 @@ function adminConfig(users, extras = []) {
         email: user.email,
         designation: user.label,
         department: "Costing",
+        accountDepartment: user.accountStatus && user.accountStatus !== "active" ? "" : accountDepartmentFor(user.role),
         level: user.role,
         status: user.accountStatus || "active",
       })),
@@ -351,7 +377,8 @@ function adminConfig(users, extras = []) {
     ],
     pending,
     designations: ["Cost Estimator", "Department Head"],
-    features: { approvalEngineV2: true },
+    features: { approvalEngineV2: true, release1Departments: true },
+    approverLists: approverListsFor(users),
     approvalFlows: {
       ce: [
         { id: "ce-1", title: "Prepared by Estimator", role: "staff" },

@@ -2,6 +2,7 @@ import { readSupabaseIdentity } from "./access-token";
 import { supabase, supabaseConfigError } from "./client";
 import { ensureSupabaseAccess } from "./session";
 import { linkedAccountActive, linkedAccountRole, ownAccountStatus } from "../estimator/activeUser.js";
+import { fixedDepartment } from "../estimator/departments.js";
 
 export type AccountStatus = "active" | "pending" | "declined" | "disabled";
 
@@ -14,6 +15,8 @@ export type AccountAccess = {
   profileComplete: boolean;
   welcomeSeen: boolean;
   duplicate: boolean;
+  /** Admin-set department. Empty when the column is missing or not set. */
+  accountDepartment?: string;
 };
 
 export type AccessAccount = {
@@ -47,6 +50,7 @@ type RoleRow = {
   welcome_seen_at?: string | null;
   decline_reason?: string | null;
   duplicate_of?: string | null;
+  account_department?: string | null;
 };
 
 const RICH_COLUMNS = "role, email, status, user_key, display_name, profile_complete, welcome_seen_at, decline_reason, duplicate_of";
@@ -98,6 +102,7 @@ function fromRich(userId: string, fallbackName: string, row: RoleRow, note = "")
     profileComplete: status === "active" ? row.profile_complete !== false : row.profile_complete === true,
     welcomeSeen: status === "active" ? Boolean(row.welcome_seen_at) : true,
     duplicate: Boolean(row.duplicate_of) || /duplicate/i.test(reason),
+    accountDepartment: fixedDepartment(row),
   };
 }
 
@@ -173,11 +178,18 @@ export async function loadAccountAccess(hint?: { name?: string }): Promise<Accou
     const identity = readSupabaseIdentity();
     if (!identity) return EMPTY;
     const name = String(hint?.name || identity.email || "").trim();
-    const rich = await supabase
+    let rich = await supabase
       .from("app_user_roles")
-      .select(RICH_COLUMNS)
+      .select(`${RICH_COLUMNS}, account_department`)
       .eq("user_key", identity.userKey)
       .maybeSingle();
+    if (rich.error && /account_department/i.test(rich.error.message)) {
+      rich = await supabase
+        .from("app_user_roles")
+        .select(RICH_COLUMNS)
+        .eq("user_key", identity.userKey)
+        .maybeSingle();
+    }
     if (rich.error) {
       if (missingColumn(rich.error.message) || missingAccessUpdate(rich.error.message)) {
         return legacyAccount(identity.userKey, name, identity.email);
@@ -331,6 +343,27 @@ async function accessRpc(name: string, args: Record<string, unknown>) {
 
 export function grantUserRole(userKey: string, role: string) {
   return accessRpc("grant_role", { p_user_key: userKey, p_role: role });
+}
+
+/** Writes the fixed department. A missing function leaves the local setting in place. */
+export function setAccountDepartment(userKey: string, department: string) {
+  return accessRpc("set_account_department", { p_user_key: userKey, p_department: department });
+}
+
+/** Writes approver account ids. A missing function leaves the admin JSON in place. */
+export function saveApproverLists(lists: { markup?: unknown; proposal?: unknown; jobOrder?: unknown } | null | undefined) {
+  const rows: Array<{ kind: string; userId: string; backupUserId: string; ord: number }> = [];
+  const source = lists || {};
+  for (const kind of ["markup", "proposal", "jobOrder"] as const) {
+    const list = Array.isArray(source[kind]) ? source[kind] : [];
+    list.forEach((row, ord) => {
+      const item = row as { userId?: string; backupUserId?: string };
+      const userId = String(item?.userId || "").trim();
+      if (!userId) return;
+      rows.push({ kind, userId, backupUserId: String(item?.backupUserId || "").trim(), ord });
+    });
+  }
+  return accessRpc("replace_release1_approvers", { p_rows: rows });
 }
 
 export function declineUser(userKey: string) {
