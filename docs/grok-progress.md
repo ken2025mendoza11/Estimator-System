@@ -39,6 +39,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
 | 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
 | 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
+| 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
 
 ## Step 1 done
 
@@ -60,6 +61,32 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 34 done
+
+Stacked on `grok/phase-33` (https://github.com/ken2025mendoza11/Estimator-System/pull/32 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/33. Do not merge to `main`.
+
+- Markup is its own document (`kind` `markup`). It is not written onto the locked estimate. Award and cancel may change the estimate status and add one timeline entry (`who` is the account id, `at` is ISO time). Award status and the job order link stay on the job order. Every other change to an approved estimate is still refused.
+- A proposal uses the approved markup's direct cost, which is the total already on screen. The selling price is the proposal total.
+- `/api/release1-mail` and `/api/release1-escalate` need a signed-in user, or the header `x-release1-scheduler` matching `RELEASE1_SCHEDULER_SECRET`. An empty secret never matches. Mail goes only to a roster account, and only with a fixed template.
+- Escalation runs on the server. It reads and saves the stored documents. The browser does not start it. Twelve hours moves the step to the backup. Another twelve hours moves it to the next approver. The same step is not repeated. An already expired proposal is skipped. Ken sets the secret and `SUPABASE_SERVICE_ROLE_KEY` on the server. Do not configure a cron from this repo. See docs/release1-golive.md.
+- A backup signature reads `for <the primary approver's name>`. Screens show names. The timeline `who` stays the account id.
+- The first job order has no REV. A revision is `JO-001-SW-ABC-26-0137REV001` (no hyphen) and is shown once. The number is registered. A taken or badly formed number is refused. The 3-digit sequence restarts at 001 each year.
+- A job order has the SY3 PDF, a quantities-only attachment with no prices, a PO or NTP file uploaded to `estimator-files` (the job order stores the path, not the bytes), more than one linked estimate, and editable SY3 fields. Type and client code are form fields.
+- Award and cancel write a timeline entry on each linked estimate and on the proposal. Cancel puts back the status from before the award. It does not invent Done when the estimate is missing.
+- A proposal can be revised from Approved, Sent, or Expired.
+- Reports split win rate, cost-estimate turnaround, and proposal aging by sales rep name.
+- When a cost estimate is approved, the Sales owner gets the existing in-app notice and the `ce-approved` email. The notice object does not gain an `email` field.
+- Only the proposal owner or an admin can change or release a PR number. An empty PR number does not delete another proposal's claim. The owner can delete a draft that was never submitted.
+- The TEST seed adds Test Sales, Test Sales Two, and Test Sales Manager, and wires the manager as approver with Test Sales Two as backup for markup, proposal, and job order. Sample numbers are registered and the counters move to proposal 3614 and year 26 sequence 14. Sample proposal groups use `direct`.
+- `scripts/step33.test.mjs` calls `applyAward` and `applyCancel`.
+- Remarks and reasons use a required remark box. They do not use `window.prompt`.
+
+SQL (not run): `supabase/p34-release1-2026-10-28.sql` and rollback. Apply after p31. The p30 rollback deletes saved proposals. Back up first. The p34 rollback does not delete proposals.
+
+Tests: `src/lib/estimator/ceLock.test.mjs`, `src/lib/estimator/phase34.test.mjs`, `scripts/step33.test.mjs`. `npm ci` then `npm test` 419 + 99, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Open: SQL is not applied. The mail key is empty. Ken has not set the scheduler. Sample job orders record the PO file name only; a new job order uploads the file. Deleting a never-submitted draft returns a timeline entry and then removes the draft, so that entry is not kept on a stored document. `checkerV2` and `docSuffixes` stay off until Ken turns them on with the other flags.
 
 ## Step 33 done
 

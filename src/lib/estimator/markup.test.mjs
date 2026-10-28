@@ -73,12 +73,13 @@ test("markup approval uses the admin list and logs the account id", () => {
 	assert.equal(actorMayDecideMarkup(submitted.markup, "sales-1"), false);
 	assert.equal(actorMayDecideMarkup(submitted.markup, "mgr-2"), true);
 	assert.equal(decideMarkup(submitted.markup, { actorId: "mgr-2", decision: "return", remarks: "" }).ok, false);
-	const returned = decideMarkup(submitted.markup, { actorId: "mgr-2", decision: "return", remarks: "Lower the margin", now: "2026-10-28T02:00:00.000Z" });
+	const returned = decideMarkup(submitted.markup, { actorId: "mgr-2", decision: "return", remarks: "Lower the margin", approverName: "Primary Approver", now: "2026-10-28T02:00:00.000Z" });
 	if (!returned.markup) throw new Error("missing return");
 	assert.equal(returned.markup.status, "Returned");
 	assert.equal(returned.markup.steps[0].byUserId, "mgr-2");
 	assert.equal(returned.markup.steps[0].forUserId, "mgr-1");
-	assert.match(returned.markup.timeline.at(-1).remarks, /for mgr-1/);
+	assert.match(returned.markup.timeline.at(-1).remarks, /for Primary Approver/);
+	assert.equal(returned.markup.timeline.at(-1).remarks.includes("mgr-1"), false);
 	assert.equal(returned.markup.timeline.at(-1).who, "mgr-2");
 	const resubmitted = submitMarkup(returned.markup, { byUserId: "sales-1", approverLists: lists, parts: MARKUP_PRESETS["65"] });
 	if (!resubmitted.markup) throw new Error("missing resubmit");

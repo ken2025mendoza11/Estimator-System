@@ -251,3 +251,17 @@ test("a proposal is its own document and comes back on the workspace", () => {
   assert.equal(stored?.[0].prNo, "PR 26-360801");
 });
 
+test("a markup is its own document and comes back on the workspace", () => {
+  const payload = sample();
+  const app = (payload.schemaConfig as { __app: { markups?: unknown[] } }).__app;
+  app.markups = [{ id: "CE-2026-001-MK", ceId: "CE-2026-001", status: "Approved", directCost: 1000, selling: 2000 }];
+  const docs = splitWorkspace(payload);
+  const markup = docs.find((doc) => doc.kind === "markup");
+  assert.equal(markup?.id, "CE-2026-001-MK");
+  const schema = docs.find((doc) => doc.kind === "schema");
+  assert.equal(JSON.stringify(schema?.payload).includes("CE-2026-001-MK"), false);
+  const { workspace } = assembleWorkspace(docs.map((doc) => ({ ...doc, version: 1 })), sample());
+  const stored = (workspace.schemaConfig as { __app: { markups?: Array<{ ceId: string }> } }).__app.markups;
+  assert.equal(stored?.[0].ceId, "CE-2026-001");
+});
+

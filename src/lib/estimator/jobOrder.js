@@ -1,7 +1,28 @@
 /** Job order. No prices are stored on the order, the text, or the quantity-only cost estimate. */
 
-import { backupSignatureLabel, normalizeApproverLists } from "./departments.js";
-import { formatJobOrderNo } from "./docNumbers.js";
+import { backupSignatureLabel, normalizeApproverLists, personName } from "./departments.js";
+import { formatJobOrderNo, registerJobOrderNo } from "./docNumbers.js";
+import { release1WriteAllowed } from "./ceLock.js";
+import { markProposalWon } from "./proposal.js";
+
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function storedPoPath(value) {
+	const path = String(value || "").trim();
+	if (!path) return "";
+	if (path.startsWith("data:") || path.includes("..") || path.includes("\\") || !path.startsWith("job-order/")) return null;
+	return path;
+}
+
+/** The PO or NTP file must already be in storage. A file name alone is not an upload.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function poFileStored(value) {
+	return storedPoPath(value) != null && storedPoPath(value) !== "";
+}
 
 export const RELEASE1_JOB_ORDER_FLAG = "release1JobOrder";
 
@@ -65,31 +86,62 @@ export function containsPrice(value) {
 	return false;
 }
 
+const QTY_KEYS = ["description", "role", "title", "name", "item", "qty", "unit", "days", "uom", "section", "id"];
+
+/**
+ * A quantities-only attachment. Prices are already removed by quantityOnly.
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function quantityAttachmentText(value) {
+	const clean = quantityOnly(value);
+	/** @type {string[]} */
+	const lines = ["Cost estimate attachment", "Quantities only. No prices."];
+	/** @param {unknown} node @param {string} prefix */
+	function walk(node, prefix) {
+		if (Array.isArray(node)) {
+			node.forEach((item, index) => walk(item, `${prefix}${index + 1}. `));
+			return;
+		}
+		if (!node || typeof node !== "object") return;
+		const row = /** @type {Record<string, unknown>} */ (node);
+		const bits = QTY_KEYS.filter((key) => row[key] != null && row[key] !== "" && key !== "id").map((key) => `${key} ${row[key]}`);
+		if (bits.length) lines.push(`${prefix}${bits.join(" · ")}`);
+		for (const inner of Object.values(row)) {
+			if (inner && typeof inner === "object") walk(inner, prefix);
+		}
+	}
+	walk(clean, "");
+	return lines.join("\n");
+}
+
 /**
  * @param {any} jo
+ * @param {unknown[] | null | undefined} [users]
  * @returns {string[]}
  */
-export function jobOrderLines(jo) {
+export function jobOrderLines(jo, users) {
 	const row = jo || {};
-	const rev = Number(row.rev) > 0 ? `REV${String(row.rev).padStart(3, "0")}` : "";
+	const name = (/** @type {unknown} */ id) => personName(id, users);
+	const joNo = String(row.joNo || "—");
 	return [
-		"Job order",
-		`JO no. ${row.joNo || "—"} ${rev}`.trim(),
+		"SY3 Job Order",
+		`JO no. ${joNo}`,
 		`Date issued ${row.dateIssued || "—"}`,
 		`Client ${row.client || "—"}`,
 		`PO ref no. ${row.poRef || "—"}`,
 		`Project ${row.project || "—"}`,
 		`PR ref no. ${row.prNo || "—"}`,
-		`Salesperson ${row.salesRepId || ""} ${row.salesPosition || ""}`.trim(),
+		`Salesperson ${name(row.salesRepId)} ${row.salesPosition || ""}`.trim(),
 		`Project in charge ${row.inCharge || ""} ${row.inChargePosition || ""}`.trim(),
 		`Client contact ${row.clientContact || ""} ${row.clientContactPosition || ""}`.trim(),
 		`Duration ${row.duration || "—"}`,
 		`Type ${row.type || "—"}`,
-		`Prepared by ${row.salesRepId || ""}`,
-		`Checked and approved by ${row.approverId || ""}`,
+		`Prepared by ${name(row.salesRepId)}`,
+		`Checked and approved by ${name(row.approverId)}`,
 		row.approverFor ? `Signature ${row.approverFor}` : "Signature",
 		`Linked CE ${(row.ceIds || []).join(", ") || "—"}`,
-		`PO or NTP ${row.poFileName || "—"}`,
+		`PO or NTP ${row.poKind || ""} ${row.poFileName || "—"}`.trim(),
 	];
 }
 
@@ -107,6 +159,8 @@ export function createJobOrder(input) {
 	const joNo = formatJobOrderNo(input?.seq, type, input?.clientCode, input?.year, input?.controlNo, 0);
 	if (!joNo) return { ok: false, message: "The job order number is not complete." };
 	const qty = quantityOnly(input?.ceQuantity || []);
+	const poStoragePath = storedPoPath(input?.poStoragePath);
+	if (poStoragePath == null) return { ok: false, message: "Upload the PO or the NTP file." };
 	const jobOrder = {
 		id: joNo,
 		joNo,
@@ -130,6 +184,8 @@ export function createJobOrder(input) {
 		duration: String(input.duration || ""),
 		ceIds,
 		poFileName: String(input.poFileName || ""),
+		poStoragePath,
+		poKind: String(input.poKind || "").trim().toUpperCase(),
 		drawingNames: (Array.isArray(input.drawingNames) ? input.drawingNames : []).map((/** @type {unknown} */ name) => String(name || "")).filter(Boolean),
 		ceQuantity: qty,
 		status: "Draft",
@@ -155,14 +211,31 @@ export function jobOrderEditable(jo) {
 /**
  * @param {any} jo
  * @param {any} patch
+ * @param {{ byUserId?: unknown, now?: unknown }} [input]
  * @returns {{ ok: true, jobOrder: any } | { ok: false, message: string, jobOrder?: undefined }}
  */
-export function patchJobOrder(jo, patch) {
+export function patchJobOrder(jo, patch, input) {
 	if (!jobOrderEditable(jo)) return { ok: false, message: "This job order is locked. Revise it to make a new REV." };
 	const src = patch && typeof patch === "object" ? patch : {};
 	const next = { ...jo };
 	for (const key of ["dateIssued", "client", "poRef", "project", "prNo", "salesPosition", "inCharge", "inChargePosition", "clientContact", "clientContactPosition", "duration", "poFileName"]) {
 		if (src[key] != null) next[key] = String(src[key]);
+	}
+	if (src.poKind != null) {
+		const kind = String(src.poKind).trim().toUpperCase();
+		if (kind && kind !== "PO" && kind !== "NTP") return { ok: false, message: "The file must be a PO or an NTP." };
+		next.poKind = kind;
+	}
+	if (src.poStoragePath != null) {
+		const path = storedPoPath(src.poStoragePath);
+		if (path == null) return { ok: false, message: "Upload the PO or the NTP file." };
+		if (path !== String(jo.poStoragePath || "")) {
+			next.poStoragePath = path;
+			const who = String(input?.byUserId || jo.ownerId || "").trim();
+			if (who) {
+				next.timeline = [...(next.timeline || []), entry(who, "PO or NTP file stored", String(src.poFileName || next.poFileName || ""), input?.now)];
+			}
+		}
 	}
 	if (Array.isArray(src.ceIds)) {
 		const ceIds = src.ceIds.map((/** @type {unknown} */ id) => String(id || "").trim()).filter(Boolean);
@@ -186,7 +259,9 @@ export function submitJobOrder(jo, input) {
 	if (!jo || jo.status !== "Draft") return { ok: false, message: "Only a draft can be submitted." };
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId || byUserId !== jo.ownerId) return { ok: false, message: "Only the Sales owner can submit this job order." };
-	if (!String(jo.poFileName || "").trim()) return { ok: false, message: "Attach the PO or the NTP." };
+	if (!poFileStored(jo.poStoragePath) || !String(jo.poFileName || "").trim()) return { ok: false, message: "Upload the PO or the NTP file." };
+	const poKind = String(jo.poKind || "").trim().toUpperCase();
+	if (poKind !== "PO" && poKind !== "NTP") return { ok: false, message: "Mark the file as PO or NTP." };
 	if (!Array.isArray(jo.ceIds) || !jo.ceIds.length) return { ok: false, message: "Link at least one cost estimate." };
 	const rows = normalizeApproverLists(input?.approverLists).jobOrder;
 	if (!rows.length) return { ok: false, message: "Add a Job order approver in Admin." };
@@ -247,7 +322,7 @@ export function decideJobOrder(jo, input) {
 	if (decision === "return" && !remarks) return { ok: false, message: "A remark is required." };
 	const at = input?.now ? String(input.now) : new Date().toISOString();
 	const forUserId = asBackup ? step.userId : "";
-	const approverFor = forUserId ? backupSignatureLabel(String(input?.approverName || forUserId)) : "";
+	const approverFor = forUserId ? backupSignatureLabel(String(input?.approverName || "").trim()) : "";
 	const note = [approverFor, remarks].filter(Boolean).join(" ");
 	steps[index] = { ...step, decision, byUserId: actorId, at, remarks: note, forUserId };
 	const timeline = [...(jo.timeline || []), entry(actorId, decision === "return" ? "Job order returned" : "Job order approved", note, at)];
@@ -273,7 +348,7 @@ export function decideJobOrder(jo, input) {
 
 /**
  * @param {any} jo
- * @param {{ byUserId?: unknown, remarks?: unknown, now?: unknown }} input
+ * @param {{ byUserId?: unknown, remarks?: unknown, now?: unknown, admin?: boolean, salesManager?: boolean }} input
  * @returns {{ ok: true, jobOrder: any, effect?: { clear: true, ceIds: string[], proposalControl: string } } | { ok: false, message: string, jobOrder?: undefined }}
  */
 export function cancelJobOrder(jo, input) {
@@ -282,6 +357,8 @@ export function cancelJobOrder(jo, input) {
 	const remarks = String(input?.remarks || "").trim();
 	if (!byUserId) return { ok: false, message: "An account id is required." };
 	if (!remarks) return { ok: false, message: "A reason is required." };
+	const allowed = input?.admin === true || input?.salesManager === true || byUserId === String(jo.ownerId || "");
+	if (!allowed) return { ok: false, message: "Only the owner, a Sales manager, or an admin can cancel." };
 	const wasAward = jo.status === "Approved";
 	const jobOrder = {
 		...jo,
@@ -297,7 +374,7 @@ export function cancelJobOrder(jo, input) {
 
 /**
  * @param {any} jo
- * @param {{ byUserId?: unknown, now?: unknown }} input
+ * @param {{ byUserId?: unknown, now?: unknown, registry?: unknown }} input
  * @returns {{ ok: true, jobOrder: any } | { ok: false, message: string, jobOrder?: undefined }}
  */
 export function reviseJobOrder(jo, input) {
@@ -307,6 +384,8 @@ export function reviseJobOrder(jo, input) {
 	const rev = (Number(jo.rev) || 0) + 1;
 	const joNo = formatJobOrderNo(jo.seq, jo.type, jo.clientCode, jo.year, jo.controlNo, rev);
 	if (!joNo) return { ok: false, message: "The revision number could not be built." };
+	const registered = registerJobOrderNo(Array.isArray(input?.registry) ? input.registry : null, joNo);
+	if (!registered.ok) return { ok: false, message: registered.message };
 	return {
 		ok: true,
 		jobOrder: {
@@ -322,6 +401,145 @@ export function reviseJobOrder(jo, input) {
 			timeline: [...(jo.timeline || []), entry(byUserId, "Job order revised", joNo, input?.now)],
 		},
 	};
+}
+
+/**
+ * @param {any} jo
+ * @param {{ byUserId?: unknown, admin?: boolean, salesManager?: boolean }} [input]
+ * @returns {boolean}
+ */
+export function canCancelJobOrder(jo, input) {
+	if (!jo || jo.status === "Cancelled") return false;
+	const byUserId = String(input?.byUserId || "").trim();
+	return input?.admin === true || input?.salesManager === true || byUserId === String(jo.ownerId || "");
+}
+
+/**
+ * @param {any[] | null | undefined} ces
+ * @param {Record<string, any> | null | undefined} documents
+ * @param {string} id
+ * @returns {{ summary: any, document: any }}
+ */
+function cePayload(ces, documents, id) {
+	const summary = (ces || []).find((/** @type {any} */ row) => row?.id === id) || { id, status: "" };
+	const document = (documents && documents[id]) || {};
+	return { summary, document };
+}
+
+/**
+ * Award writes a timeline entry on each CE and the proposal. Award status stays off the CE.
+ * @param {{ ces?: any[], documents?: Record<string, any>, proposal?: any, effect?: { ceIds?: string[], proposalControl?: string, joNo?: string }, byUserId?: unknown, now?: unknown }} input
+ */
+export function applyAward(input) {
+	const who = String(input?.byUserId || "").trim();
+	if (!who) return { ok: false, message: "An account id is required." };
+	const at = input?.now ? String(input.now) : new Date().toISOString();
+	const ids = (input?.effect?.ceIds || []).map((/** @type {unknown} */ id) => String(id || "")).filter(Boolean);
+	if (!ids.length) return { ok: false, message: "Link at least one cost estimate." };
+	/** @type {Record<string, string>} */
+	const previousCeStatus = {};
+	const ces = (input?.ces || []).map((/** @type {any} */ ce) => ({ ...ce }));
+	const documents = { ...(input?.documents || {}) };
+	for (const id of ids) {
+		const index = ces.findIndex((ce) => ce.id === id);
+		if (index < 0) return { ok: false, message: "A linked cost estimate is missing." };
+		const current = ces[index];
+		const previous = String(current.status || "");
+		if (!previous) return { ok: false, message: "The estimate status is missing." };
+		previousCeStatus[id] = previous;
+		const summary = { ...current, status: "Awarded" };
+		const oldDoc = { ...(documents[id] || {}) };
+		const document = {
+			...oldDoc,
+			status: "Awarded",
+			ceStatus: "Awarded",
+			timeline: [...(Array.isArray(oldDoc.timeline) ? oldDoc.timeline : []), entry(who, "Awarded", String(input?.effect?.joNo || ""), at)],
+		};
+		const allowed = release1WriteAllowed({
+			kind: "ce",
+			oldPayload: cePayload(input?.ces, input?.documents, id),
+			newPayload: { summary, document },
+			sales: false,
+		});
+		if (!allowed.ok) return { ok: false, message: allowed.message || "Approved estimates cannot be changed." };
+		if (index >= 0) ces[index] = summary;
+		else ces.push(summary);
+		documents[id] = document;
+	}
+	const proposal = input?.proposal;
+	const previousProposalStatus = String(proposal?.status || "");
+	let nextProposal = proposal;
+	if (proposal) {
+		const won = markProposalWon(proposal, { byUserId: who, now: at, remarks: String(input?.effect?.joNo || "") });
+		if (!won.ok || !won.proposal) return { ok: false, message: won.message || "The proposal was not awarded." };
+		nextProposal = won.proposal;
+	}
+	return {
+		ok: true,
+		ces,
+		documents,
+		proposal: nextProposal,
+		award: {
+			joNo: String(input?.effect?.joNo || ""),
+			ceIds: ids,
+			proposalControl: String(input?.effect?.proposalControl || proposal?.controlNo || ""),
+			previousCeStatus,
+			previousProposalStatus,
+			at,
+			who,
+		},
+	};
+}
+
+/**
+ * Cancel restores the previous CE and proposal status and writes both timelines.
+ * @param {{ ces?: any[], documents?: Record<string, any>, proposal?: any, award?: any, byUserId?: unknown, now?: unknown, remarks?: unknown }} input
+ */
+export function applyCancel(input) {
+	const who = String(input?.byUserId || "").trim();
+	const remarks = String(input?.remarks || "").trim();
+	if (!who) return { ok: false, message: "An account id is required." };
+	if (!remarks) return { ok: false, message: "A reason is required." };
+	const at = input?.now ? String(input.now) : new Date().toISOString();
+	const award = input?.award || {};
+	const ids = (award.ceIds || []).map((/** @type {unknown} */ id) => String(id || "")).filter(Boolean);
+	const previous = award.previousCeStatus || {};
+	const ces = (input?.ces || []).map((/** @type {any} */ ce) => ({ ...ce }));
+	const documents = { ...(input?.documents || {}) };
+	for (const id of ids) {
+		const index = ces.findIndex((ce) => ce.id === id);
+		if (index < 0) continue;
+		const restored = String(previous[id] || "");
+		if (!restored) return { ok: false, message: "The previous estimate status is missing." };
+		const summary = { ...ces[index], status: restored };
+		const oldDoc = { ...(documents[id] || {}) };
+		const document = {
+			...oldDoc,
+			status: restored,
+			ceStatus: restored,
+			timeline: [...(Array.isArray(oldDoc.timeline) ? oldDoc.timeline : []), entry(who, "Award cancelled", remarks, at)],
+		};
+		const allowed = release1WriteAllowed({
+			kind: "ce",
+			oldPayload: cePayload(ces, documents, id),
+			newPayload: { summary, document },
+			sales: false,
+		});
+		if (!allowed.ok) return { ok: false, message: allowed.message || "Approved estimates cannot be changed." };
+		ces[index] = summary;
+		documents[id] = document;
+	}
+	let proposal = input?.proposal;
+	if (proposal) {
+		const restored = String(award.previousProposalStatus || "");
+		if (!restored) return { ok: false, message: "The previous proposal status is missing." };
+		proposal = {
+			...proposal,
+			status: restored,
+			timeline: [...(proposal.timeline || []), entry(who, "Award cancelled", remarks, at)],
+		};
+	}
+	return { ok: true, ces, documents, proposal };
 }
 
 /**

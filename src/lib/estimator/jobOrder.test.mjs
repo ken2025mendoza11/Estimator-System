@@ -56,7 +56,7 @@ function draft() {
 
 test("the job order number and revision", () => {
 	assert.equal(formatJobOrderNo(7, "sw", "abc", 2026, "0012"), "JO-007-SW-ABC-26-0012");
-	assert.equal(formatJobOrderNo(7, "SW", "ABC", 2026, "0012", 1), "JO-007-SW-ABC-26-0012-REV001");
+	assert.equal(formatJobOrderNo(7, "SW", "ABC", 2026, "0012", 1), "JO-007-SW-ABC-26-0012REV001");
 	assert.equal(formatJobOrderNo(7, "ZZ", "ABC", 2026, "0012"), "");
 	const jo = draft();
 	assert.equal(jo.joNo, "JO-007-SW-ABC-26-0012");
@@ -64,7 +64,7 @@ test("the job order number and revision", () => {
 	assert.equal(jo.joNo.includes("REV"), false);
 	const revised = reviseJobOrder({ ...jo, status: "Approved", finalApproved: true }, { byUserId: "sales-1" });
 	if (!revised.ok || !revised.jobOrder) throw new Error("missing revise");
-	assert.equal(revised.jobOrder.joNo, "JO-007-SW-ABC-26-0012-REV001");
+	assert.equal(revised.jobOrder.joNo, "JO-007-SW-ABC-26-0012REV001");
 	assert.equal(revised.jobOrder.seq, 7);
 	assert.equal(revised.jobOrder.status, "Draft");
 });
@@ -90,7 +90,7 @@ test("no prices on the job order, the text, or the quantity attachment", () => {
 test("approval awards the estimate and the proposal, and cancel clears both", () => {
 	let jo = draft();
 	assert.equal(submitJobOrder(jo, { byUserId: "sales-1", approverLists: lists }).ok, false);
-	jo = patchJobOrder(jo, { poFileName: "PO-9.pdf" }).jobOrder;
+	jo = patchJobOrder(jo, { poFileName: "PO-9.pdf", poKind: "PO", poStoragePath: "job-order/JO-007/PO-9.pdf" }).jobOrder;
 	const edited = patchJobOrder(jo, { duration: "45 days" });
 	if (!edited.jobOrder) throw new Error("missing edit");
 	assert.equal(edited.jobOrder.joNo, jo.joNo);

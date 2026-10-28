@@ -12,6 +12,7 @@ export const DOC_KINDS = [
   "notifications",
   "wipes",
   "proposal",
+  "markup",
 ] as const;
 
 export type DocKind = (typeof DOC_KINDS)[number];
@@ -32,6 +33,7 @@ const APP_KEYS = [
   "notifications",
   "dbWipeRequests",
   "proposals",
+  "markups",
 ] as const;
 
 export type LocalDoc = {
@@ -261,6 +263,11 @@ export function splitWorkspace(payload: WorkspacePayload): LocalDoc[] {
     const id = requireId("proposal", String(record.id || record.controlNo || ""));
     pushDoc(docs, "proposal", id, item as Json, index);
   });
+  readList(payload, "markups").forEach((item, index) => {
+    const record = asRecord(item);
+    const id = requireId("markup", String(record.id || record.ceId || ""));
+    pushDoc(docs, "markup", id, item as Json, index);
+  });
   return docs;
 }
 
@@ -306,6 +313,7 @@ export function assembleWorkspace(
   const notes = take("notifications")[0];
   const wipes = take("wipes")[0];
   const proposalRows = take("proposal");
+  const markupRows = take("markup");
   for (const row of rows) {
     if (!row.deleted) continue;
     if (!DOC_KINDS.includes(row.kind as DocKind)) continue;
@@ -334,6 +342,7 @@ export function assembleWorkspace(
   const notifications = Array.isArray(notes?.payload) ? notes.payload : [];
   const dbWipeRequests = Array.isArray(wipes?.payload) ? wipes.payload : [];
   const proposals = proposalRows.map((row) => row.payload);
+  const markups = markupRows.map((row) => row.payload);
   const schemaRecord = asRecord(schema?.payload);
   const app = asRecord(schemaRecord.__app);
   delete app.adminConfig;
@@ -343,6 +352,7 @@ export function assembleWorkspace(
   delete app.notifications;
   delete app.dbWipeRequests;
   delete app.proposals;
+  delete app.markups;
   const schemaConfig = {
     ...schemaRecord,
     __app: {
@@ -354,6 +364,7 @@ export function assembleWorkspace(
       notifications,
       dbWipeRequests,
       proposals,
+      markups,
     },
   } as WorkspacePayload["schemaConfig"];
 
@@ -540,6 +551,10 @@ export function mergeServerWithDirty(
       const rows = listRows(next, "proposals");
       replaceRow(rows, doc.id, doc.payload);
       putList(next, "proposals", rows);
+    } else if (doc.kind === "markup") {
+      const rows = listRows(next, "markups");
+      replaceRow(rows, doc.id, doc.payload);
+      putList(next, "markups", rows);
     }
   }
   next.ceList = ces;

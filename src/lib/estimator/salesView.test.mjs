@@ -153,7 +153,9 @@ test("the app, the seed, and the lock SQL keep the flag off until TEST turns it 
 	const matrix = readFileSync(new URL("./notifyMatrix.js", import.meta.url), "utf8");
 	assert.equal(app.includes("release1SalesView: false"), true);
 	assert.equal(app.includes("release1SalesViewOn"), true);
-	assert.equal(app.includes("lockedCeChangeAllowed"), true);
+	assert.equal(app.includes("release1WriteAllowed"), true);
+	const lock = readFileSync(new URL("./ceLock.js", import.meta.url), "utf8");
+	assert.equal(lock.includes("lockedCeChangeAllowed"), true);
 	assert.equal(app.includes(CE_APPROVED_EVENT) || app.includes("CE approved"), true);
 	assert.equal(seed.includes("release1SalesView: true"), true);
 	assert.equal(sql.includes("Approved estimates cannot be changed."), true);

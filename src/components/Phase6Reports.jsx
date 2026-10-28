@@ -93,7 +93,7 @@ export function Phase6Reports({ ceList, documents, monitor = null, reportOn = tr
 					<h3 className="ce-serif">Sales list</h3>
 					{sales.length ? sales.map((row) => (
 						<div key={`${row.kind}-${row.id}`}>
-							<p>{row.kind} {row.id} · {row.status} · {row.ageDays}d · {row.holderId || row.ownerId || "unassigned"}</p>
+							<p>{row.kind} {row.id} · {row.status} · {row.ageDays}d · {row.holderName || row.ownerName || "Unnamed"}</p>
 							{monitor.canTakeOver && (row.status === "Approved" || row.status === "Sent") && row.ownerId && row.ownerId !== monitor.actorId ? (
 								<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => monitor.onTakeOver(row)}>Take over</button>
 							) : null}
@@ -117,13 +117,17 @@ export function Phase6Reports({ ceList, documents, monitor = null, reportOn = tr
 					<h3 className="ce-serif">Pending approvals</h3>
 					{pending.length ? pending.map((row) => (
 						<p key={`pending-${row.kind}-${row.id}`} style={row.overdue ? { color: "#b45309" } : undefined}>
-							{row.kind} {row.id} · {row.holderId || "unassigned"} · {row.hours} h
+							{row.kind} {row.id} · {row.holderName || "Unnamed"} · {row.hours} h
 						</p>
 					)) : <p className="wiz-hint">Nothing is waiting.</p>}
 					<h3 className="ce-serif">Proposal aging</h3>
 					{aging.length ? aging.map((row) => (
-						<p key={row.salesRepId || "unassigned"}>{row.salesRepId || "unassigned"}: {row.count} · oldest {row.oldestDays}d</p>
+						<p key={row.salesRepName || "unassigned"}>{row.salesRepName || "Unnamed"}: {row.count} · oldest {row.oldestDays}d</p>
 					)) : <p className="wiz-hint">No proposals.</p>}
+					<h3 className="ce-serif">By sales rep</h3>
+					{(monitor.dashboard?.bySalesRep || []).length ? (monitor.dashboard.bySalesRep || []).map((row) => (
+						<p key={`rep-${row.salesRepName || "unassigned"}`}>{row.salesRepName || "Unnamed"} · win {pct(row.winRate)} · turnaround {row.ceTurnaroundDays == null ? "—" : Math.round(row.ceTurnaroundDays * 10) / 10}d · proposals {row.proposalCount} · oldest {row.oldestDays}d</p>
+					)) : <p className="wiz-hint">No sales rep figures.</p>}
 				</>
 			) : null}
 		</div>

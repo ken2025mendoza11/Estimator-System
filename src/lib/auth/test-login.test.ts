@@ -7,6 +7,7 @@ import {
   isTestDeployment,
   seedRefusal,
 } from "./test-login";
+import { release1SalesApprovers } from "../estimator/departments.js";
 
 const url = "https://test-project.supabase.co";
 
@@ -102,7 +103,7 @@ describe("TEST_USERS", () => {
   it("is staff, lead, head, and admin, plus pending and declined sign-ins", () => {
     assert.deepEqual(
       TEST_USERS.filter((user) => !user.accountStatus || user.accountStatus === "active").map((user) => user.role),
-      ["staff", "lead", "head", "admin"],
+      ["staff", "lead", "head", "admin", "staff", "staff", "lead"],
     );
     const pending = TEST_USERS.find((user) => user.email === "sample-pending@estimator-test.invalid");
     const declined = TEST_USERS.find((user) => user.email === "sample-declined@estimator-test.invalid");
@@ -110,5 +111,14 @@ describe("TEST_USERS", () => {
     assert.equal(pending?.role, "staff");
     assert.equal(declined?.accountStatus, "declined");
     assert.equal(declined?.label, "Declined");
+    for (const email of ["sales@estimator-test.invalid", "sales2@estimator-test.invalid", "sales-manager@estimator-test.invalid"]) {
+      assert.equal(TEST_USERS.some((user) => user.email === email), true, email);
+    }
+    const wired = release1SalesApprovers(TEST_USERS.filter((user) => !user.accountStatus || user.accountStatus === "active"));
+    assert.ok(wired);
+    assert.equal(wired.markup[0].userId, "99999999-9999-4999-8999-999999999999");
+    assert.equal(wired.markup[0].backupUserId, "88888888-8888-4888-8888-888888888888");
+    assert.equal(wired.proposal[0].userId, wired.markup[0].userId);
+    assert.equal(wired.jobOrder[0].backupUserId, wired.markup[0].backupUserId);
   });
 });

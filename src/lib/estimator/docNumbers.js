@@ -33,7 +33,7 @@ const JO_TYPES = ["SW", "F", "T", "O"];
 
 /**
  * JO-<3-digit seq>-<type>-<client code>-<YY>-<proposal control>.
- * The first issue has no REV. The first revision is REV001.
+ * The first issue has no REV. A revision is the same number plus REV001, with no hyphen.
  * @param {number | string} seq
  * @param {string} type
  * @param {string} clientCode
@@ -58,7 +58,47 @@ export function formatJobOrderNo(seq, type, clientCode, year, controlNo, rev) {
   const revision = Math.trunc(Number(rev) || 0);
   if (!revision) return base;
   if (revision < 1 || revision > 999) return "";
-  return `${base}-REV${String(revision).padStart(3, "0")}`;
+  return `${base}REV${String(revision).padStart(3, "0")}`;
+}
+
+/**
+ * A job order number, including a revision with no hyphen before REV.
+ * @param {unknown} joNo
+ * @returns {boolean}
+ */
+export function jobOrderNoValid(joNo) {
+  return /^JO-\d{3}-(SW|F|T|O)-[A-Z0-9]{1,8}-\d{2}-\d{4}(REV\d{3})?$/.test(String(joNo || "").trim());
+}
+
+/**
+ * The 3-digit sequence restarts at 001 for each year. 26 and 27 can both have 001.
+ * @param {Record<string, number> | null | undefined} counters
+ * @param {unknown} year
+ * @returns {{ ok: true, seq: number, yearKey: string, counters: Record<string, number> } | { ok: false, message: string }}
+ */
+export function nextYearSequence(counters, year) {
+  const digits = String(year || "").replace(/\D/g, "");
+  const yearKey = digits.length >= 2 ? digits.slice(-2) : "";
+  if (!yearKey) return { ok: false, message: "A year is required." };
+  const current = Number(counters?.[yearKey] || 0);
+  if (!Number.isFinite(current) || current < 0) return { ok: false, message: "The year counter is not valid." };
+  if (current >= 999) return { ok: false, message: "Job order numbers for this year are exhausted." };
+  const seq = current + 1;
+  return { ok: true, seq, yearKey, counters: { ...(counters || {}), [yearKey]: seq } };
+}
+
+/**
+ * Refuse a number that is already registered or not in the job order format.
+ * @param {unknown[] | null | undefined} registry
+ * @param {unknown} joNo
+ * @returns {{ ok: true, joNo: string } | { ok: false, message: string }}
+ */
+export function registerJobOrderNo(registry, joNo) {
+  const jo = String(joNo || "").trim();
+  if (!jobOrderNoValid(jo)) return { ok: false, message: "That job order number is not valid." };
+  const taken = (Array.isArray(registry) ? registry : []).some((row) => String(row || "").trim() === jo);
+  if (taken) return { ok: false, message: "That job order number is already used." };
+  return { ok: true, joNo: jo };
 }
 
 /**

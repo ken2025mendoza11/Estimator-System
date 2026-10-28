@@ -1,43 +1,63 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { sendRelease1Mail } from "@/lib/estimator/release1Mail.server";
-import { expiringProposals, runEscalation } from "@/lib/estimator/release1Monitor";
+import { requireUserId } from "@/lib/auth/verify.server";
+import { mailForRoster, release1RequestAllowed, sendRelease1Mail } from "@/lib/estimator/release1Mail.server";
+import { executeServerEscalation } from "@/lib/estimator/release1Monitor";
+import { loadRelease1Store, saveRelease1Store } from "@/lib/estimator/release1Store.server";
 
 /**
- * Ken, or a scheduler, POSTs waiting documents here. This does not read the database.
- * It moves a step that has waited 12 hours, then emails when the address contains "@".
- * An empty RELEASE1_MAIL_KEY skips the email and logs that, without the key.
+ * A signed-in user or the scheduler secret. The route reads and saves stored documents.
+ * It does not trust a document list posted by the browser.
  */
+async function allow(request: Request) {
+	let userId = "";
+	try {
+		userId = await requireUserId();
+	} catch {
+		userId = "";
+	}
+	return release1RequestAllowed({
+		schedulerHeader: request.headers.get("x-release1-scheduler"),
+		secret: process.env.RELEASE1_SCHEDULER_SECRET,
+		userId,
+	});
+}
+
 export const Route = createFileRoute("/api/release1-escalate")({
-  server: {
-    handlers: {
-      POST: async ({ request }) => {
-        const body = (await request.json().catch(() => ({}))) as {
-          items?: unknown;
-          proposals?: unknown;
-          now?: unknown;
-        };
-        const now = typeof body?.now === "string" && body.now ? body.now : new Date().toISOString();
-        const escalated = runEscalation(Array.isArray(body?.items) ? body.items : [], now);
-        const expiring = expiringProposals(Array.isArray(body?.proposals) ? body.proposals : [], now);
-        const notices = [
-          ...escalated.map((row) => ({
-            toUserId: row.toUserId,
-            notice: row.notice,
-            id: String(row.doc?.controlNo || row.doc?.joNo || row.doc?.ceId || row.doc?.id || ""),
-          })),
-          ...expiring,
-        ];
-        const mail = [];
-        for (const notice of notices) {
-          if (!notice.toUserId || !String(notice.toUserId).includes("@")) continue;
-          mail.push(await sendRelease1Mail({
-            to: notice.toUserId,
-            subject: notice.notice,
-            text: `${notice.notice} ${notice.id || ""}`.trim(),
-          }));
-        }
-        return Response.json({ ok: true, escalated, expiring, mail });
-      },
-    },
-  },
+	server: {
+		handlers: {
+			POST: async ({ request }) => {
+				const allowed = await allow(request);
+				if (!allowed.ok) return Response.json(allowed, { status: 401 });
+				const loaded = await loadRelease1Store();
+				if (!loaded.ok || !loaded.documents) return Response.json({ ok: false, message: loaded.message || "The document store is not configured." }, { status: 503 });
+				const body = (await request.json().catch(() => ({}))) as { now?: unknown };
+				const now = typeof body?.now === "string" && body.now ? body.now : undefined;
+				const result = await executeServerEscalation({
+					read: async () => loaded.documents,
+					save: async (documents) => {
+						await saveRelease1Store(loaded, documents);
+					},
+					now,
+				});
+				const mail = [];
+				for (const notice of result.notices) {
+					const label = String(notice.doc?.controlNo || notice.doc?.joNo || notice.doc?.ceId || notice.doc?.id || "");
+					const letter = mailForRoster({
+						toUserId: notice.toUserId,
+						template: notice.template,
+						label,
+						roster: loaded.documents.roster,
+					});
+					if (!letter.ok) continue;
+					mail.push(await sendRelease1Mail({ to: letter.to, subject: letter.subject, text: letter.text }));
+				}
+				return Response.json({
+					ok: true,
+					escalated: result.notices.filter((notice) => notice.template === "escalated"),
+					expiring: result.notices.filter((notice) => notice.template === "expiring"),
+					mail,
+				});
+			},
+		},
+	},
 });

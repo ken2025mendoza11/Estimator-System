@@ -275,7 +275,7 @@ export function actorMayDecideMarkup(markup, actorId) {
 
 /**
  * @param {any} markup
- * @param {{ actorId?: unknown, decision?: unknown, remarks?: unknown, now?: unknown }} input
+ * @param {{ actorId?: unknown, decision?: unknown, remarks?: unknown, now?: unknown, approverName?: unknown }} input
  * @returns {{ ok: true, markup: any, final: boolean, toUserId?: string } | { ok: false, message: string, markup?: undefined, final?: undefined, toUserId?: undefined }}
  */
 export function decideMarkup(markup, input) {
@@ -294,14 +294,16 @@ export function decideMarkup(markup, input) {
 	if (decision === "return" && !remarks) return { ok: false, message: "A remark is required." };
 	const at = input?.now ? String(input.now) : new Date().toISOString();
 	const forUserId = asBackup ? step.userId : "";
-	const note = forUserId ? [backupSignatureLabel(forUserId), remarks].filter(Boolean).join(" ") : remarks;
-	steps[index] = { ...step, decision, byUserId: actorId, at, remarks: note, forUserId };
+	const approverFor = forUserId ? backupSignatureLabel(String(input?.approverName || "").trim()) : "";
+	const note = [approverFor, remarks].filter(Boolean).join(" ");
+	steps[index] = { ...step, decision, byUserId: actorId, at, remarks: note, forUserId, approverFor };
 	const timeline = [...(markup.timeline || []), entry(actorId, decision === "return" ? "Markup returned" : "Markup approved", note, at)];
+	const signed = approverFor ? { approverFor } : {};
 	if (decision === "return") {
-		return { ok: true, markup: { ...markup, status: "Returned", steps, timeline }, final: false };
+		return { ok: true, markup: { ...markup, ...signed, status: "Returned", steps, timeline }, final: false };
 	}
 	if (index >= steps.length - 1) {
-		return { ok: true, markup: { ...markup, status: "Approved", steps, timeline }, final: true };
+		return { ok: true, markup: { ...markup, ...signed, status: "Approved", steps, timeline }, final: true };
 	}
 	const nextIndex = index + 1;
 	return {

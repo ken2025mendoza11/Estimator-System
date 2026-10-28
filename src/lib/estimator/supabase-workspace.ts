@@ -1068,9 +1068,24 @@ function remember(
   revisions[docKey(kind, id)] = { version, hash: deleted ? "" : hash, synced, deleted };
 }
 
-/** 3-digit job-order sequence. Null means next_job_order_seq is not applied yet. */
-export async function allocateJobOrderSeq(): Promise<number | null> {
+/** 3-digit job-order sequence for one year. Falls back to the older global sequence when the year function is not applied yet. */
+export async function allocateJobOrderSeq(year?: string | number): Promise<number | null> {
   await ensureSupabaseAccess();
+  const digits = String(year ?? "").replace(/\D/g, "");
+  const yearKey = digits.length >= 2 ? digits.slice(-2) : "";
+  if (yearKey) {
+    const yearRpc = await supabase.rpc("next_job_order_seq_for_year", { p_year: yearKey });
+    if (!yearRpc.error) {
+      const body = yearRpc.data && typeof yearRpc.data === "object" ? (yearRpc.data as { ok?: boolean, seq?: number, reason?: string }) : {};
+      if (body.ok === false) throw new Error(body.reason || "Could not take a job order number.");
+      const seq = Number(body.seq);
+      return Number.isFinite(seq) && seq > 0 ? seq : null;
+    }
+    const message = String(yearRpc.error.message || "");
+    const code = String(yearRpc.error.code || "");
+    const missing = code === "PGRST202" || code === "42883" || /next_job_order_seq_for_year/i.test(message);
+    if (!missing) throw yearRpc.error;
+  }
   const { data, error } = await supabase.rpc("next_job_order_seq");
   if (error) {
     const message = String(error.message || "");
