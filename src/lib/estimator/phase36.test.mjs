@@ -56,10 +56,12 @@ test("a ce-approved email uses the CE number and a markup email uses the markup 
 	const shared = documentsFromRows([
 		{ kind: "markup", doc_id: "CE-1-MK", payload: { id: "CE-1-MK", ceId: "CE-1", status: "Approved" } },
 		{ kind: "proposal", doc_id: "0004", payload: { id: "0004", controlNo: "0004", ceId: "CE-1", status: "Approved" } },
+		{ kind: "ce", doc_id: "CE-1", payload: { summary: { id: "CE-1" }, document: { projectInfo: { docNo: "CE-26-009" } } } },
 	]);
 	shared.jobOrders = [{ id: "JO-1", joNo: "JO-001-SW-SAM-26-0004", ceId: "CE-1" }];
 	const markupLabel = storedDocumentLabel(shared, "CE-1-MK", "markup");
-	assert.equal(markupLabel, "CE-1");
+	assert.equal(markupLabel, "CE-26-009");
+	assert.equal(markupLabel.includes("CE-1"), false);
 	assert.equal(markupLabel.includes("0004"), false);
 	assert.equal(markupLabel.includes("JO-001"), false);
 	const markupLetter = mailForRoster({ toUserId: "sales-1", template: "approved", label: markupLabel, roster });
@@ -77,7 +79,8 @@ test("a ce-approved email uses the CE number and a markup email uses the markup 
 		},
 	});
 	const markupBody = JSON.parse(String(sent[1]?.body || "{}"));
-	assert.equal(markupBody.text, "CE-1 was approved.");
+	assert.equal(markupBody.text, "CE-26-009 was approved.");
+	assert.equal(markupBody.text.includes("CE-1"), false);
 	assert.equal(markupBody.text.includes("0004"), false);
 	const route = text("src/routes/api/release1-mail.ts");
 	const app = text("src/components/CostEstimatorApp.jsx");

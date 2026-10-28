@@ -1,6 +1,8 @@
 /**
- * Seed the TEST project only. Refuses unless the test URL matches
- * (see seedRefusal). Upserts by id. Does not delete rows.
+ * Seed the TEST project only. Refuses unless the Supabase URL is the
+ * estimator-test project and DATABASE_URL is the estimator-test-auth
+ * sign-in database (see seedRefusal and seedWriteTarget). Upserts by id.
+ * Does not delete rows.
  *
  *   npm run seed:test
  *   npx tsx scripts/seed-test.mjs --fixture-only
@@ -15,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { hashPassword } from "better-auth/crypto";
 import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
+import { seedWriteTarget } from "./seed-safety.mjs";
 import { release1SalesApprovers } from "../src/lib/estimator/departments.js";
 import { buildDirectCes } from "./seed-documents.mjs";
 import { buildSampleSet, rceRequestRow, roleRowFor } from "./seed-samples.mjs";
@@ -568,6 +571,13 @@ export async function main() {
   const reason = seedRefusal(process.env);
   if (reason) {
     console.error(reason);
+    process.exitCode = 1;
+    return;
+  }
+  const target = seedWriteTarget(process.env);
+  for (const line of target.lines) console.log(line);
+  if (!target.ok) {
+    console.error(target.message);
     process.exitCode = 1;
     return;
   }
