@@ -79,6 +79,19 @@ export function Release1Admin({ cfg, patch }) {
 				<span>Markup on an approved estimate</span>
 			</label>
 			<p className="wiz-hint">Sales can generate a markup from the estimate total. Profit, contingency, and mark up are editable. Approvers come from the Markup list.</p>
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={features.release1Proposal === true}
+					onChange={(event) => patch({ features: { ...features, release1Proposal: event.target.checked === true } })}
+				/>
+				<span>Proposal from an approved markup</span>
+			</label>
+			<p className="wiz-hint">Sales enters the client's PR number. The 4-digit control number comes from the database. Clauses start from the text below and can be changed on each proposal.</p>
+			<label className="wiz-field">
+				<span className="ce-field-label">Proposal clauses</span>
+				<textarea className="ce-input" rows={4} value={cfg.proposalClauses || ""} onChange={(event) => patch({ proposalClauses: event.target.value })} />
+			</label>
 			{on ? (
 				<div>
 					<h4 className="ce-serif admin-subhead">Department</h4>

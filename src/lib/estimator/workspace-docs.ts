@@ -11,6 +11,7 @@ export const DOC_KINDS = [
   "schema",
   "notifications",
   "wipes",
+  "proposal",
 ] as const;
 
 export type DocKind = (typeof DOC_KINDS)[number];
@@ -30,6 +31,7 @@ const APP_KEYS = [
   "scopeTemplates",
   "notifications",
   "dbWipeRequests",
+  "proposals",
 ] as const;
 
 export type LocalDoc = {
@@ -254,6 +256,11 @@ export function splitWorkspace(payload: WorkspacePayload): LocalDoc[] {
   const wipes = Array.isArray(app.dbWipeRequests) ? (app.dbWipeRequests as Json) : [];
   pushDoc(docs, "notifications", SINGLETONS.notifications, notifications, 0);
   pushDoc(docs, "wipes", SINGLETONS.wipes, wipes, 0);
+  readList(payload, "proposals").forEach((item, index) => {
+    const record = asRecord(item);
+    const id = requireId("proposal", String(record.id || record.controlNo || ""));
+    pushDoc(docs, "proposal", id, item as Json, index);
+  });
   return docs;
 }
 
@@ -298,6 +305,7 @@ export function assembleWorkspace(
   const schema = take("schema")[0];
   const notes = take("notifications")[0];
   const wipes = take("wipes")[0];
+  const proposalRows = take("proposal");
   for (const row of rows) {
     if (!row.deleted) continue;
     if (!DOC_KINDS.includes(row.kind as DocKind)) continue;
@@ -325,6 +333,7 @@ export function assembleWorkspace(
   const adminConfig = (admin?.payload as Json) ?? {};
   const notifications = Array.isArray(notes?.payload) ? notes.payload : [];
   const dbWipeRequests = Array.isArray(wipes?.payload) ? wipes.payload : [];
+  const proposals = proposalRows.map((row) => row.payload);
   const schemaRecord = asRecord(schema?.payload);
   const app = asRecord(schemaRecord.__app);
   delete app.adminConfig;
@@ -333,6 +342,7 @@ export function assembleWorkspace(
   delete app.scopeTemplates;
   delete app.notifications;
   delete app.dbWipeRequests;
+  delete app.proposals;
   const schemaConfig = {
     ...schemaRecord,
     __app: {
@@ -343,6 +353,7 @@ export function assembleWorkspace(
       scopeTemplates,
       notifications,
       dbWipeRequests,
+      proposals,
     },
   } as WorkspacePayload["schemaConfig"];
 
@@ -525,6 +536,10 @@ export function mergeServerWithDirty(
       app.dbWipeRequests = doc.payload;
       schema.__app = app;
       next.schemaConfig = schema as WorkspacePayload["schemaConfig"];
+    } else if (doc.kind === "proposal") {
+      const rows = listRows(next, "proposals");
+      replaceRow(rows, doc.id, doc.payload);
+      putList(next, "proposals", rows);
     }
   }
   next.ceList = ces;

@@ -35,6 +35,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
 | 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
 | 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
+| 30 | Proposal with Word and PDF | done | `grok/phase-30` | |
 
 ## Step 1 done
 
@@ -56,6 +57,19 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 30 done
+
+Stacked on `grok/phase-29` (https://github.com/ken2025mendoza11/Estimator-System/pull/28 is still open). Draft PR: pending. Do not merge to `main`.
+
+- Flag `release1Proposal` is off in the app. The TEST seed turns it on. While it is off, there is no Generate Proposal button.
+- While it is on, Sales can generate a proposal from an approved markup. The price breakdown marks up each cost group already on the estimate. It does not recompute cost-estimate lines. A 1,000,000 direct cost at 100% sells at 2,000,000.
+- The client's PR number is typed (for example PR 26-360801). A duplicate blocks the save. The 4-digit control number comes from `next_proposal_control_no`. If that function is missing, the button explains that and does not write a proposal, so the rest of the app still saves.
+- Clauses start from the Admin text and can be edited on that proposal. Validity is 30 days and can be changed. Statuses: Draft, Submitted, Approved, Sent, Won, Lost, Expired, Cancelled. Lost and Expired need a remark. Won is a function for the job order. There is no Won button. Expired can generate a revision or record that no revision is needed. An edit before the final approver keeps the control number and the rev. Revise after that makes the next rev. A banner shows when the cost estimate rev is newer.
+- Word (`.docx`) and PDF use the same lines. Approvers are the Proposal list. Timeline `who` is the account id.
+- SQL (not run): `supabase/p30-proposal-2026-10-28.sql` and its rollback. It allows the `proposal` document kind, and it stores the control-number sequence and the unique PR number.
+
+Tests: `src/lib/estimator/proposal.test.mjs` and one case in `workspace-docs.test.ts`. `npm test` 393 + 98, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
 
 ## Step 29 done
 
