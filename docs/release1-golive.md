@@ -31,12 +31,15 @@ These are the scripts from Steps 1–33. Step 32 and Step 33 add no SQL. Skip a 
 | 13 | `supabase/p27-ce-lock-2026-10-28.sql` | `supabase/p27-ce-lock-2026-10-28-rollback.sql` |
 | 14 | `supabase/p30-proposal-2026-10-28.sql` | `supabase/p30-proposal-2026-10-28-rollback.sql` |
 | 15 | `supabase/p31-job-order-2026-10-28.sql` | `supabase/p31-job-order-2026-10-28-rollback.sql` |
+| 16 | `supabase/p34-release1-2026-10-28.sql` | `supabase/p34-release1-2026-10-28-rollback.sql` |
 
-`p30` must be applied before the seed writes a proposal. `p31` must be applied before a proposal number or a job order number can be taken from the database. The app still saves when those functions are missing; the new buttons explain that and do not write the document.
+`p30` must be applied before a proposal number can be taken. `p31` must be applied before a job order number can be taken. `p34` comes after both. It lets an award or a cancel change a locked estimate, stores markups as their own kind, refuses a job order number that is already taken, restarts the job order sequence each year, and stops an empty PR number from deleting another proposal. The app still saves when those functions are missing; the new buttons explain that and do not write the document.
+
+The `p30` rollback deletes saved proposals (`delete from workspace_docs where kind = 'proposal'`). Back up first. The `p34` rollback does not delete proposals. It restores the older claim functions, including the empty-PR delete, so do not roll `p34` back unless you mean to.
 
 ## Rollback order
 
-Reverse of the table, and only for scripts that were applied: 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1. Each rollback file removes only what its script added. Do not run a later rollback before the script that depends on it has been undone.
+Reverse of the table, and only for scripts that were applied: 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1. Each rollback file removes only what its script added. Do not run a later rollback before the script that depends on it has been undone.
 
 ## Flags to turn on together
 
@@ -61,7 +64,11 @@ Email stays empty until you choose a provider. Server only, never `VITE_`:
 - `RELEASE1_MAIL_URL`
 - `RELEASE1_MAIL_FROM`
 
-An empty key skips mail and logs that the send was skipped. The key is not written in the log. Escalation is `POST /api/release1-escalate` with the waiting documents. It does not read the database. Call it from a scheduler if it must run while the app is closed. Twelve hours moves the step to its backup, or to the next approver when there is no backup.
+An empty key skips mail and logs that the send was skipped. The key is not written in the log.
+
+Escalation and expiring notices run on the server. They read and save the stored documents. The browser does not start them. Set `RELEASE1_SCHEDULER_SECRET` on the server only (empty in `.env.example`, no `VITE_` prefix). Also set `SUPABASE_SERVICE_ROLE_KEY` on the server so the route can read the roster and the documents. Do not configure a cron from this repo.
+
+A scheduler Ken controls can POST `/api/release1-escalate` with header `x-release1-scheduler: $RELEASE1_SCHEDULER_SECRET`. Twelve hours moves the step to its backup. Another twelve hours moves it to the next approver. The same step is not repeated. An already expired proposal is skipped. Mail from that route uses the fixed templates and only roster addresses. `/api/release1-mail` accepts the same header, or a signed-in user. The body is `{ "toUserId", "template", "label" }`. Templates: `needs-approval`, `approved`, `returned`, `escalated`, `expiring`, `ce-approved`.
 
 ## Seed
 
@@ -69,7 +76,7 @@ After the SQL, on `estimator-test` only:
 
 `npm run seed:test`
 
-That writes one sample at each stage (accepted RCE, done CE, approved markup, approved proposal, submitted job order, Awarded) for staff, lead, head, and admin. Job orders are merged into the schema document. Other schema keys are left in place. This was not run from here.
+That writes one sample at each stage (accepted RCE, done CE, approved markup, approved proposal, submitted job order, Awarded) for staff, lead, head, and admin. Markup is its own document. Award status stays on the job order, not on the estimate. The seed also signs in a Sales rep, a second Sales rep, and a Sales manager, and wires them as the markup, proposal, and job order approvers. It registers the sample proposal and job order numbers and advances the counters (proposal 3614, year 26 sequence 14) so the next real number does not collide with a sample. Sample job orders record the PO file name only. A new job order uploads the file into `estimator-files` and stores that path. If `p34` is not applied yet, that registration is logged and skipped. Job orders are merged into the schema document. Other schema keys are left in place. This was not run from here.
 
 ## Smoke checks
 
@@ -81,7 +88,7 @@ Sign in as each role. The account id in the timeline is the identity. A display 
 | Lead (Cost Estimating) | The sample queue for lead still opens. Approving a sample markup, proposal, or job order records the lead account id. |
 | Head (Management) | Final approval still works. A backup signature reads `for <name>` and the timeline `who` is the backup account id. |
 | Admin | Admin can turn the flags on, edit proposal clauses, and reassign a proposal or job order. Admin cannot be the only thing that keeps an estimate total correct. |
-| Sales | With the flags on, generate markup on an approved estimate, then a proposal, then a job order. The job order and its attachment show quantities and no prices. Approve the job order: the estimate is Awarded and the proposal is Won. Cancel it: the estimate returns to Done and the proposal returns to Approved. |
+| Sales | With the flags on, generate markup on an approved estimate, then a proposal, then a job order. The job order and its attachment show quantities and no prices. The PO or NTP file is uploaded to `estimator-files` (the job order stores the storage path, not the file bytes). Approve the job order: the estimate status becomes Awarded and the proposal becomes Won. The estimate does not gain `awardStatus` or `awardJo`. Cancel it: the estimate and the proposal go back to the status they had before the award (the sample's previous status is Done and Approved), not a hardcoded path. |
 | Sales, second account | Take over an approved proposal. The new owner is that account id. |
 
 Also confirm: a duplicate client PR number is refused; a missing number function does not save a blank proposal or job order; Reports colours a 12-hour approval `#b45309`; with no mail key, the screen still works.

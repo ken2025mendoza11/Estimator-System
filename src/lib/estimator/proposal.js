@@ -1,6 +1,6 @@
 /** Proposal from an approved markup. Prices are the markup selling split by cost group. CE lines are not recomputed. */
 
-import { backupSignatureLabel, normalizeApproverLists } from "./departments.js";
+import { backupSignatureLabel, normalizeApproverLists, personName } from "./departments.js";
 import { totalPercent, sellingFromDirect } from "./markup.js";
 import { roundMoney, sumRounded } from "./money.js";
 
@@ -114,6 +114,20 @@ export function markedUpGroups(groups, parts) {
 }
 
 /**
+ * Group directs must add up to the approved markup's direct cost.
+ * A mismatch is replaced by that one direct cost so the selling price cannot drift.
+ * @param {any} markup
+ * @param {unknown} groups
+ */
+export function proposalGroupsForMarkup(markup, groups) {
+	const direct = roundMoney(Number(markup?.directCost) || 0);
+	const rows = Array.isArray(groups) ? groups : [];
+	const sum = sumRounded(rows.map((/** @type {any} */ row) => Number(row?.direct) || 0));
+	if (direct > 0 && sum === direct) return rows;
+	return [{ key: "DIRECT", label: "Direct cost", direct }];
+}
+
+/**
  * @param {any} proposal
  * @returns {boolean}
  */
@@ -140,12 +154,14 @@ export function newerCeBanner(proposal, liveRev) {
 /**
  * Lines for the Word file and the PDF. Same text in both.
  * @param {any} proposal
+ * @param {unknown[] | null | undefined} [users]
  * @returns {string[]}
  */
-export function proposalLines(proposal) {
+export function proposalLines(proposal, users) {
 	const row = proposal || {};
 	const rev = Number(row.rev) > 0 ? ` Rev ${row.rev}` : "";
 	const groups = Array.isArray(row.groups) ? row.groups : [];
+	const name = (/** @type {unknown} */ id) => personName(id, users);
 	return [
 		String(row.header || "Proposal"),
 		`PR no. ${row.prNo || "—"}`,
@@ -162,8 +178,9 @@ export function proposalLines(proposal) {
 		"Clauses",
 		String(row.clauses || ""),
 		`Valid until ${row.validUntil || "—"} (${row.validityDays ?? 30} days)`,
-		`Sales Rep ${row.salesRepId || ""}`,
-		`Approver ${row.approverId || ""}`,
+		`Sales Rep ${name(row.salesRepId)}`,
+		`Approver ${name(row.approverId)}`,
+		row.approverFor ? `Signature ${row.approverFor}` : "Signature",
 		`Client conforme ${row.clientConforme || ""}`,
 	];
 }
@@ -179,7 +196,9 @@ export function createProposal(input) {
 	if (!controlNo) return { ok: false, message: "A 4-digit control number from the database is required." };
 	const parts = input?.parts;
 	if (!parts || typeof parts !== "object") return { ok: false, message: "An approved markup is required." };
-	const priced = markedUpGroups(input?.groups, parts);
+	const official = roundMoney(Number(input?.directCost ?? input?.markup?.directCost) || 0);
+	const groups = official > 0 ? proposalGroupsForMarkup({ directCost: official }, input?.groups) : input?.groups;
+	const priced = markedUpGroups(groups, parts);
 	if (!(priced.direct > 0)) return { ok: false, message: "The markup has no direct cost to price." };
 	const prDate = String(input?.prDate || input?.now || "").slice(0, 10);
 	const validityDays = input?.validityDays == null || input.validityDays === "" ? 30 : Number(input.validityDays);
@@ -215,6 +234,57 @@ export function createProposal(input) {
 		timeline: [entry(byUserId, "Proposal created", "", input?.now)],
 	};
 	return { ok: true, proposal };
+}
+
+/**
+ * Only the proposal owner or an admin can change or release a PR number.
+ * An empty PR does not delete another proposal's claim.
+ * @param {{ registry?: any[], controlNo?: unknown, prNo?: unknown, actorId?: unknown, admin?: boolean }} input
+ */
+export function claimProposalNumber(input) {
+	const raw = String(input?.controlNo || "").trim();
+	if (!raw || !/^\d{1,4}$/.test(raw)) return { ok: false, message: "A 4-digit control number is required." };
+	const control = raw.padStart(4, "0");
+	const actor = String(input?.actorId || "").trim();
+	if (!actor) return { ok: false, message: "An account id is required." };
+	const pr = String(input?.prNo || "").trim().replace(/\s+/g, " ");
+	const rows = (Array.isArray(input?.registry) ? input.registry : []).map((/** @type {any} */ row) => ({ ...row }));
+	const index = rows.findIndex((row) => String(row.controlNo || "") === control);
+	const current = index >= 0 ? rows[index] : null;
+	const owner = current ? String(current.ownerId || "") : "";
+	const admin = input?.admin === true;
+	if (current && owner && owner !== actor && !admin) return { ok: false, message: "Only the owner or an admin can change this PR number." };
+	if (!pr) {
+		if (!current) return { ok: true, registry: rows };
+		const next = rows.slice();
+		next[index] = { ...current, prNo: "" };
+		return { ok: true, registry: next };
+	}
+	const taken = rows.some((row) => String(row.controlNo || "") !== control && String(row.prNo || "").toLowerCase() === pr.toLowerCase() && String(row.prNo || "") !== "");
+	if (taken) return { ok: false, message: "That PR number is already used." };
+	const next = rows.slice();
+	if (index >= 0) next[index] = { ...current, prNo: pr, ownerId: owner || actor };
+	else next.push({ controlNo: control, prNo: pr, ownerId: actor });
+	return { ok: true, registry: next };
+}
+
+/**
+ * The owner may delete a draft that was never submitted. Submitted records stay.
+ * @param {any} proposal
+ * @param {{ byUserId?: unknown, now?: unknown }} input
+ */
+export function deleteDraftProposal(proposal, input) {
+	if (!proposal || proposal.status !== "Draft") return { ok: false, message: "Only a never-submitted draft can be deleted." };
+	const submitted = (proposal.timeline || []).some((/** @type {any} */ row) => /submitted/i.test(String(row?.action || "")));
+	if (submitted || (Array.isArray(proposal.steps) && proposal.steps.length > 0)) return { ok: false, message: "A submitted proposal cannot be deleted." };
+	const byUserId = String(input?.byUserId || "").trim();
+	if (!byUserId || byUserId !== String(proposal.ownerId || "")) return { ok: false, message: "Only the owner can delete this draft." };
+	const at = input?.now ? String(input.now) : new Date().toISOString();
+	return {
+		ok: true,
+		deletedId: String(proposal.id || proposal.controlNo || ""),
+		entry: { id: crypto.randomUUID(), at, who: byUserId, action: "Draft proposal deleted", remarks: "" },
+	};
 }
 
 /**
@@ -305,7 +375,7 @@ export function actorMayDecideProposal(proposal, actorId) {
 
 /**
  * @param {any} proposal
- * @param {{ actorId?: unknown, decision?: unknown, remarks?: unknown, now?: unknown }} input
+ * @param {{ actorId?: unknown, decision?: unknown, remarks?: unknown, now?: unknown, approverName?: unknown }} input
  * @returns {{ ok: true, proposal: any, final?: boolean, toUserId?: string } | { ok: false, message: string, proposal?: undefined }}
  */
 export function decideProposal(proposal, input) {
@@ -324,8 +394,9 @@ export function decideProposal(proposal, input) {
 	if (decision === "return" && !remarks) return { ok: false, message: "A remark is required." };
 	const at = input?.now ? String(input.now) : new Date().toISOString();
 	const forUserId = asBackup ? step.userId : "";
-	const note = forUserId ? [backupSignatureLabel(forUserId), remarks].filter(Boolean).join(" ") : remarks;
-	steps[index] = { ...step, decision, byUserId: actorId, at, remarks: note, forUserId };
+	const approverFor = forUserId ? backupSignatureLabel(String(input?.approverName || "").trim()) : "";
+	const note = [approverFor, remarks].filter(Boolean).join(" ");
+	steps[index] = { ...step, decision, byUserId: actorId, at, remarks: note, forUserId, approverFor };
 	const timeline = [...(proposal.timeline || []), entry(actorId, decision === "return" ? "Proposal returned" : "Proposal approved", note, at)];
 	if (decision === "return") {
 		return { ok: true, proposal: { ...proposal, status: "Draft", finalApproved: false, steps, timeline } };
@@ -334,7 +405,7 @@ export function decideProposal(proposal, input) {
 		return {
 			ok: true,
 			final: true,
-			proposal: { ...proposal, status: "Approved", finalApproved: true, approverId: actorId, steps, timeline },
+			proposal: { ...proposal, status: "Approved", finalApproved: true, approverId: actorId, approverFor, steps, timeline },
 		};
 	}
 	return {
@@ -405,7 +476,7 @@ export function markProposalWon(proposal, input) {
  * @returns {{ ok: true, proposal: any } | { ok: false, message: string, proposal?: undefined }}
  */
 export function reviseProposal(proposal, input) {
-	if (!proposal || (proposal.status !== "Approved" && proposal.status !== "Expired")) return { ok: false, message: "Revise an approved or expired proposal." };
+	if (!proposal || (proposal.status !== "Approved" && proposal.status !== "Sent" && proposal.status !== "Expired")) return { ok: false, message: "Revise an approved, sent, or expired proposal." };
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId) return { ok: false, message: "An account id is required." };
 	const remarks = String(input?.remarks || "").trim();

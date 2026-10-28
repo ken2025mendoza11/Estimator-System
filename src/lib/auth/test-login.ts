@@ -20,6 +20,10 @@ export type TestUser = {
   userId: string;
   /** Omitted means active. Pending and declined are picker accounts, not new roles. */
   accountStatus?: "active" | "pending" | "declined";
+  /** Fixed department used by the TEST seed. Omitted keeps the role default. */
+  accountDepartment?: string;
+  /** Job title. The Sales manager row uses this so the seed can tell a manager from a lead. */
+  designation?: string;
 };
 
 /** Fake users for the test picker and scripts/seed-test.mjs. Not real people. */
@@ -67,6 +71,31 @@ export const TEST_USERS: readonly TestUser[] = [
     email: "sample-declined@estimator-test.invalid",
     userId: "66666666-6666-4666-8666-666666666666",
     accountStatus: "declined",
+  },
+  {
+    role: "staff",
+    label: "Sales",
+    name: "Test Sales",
+    email: "sales@estimator-test.invalid",
+    userId: "77777777-7777-4777-8777-777777777777",
+    accountDepartment: "Sales",
+  },
+  {
+    role: "staff",
+    label: "Sales",
+    name: "Test Sales Two",
+    email: "sales2@estimator-test.invalid",
+    userId: "88888888-8888-4888-8888-888888888888",
+    accountDepartment: "Sales",
+  },
+  {
+    role: "lead",
+    label: "Sales Manager",
+    designation: "Sales Manager",
+    name: "Test Sales Manager",
+    email: "sales-manager@estimator-test.invalid",
+    userId: "99999999-9999-4999-8999-999999999999",
+    accountDepartment: "Sales",
   },
 ];
 

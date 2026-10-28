@@ -3,7 +3,7 @@
 import { holderId } from "./monitoringFamilies.js";
 import { escalationDue } from "./reminders.js";
 import { speedDays, winRate } from "./reports.js";
-import { accountId } from "./departments.js";
+import { accountId, personName } from "./departments.js";
 
 export const RELEASE1_MONITOR_FLAG = "release1Monitor";
 export const ESCALATE_HOURS = 12;
@@ -53,30 +53,36 @@ function waitingSince(row) {
 }
 
 /**
- * @param {{ proposals?: any[], jobOrders?: any[], now?: unknown }} input
+ * @param {{ proposals?: any[], jobOrders?: any[], now?: unknown, users?: unknown[] }} input
  */
 export function salesWorklist(input) {
 	const now = input?.now;
-	/** @type {{ kind: string, id: string, status: string, ageDays: number, holderId: string, ownerId: string }[]} */
+	/** @type {{ kind: string, id: string, status: string, ageDays: number, holderId: string, holderName: string, ownerId: string, ownerName: string }[]} */
 	const rows = [];
 	(input?.proposals || []).forEach((row) => {
+		const holder = holderId(row) || String(row.ownerId || "");
 		rows.push({
 			kind: "proposal",
 			id: String(row.controlNo || row.id || ""),
 			status: String(row.status || ""),
 			ageDays: ageDays(row.prDate || row.timeline?.[0]?.at, now),
-			holderId: holderId(row) || String(row.ownerId || ""),
+			holderId: holder,
+			holderName: personName(holder, input?.users),
 			ownerId: String(row.ownerId || ""),
+			ownerName: personName(row.ownerId, input?.users),
 		});
 	});
 	(input?.jobOrders || []).forEach((row) => {
+		const holder = holderId(row) || String(row.ownerId || "");
 		rows.push({
 			kind: "jobOrder",
 			id: String(row.joNo || row.id || ""),
 			status: String(row.status || ""),
 			ageDays: ageDays(row.dateIssued || row.timeline?.[0]?.at, now),
-			holderId: holderId(row) || String(row.ownerId || ""),
+			holderId: holder,
+			holderName: personName(holder, input?.users),
 			ownerId: String(row.ownerId || ""),
+			ownerName: personName(row.ownerId, input?.users),
 		});
 	});
 	return rows;
@@ -85,14 +91,17 @@ export function salesWorklist(input) {
 /**
  * @param {any[]} docs
  * @param {unknown} now
+ * @param {unknown[] | null | undefined} [users]
  */
-export function pendingApprovals(docs, now) {
+export function pendingApprovals(docs, now, users) {
 	return (docs || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => {
 		const hours = hoursSince(waitingSince(row), now);
+		const holder = holderId(row);
 		return {
 			kind: String(row.kind || ""),
 			id: String(row.controlNo || row.joNo || row.id || ""),
-			holderId: holderId(row),
+			holderId: holder,
+			holderName: personName(holder, users),
 			hours: Math.round(hours * 10) / 10,
 			overdue: escalationDue(waitingSince(row), now, ESCALATE_HOURS),
 		};
@@ -100,10 +109,11 @@ export function pendingApprovals(docs, now) {
 }
 
 /**
- * @param {{ proposals?: any[], ces?: any[], now?: unknown }} input
+ * @param {{ proposals?: any[], ces?: any[], now?: unknown, users?: unknown[] }} input
  */
 export function monitorDashboard(input) {
 	const ces = input?.ces || [];
+	const users = input?.users;
 	const win = winRate(ces.map((row) => ({
 		awardStatus: row.awardStatus || (String(row.status || "") === "Awarded" ? "Awarded" : ""),
 	})));
@@ -111,15 +121,40 @@ export function monitorDashboard(input) {
 		received: row.received || row.dateReceived || "",
 		done: row.status === "Done" || row.status === "Awarded" ? (row.done || row.lastEdited || "") : "",
 	})));
-	/** @type {Record<string, { salesRepId: string, count: number, oldestDays: number }>} */
+	/** @type {Record<string, { salesRepId: string, salesRepName: string, ces: any[], proposals: any[] }>} */
+	const buckets = {};
+	const bucket = (/** @type {unknown} */ id) => {
+		const salesRepId = String(id || "");
+		if (!buckets[salesRepId]) buckets[salesRepId] = { salesRepId, salesRepName: personName(salesRepId, users), ces: [], proposals: [] };
+		return buckets[salesRepId];
+	};
+	ces.forEach((row) => bucket(row.salesRepId || row.salesOwnerId || row.ownerId).ces.push(row));
+	(input?.proposals || []).forEach((row) => bucket(row.salesRepId || row.ownerId).proposals.push(row));
+	const bySalesRep = Object.values(buckets).map((group) => {
+		const aging = group.proposals.reduce((oldest, row) => Math.max(oldest, ageDays(row.prDate || row.timeline?.[0]?.at, input?.now)), 0);
+		return {
+			salesRepId: group.salesRepId,
+			salesRepName: group.salesRepName,
+			winRate: winRate(group.ces.map((row) => ({
+				awardStatus: row.awardStatus || (String(row.status || "") === "Awarded" ? "Awarded" : ""),
+			}))),
+			ceTurnaroundDays: speedDays(group.ces.map((row) => ({
+				received: row.received || row.dateReceived || "",
+				done: row.status === "Done" || row.status === "Awarded" ? (row.done || row.lastEdited || "") : "",
+			}))),
+			proposalCount: group.proposals.length,
+			oldestDays: aging,
+		};
+	});
+	/** @type {Record<string, { salesRepId: string, salesRepName: string, count: number, oldestDays: number }>} */
 	const aging = {};
 	(input?.proposals || []).forEach((row) => {
 		const salesRepId = String(row.salesRepId || row.ownerId || "");
-		if (!aging[salesRepId]) aging[salesRepId] = { salesRepId, count: 0, oldestDays: 0 };
+		if (!aging[salesRepId]) aging[salesRepId] = { salesRepId, salesRepName: personName(salesRepId, users), count: 0, oldestDays: 0 };
 		aging[salesRepId].count += 1;
 		aging[salesRepId].oldestDays = Math.max(aging[salesRepId].oldestDays, ageDays(row.prDate || row.timeline?.[0]?.at, input?.now));
 	});
-	return { winRate: win, ceTurnaroundDays: turnaround, proposalAging: Object.values(aging) };
+	return { winRate: win, ceTurnaroundDays: turnaround, proposalAging: Object.values(aging), bySalesRep };
 }
 
 /**
@@ -128,9 +163,14 @@ export function monitorDashboard(input) {
  * @param {number} [withinDays]
  */
 export function expiringProposals(proposals, now, withinDays = 7) {
+	const end = Date.parse(String(now || ""));
 	return (proposals || []).filter((row) => {
-		if (!row || (row.status !== "Approved" && row.status !== "Sent") || !row.validUntil) return false;
-		const left = hoursSince(now, row.validUntil) / 24;
+		if (!row || row.expiryNotified === true || !row.validUntil) return false;
+		if (row.status === "Expired" || row.status === "Won" || row.status === "Lost" || row.status === "Cancelled") return false;
+		if (row.status !== "Approved" && row.status !== "Sent") return false;
+		const until = Date.parse(String(row.validUntil));
+		if (!Number.isFinite(until) || !Number.isFinite(end) || until < end) return false;
+		const left = (until - end) / 86400000;
 		return left <= withinDays;
 	}).map((row) => ({
 		id: String(row.controlNo || row.id || ""),
@@ -154,15 +194,19 @@ export function escalateWaiting(doc, now, hours = ESCALATE_HOURS) {
 	if (!step) return { ok: false, doc, message: "No approver is assigned." };
 	const since = waitingSince(doc);
 	if (!escalationDue(since, now, hours)) return { ok: false, doc, message: "Not due." };
-	if (step.escalated) return { ok: false, doc, message: "Already escalated." };
+	const keys = Array.isArray(step.escalateKeys) ? step.escalateKeys.map((/** @type {unknown} */ key) => String(key)) : [];
 	const at = String(now || "");
 	if (step.backupUserId && !step.usedBackup) {
-		steps[index] = { ...step, usedBackup: true, escalated: true, since: at };
+		const key = `backup:${index}`;
+		if (keys.includes(key)) return { ok: false, doc, message: "Already escalated." };
+		steps[index] = { ...step, usedBackup: true, since: at, escalateKeys: [...keys, key] };
 		const timeline = [...(doc.timeline || []), { id: crypto.randomUUID(), at, who: step.userId || "", action: "Escalated", remarks: step.backupUserId }];
 		return { ok: true, doc: { ...doc, steps, timeline }, toUserId: String(step.backupUserId), notice: "Escalated" };
 	}
 	if (index < steps.length - 1) {
-		steps[index] = { ...step, decision: "escalated", escalated: true, byUserId: step.userId || "" };
+		const key = `next:${index}`;
+		if (keys.includes(key)) return { ok: false, doc, message: "Already escalated." };
+		steps[index] = { ...step, decision: "escalated", byUserId: step.userId || "", escalateKeys: [...keys, key] };
 		const next = steps[index + 1];
 		next.since = at;
 		const timeline = [...(doc.timeline || []), { id: crypto.randomUUID(), at, who: step.userId || "", action: "Escalated", remarks: next.userId || "" }];
@@ -207,13 +251,76 @@ export function escalationDoc(doc) {
  */
 export function release1MailRequest(toUserId, users, subject, text) {
 	const id = String(toUserId || "").trim();
-	let email = id.includes("@") ? id : "";
-	if (!email) {
-		const hit = (Array.isArray(users) ? users : []).find((user) => accountId(user) === id);
-		email = String(hit && typeof hit === "object" ? /** @type {{ email?: unknown }} */ (hit).email || "" : "");
-	}
+	let email = "";
+	const hit = (Array.isArray(users) ? users : []).find((user) => accountId(user) === id || String(/** @type {{ email?: unknown }} */ (user)?.email || "") === id);
+	email = String(hit && typeof hit === "object" ? /** @type {{ email?: unknown }} */ (hit).email || "" : "");
 	if (!email.includes("@")) return null;
 	return { to: email, subject: String(subject || ""), text: String(text || "") };
+}
+
+/**
+ * Read the stored documents, escalate each waiting step once, and skip proposals that are already expired.
+ * A backup can be escalated again 12 hours later.
+ * @param {{ markups?: any[], proposals?: any[], jobOrders?: any[] }} documents
+ * @param {unknown} now
+ */
+export function runServerEscalation(documents, now) {
+	const source = documents || {};
+	/** @type {{ kind: string, doc: any, toUserId: string, notice: string, template: string }[]} */
+	const notices = [];
+	/** @type {any[]} */
+	const markups = [];
+	/** @type {any[]} */
+	const proposals = [];
+	/** @type {any[]} */
+	const jobOrders = [];
+	const take = (/** @type {any} */ doc, /** @type {string} */ kind, /** @type {any[]} */ into) => {
+		if (!doc) return;
+		if (kind === "proposal" && (doc.status === "Expired" || (doc.validUntil && Date.parse(String(doc.validUntil)) < Date.parse(String(now || ""))))) {
+			into.push(doc);
+			return;
+		}
+		const result = escalateWaiting(doc, now);
+		if (!result.ok) {
+			into.push(doc);
+			return;
+		}
+		const stored = escalationDoc(result.doc);
+		into.push(stored);
+		notices.push({ kind, doc: stored, toUserId: result.toUserId, notice: result.notice, template: "escalated" });
+	};
+	(source.markups || []).forEach((doc) => take(doc, "markup", markups));
+	(source.proposals || []).forEach((doc) => {
+		if (doc && doc.status !== "Expired" && doc.expiryNotified !== true && (doc.status === "Approved" || doc.status === "Sent")) {
+			const due = expiringProposals([doc], now);
+			if (due.length) {
+				const at = String(now || "");
+				const who = String(due[0].toUserId || doc.ownerId || "");
+				proposals.push({
+					...doc,
+					expiryNotified: true,
+					timeline: [...(doc.timeline || []), { id: crypto.randomUUID(), at, who, action: "Proposal expiring", remarks: "" }],
+				});
+				notices.push({ kind: "proposal", doc, toUserId: due[0].toUserId, notice: due[0].notice, template: "expiring" });
+				return;
+			}
+		}
+		take(doc, "proposal", proposals);
+	});
+	(source.jobOrders || []).forEach((doc) => take(doc, "jobOrder", jobOrders));
+	return { documents: { markups, proposals, jobOrders }, notices };
+}
+
+/**
+ * The server calls read and save. The browser does not.
+ * @param {{ read: () => Promise<{ markups?: any[], proposals?: any[], jobOrders?: any[] }>, save: (documents: { markups?: any[], proposals?: any[], jobOrders?: any[] }) => Promise<void>, now?: unknown }} input
+ */
+export async function executeServerEscalation(input) {
+	const loaded = await input.read();
+	const now = input?.now ? String(input.now) : new Date().toISOString();
+	const result = runServerEscalation(loaded, now);
+	await input.save(result.documents);
+	return result;
 }
 
 /**

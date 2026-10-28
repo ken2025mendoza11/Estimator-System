@@ -49,16 +49,18 @@ import { Phase8Admin } from "./Phase8Admin";
 import { Phase9Admin } from "./Phase9Admin";
 import { Phase10Admin } from "./Phase10Admin";
 import { Release1Admin } from "./Release1Admin";
-import { accountId, findAccount, isAdminDepartment, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
-import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "../lib/estimator/salesView";
+import { accountId, findAccount, isAdminDepartment, isCostEstimating, isSales, isSalesManager, normalizeApproverLists, personName } from "../lib/estimator/departments";
+import { ceApprovedNotice, salesOwnerAccountId } from "../lib/estimator/salesView";
+import { release1WriteAllowed } from "../lib/estimator/ceLock";
+import { askReason } from "../lib/estimator/reasonBox";
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
 import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
 import { MarkupPanel } from "./MarkupPanel";
-import { canGenerateProposal, cancelProposal, createProposal, decideProposal, markProposalExpired, markProposalLost, markProposalSent, markProposalWon, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
+import { canGenerateProposal, cancelProposal, claimProposalNumber, createProposal, decideProposal, deleteDraftProposal, markProposalExpired, markProposalLost, markProposalSent, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
 import { ProposalPanel } from "./ProposalPanel";
-import { canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
+import { applyAward, applyCancel, canCancelJobOrder, canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
 import { JobOrderPanel } from "./JobOrderPanel";
-import { escalationDoc, monitorDashboard, pendingApprovals, reassignDoc, release1MailRequest, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
+import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -3217,11 +3219,12 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							type: "button",
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: () => {
-								const why = window.prompt("What needs to change?");
-								if (!why || !String(why).trim()) return;
-								const result = onDecideNoting?.(form, "request-edit", String(why).trim());
-								if (!result?.ok) return;
-								patch({ status: result.nextStatus || "For revision", approval: result.approval });
+								void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+									if (!asked.ok) return;
+									const result = onDecideNoting?.(form, "request-edit", asked.text);
+									if (!result?.ok) return;
+									patch({ status: result.nextStatus || "For revision", approval: result.approval });
+								});
 							},
 							children: "Request edit"
 						}) : null, form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? null : form.approval?.status !== "in-progress" && form.status !== "Noted" ? /* @__PURE__ */ jsx("button", {
@@ -17716,33 +17719,38 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 								const v = e.target.value;
 								if (v === ceStatus) return;
 								if (engineOn && (v === "No quote" || v === "Cancelled" || v === "Close bid")) {
-									const note = window.prompt("Reason (required)");
-									if (!note || !String(note).trim()) return;
-									const begun = onRequestClosing?.(v, String(note).trim());
-									if (!begun?.ok) return;
-									dispatch({
-										type: "SET_APPROVAL",
-										approval: begun.approval
+									void askReason({ title: "Closing", label: "Reason", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										const begun = onRequestClosing?.(v, asked.text);
+										if (!begun?.ok) return;
+										dispatch({
+											type: "SET_APPROVAL",
+											approval: begun.approval
+										});
+										setCeStatus(begun.pendingStatus);
 									});
-									setCeStatus(begun.pendingStatus);
 									return;
 								}
-								if (!PEOPLE_SETTABLE.includes(v) && v !== ceStatus) {
-									window.alert("Only Park, Waiting for information, Sourcing, and No quote can be set here. Other statuses follow Submit / approval / generate.");
-									return;
-								}
+								if (!PEOPLE_SETTABLE.includes(v) && v !== ceStatus) return;
 								if ([
 									"Waiting for information",
 									"Sourcing",
 									"No quote"
 								].includes(v)) {
-									const note = window.prompt(v === "No quote" ? "Reason for no-quote (required)" : "Remarks for the requestor (required)");
-									if (!note || !String(note).trim()) return;
-									dispatch({
-										type: "SET_META",
-										field: "statusNote",
-										value: String(note).trim()
+									void askReason({
+										title: v === "No quote" ? "No quote" : "Remarks",
+										label: v === "No quote" ? "Reason for no-quote" : "Remarks for the requestor",
+										required: true
+									}).then((asked) => {
+										if (!asked.ok) return;
+										dispatch({
+											type: "SET_META",
+											field: "statusNote",
+											value: asked.text
+										});
+										setCeStatus(v);
 									});
+									return;
 								}
 								setCeStatus(v);
 							},
@@ -18422,7 +18430,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, markup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null, ceOptions = [], release1Message = "" }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -19239,6 +19247,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-editor-root",
 		children: [
+			release1Message ? /* @__PURE__ */ jsx("p", { className: "scope-edit-banner", role: "status", children: release1Message }) : null,
 			onBack ? /* @__PURE__ */ jsxs("div", {
 				className: "ce-editor-back",
 				children: [
@@ -19271,18 +19280,20 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						type: "button",
 						className: "ce-btn-ghost ce-btn-sm",
 						onClick: () => {
-							const why = window.prompt("Revision request (required)");
-							if (!why || !String(why).trim()) return;
-							onSalesCeRequest("revision", String(why).trim());
+							void askReason({ title: "Request revision", label: "Revision request", required: true }).then((result) => {
+								if (!result.ok) return;
+								onSalesCeRequest("revision", result.text);
+							});
 						},
 						children: "Request revision"
 					}), /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-ghost ce-btn-sm",
 						onClick: () => {
-							const why = window.prompt("New estimate request (required)");
-							if (!why || !String(why).trim()) return;
-							onSalesCeRequest("new", String(why).trim());
+							void askReason({ title: "Request new CE", label: "New estimate request", required: true }).then((result) => {
+								if (!result.ok) return;
+								onSalesCeRequest("new", result.text);
+							});
 						},
 						children: "Request new CE"
 					})] }) : null,
@@ -19292,13 +19303,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						onClick: () => onAcceptSalesCeRequest(),
 						children: "Take CE request"
 					}) : null,
-					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: ceData?.markup }) ? /* @__PURE__ */ jsx("button", {
+					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: markup }) ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => onMarkup("create", { directCost: officialTotal }),
 						children: "Generate Markup"
 					}) : null,
-					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: ceData?.markup?.status, existing: proposal }) ? /* @__PURE__ */ jsx("button", {
+					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: markup?.status, existing: proposal }) ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => {
@@ -19319,36 +19330,24 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => {
-							const type = window.prompt("Job order type: SW, F, T, or O");
-							const clientCode = window.prompt("Client code");
-							if (!type || !clientCode) return;
-							onJobOrder("create", {
-								type,
-								clientCode,
-								ceIds: [ceData?.id].filter(Boolean),
-								client: ceData?.client || state.meta?.client || "",
-								project: ceData?.project || state.meta?.title || "",
-								prNo: proposal?.prNo || "",
-								controlNo: proposal?.controlNo || "",
-								year: phYear(),
-								ceQuantity: state.tasks || [],
-								salesPosition: "Sales Rep"
-							});
+							document.getElementById("job-order-form")?.scrollIntoView();
 						},
 						children: "Generate Job Order"
 					}) : null
 				]
 			}) : null,
 			release1MarkupOn && onMarkup ? /* @__PURE__ */ jsx(MarkupPanel, {
-				markup: ceData?.markup || null,
+				markup: markup || null,
 				sales: release1MarkupSales,
 				actorId: release1ActorId,
+				users,
 				onMarkup
 			}) : null,
 			release1ProposalOn && onProposal ? /* @__PURE__ */ jsx(ProposalPanel, {
 				proposal,
 				sales: release1ProposalSales,
 				actorId: release1ActorId,
+				users,
 				liveRev: String(state.projectInfo?.revNo || ""),
 				onProposal
 			}) : null,
@@ -19356,6 +19355,20 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				jobOrder,
 				sales: release1JobOrderSales,
 				actorId: release1ActorId,
+				users,
+				ceOptions,
+				canCreate: canGenerateJobOrder({ flagOn: true, sales: release1JobOrderSales, proposalStatus: proposal?.status, existing: jobOrder }),
+				canCancel: canCancelJobOrder(jobOrder, { byUserId: release1ActorId, admin: actingLevel === "admin", salesManager: isSalesManager(findAccount(users, { userId: release1ActorId }), release1DepartmentsOn) }),
+				createDefaults: {
+					ceId: ceData?.id || "",
+					client: ceData?.client || state.meta?.client || "",
+					project: ceData?.project || state.meta?.title || "",
+					prNo: proposal?.prNo || "",
+					controlNo: proposal?.controlNo || "",
+					year: phYear(),
+					ceQuantity: state.tasks || [],
+					salesPosition: "Sales Rep"
+				},
 				onJobOrder
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
@@ -19409,9 +19422,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 							className: "ce-btn-primary",
 							type: "button",
 							onClick: () => {
-								const reason = window.prompt("Reason for taking over (required)");
-								if (!reason || !String(reason).trim()) return;
-								onTakeOver?.(String(reason).trim());
+								void askReason({ title: "Take over", label: "Reason for taking over", required: true }).then((asked) => {
+									if (!asked.ok) return;
+									onTakeOver?.(asked.text);
+								});
 							},
 							children: "Take over"
 						}) : null, /* @__PURE__ */ jsx("button", {
@@ -19621,27 +19635,27 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									type: "button",
 									className: "ce-btn-primary ce-btn-sm",
 									onClick: () => {
-										if (blockFinal()) {
-											window.alert("Checker errors block final approval.");
-											return;
-										}
-										const remarks = window.prompt("Approval remarks") || "";
-										const step = currentApprovalStep(approvalNow);
-										const finalStep = !!step?.isFinal;
-										const result = onApprovalDecision?.(ceData?.id, "accept", remarks);
-										if (!result?.ok) return;
-										if (finalStep) setCeStatus("Done");
+										if (blockFinal()) return;
+										void askReason({ title: "Approve step", label: "Approval remarks", required: false }).then((asked) => {
+											if (!asked.ok) return;
+											const step = currentApprovalStep(approvalNow);
+											const finalStep = !!step?.isFinal;
+											const result = onApprovalDecision?.(ceData?.id, "accept", asked.text);
+											if (!result?.ok) return;
+											if (finalStep) setCeStatus("Done");
+										});
 									},
 									children: "Approve step"
 								}), !engineOn && /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
 									onClick: () => {
-										const remarks = window.prompt("Reject remarks (required)");
-										if (!remarks) return;
-										const result = onApprovalDecision?.(ceData?.id, "reject", remarks);
-										if (!result?.ok) return;
-										setCeStatus("Ongoing");
+										void askReason({ title: "Reject", label: "Reject remarks", required: true }).then((asked) => {
+											if (!asked.ok) return;
+											const result = onApprovalDecision?.(ceData?.id, "reject", asked.text);
+											if (!result?.ok) return;
+											setCeStatus("Ongoing");
+										});
 									},
 									children: "Reject"
 								})]
@@ -19653,15 +19667,14 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										type: "button",
 										className: "ce-btn-primary ce-btn-sm",
 										onClick: () => {
-											if (blockFinal()) {
-												window.alert("Checker errors block final approval.");
-												return;
-											}
-											const remarks = window.prompt("Approval remarks") || "";
-											const result = onApprovalDecision?.(ceData?.id, "approve", remarks);
-											if (!result?.ok) return;
-											if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
-											if (result.final) setCeStatus(result.nextStatus || "Done");
+											if (blockFinal()) return;
+											void askReason({ title: "Approve", label: "Approval remarks", required: false }).then((asked) => {
+												if (!asked.ok) return;
+												const result = onApprovalDecision?.(ceData?.id, "approve", asked.text);
+												if (!result?.ok) return;
+												if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+												if (result.final) setCeStatus(result.nextStatus || "Done");
+											});
 										},
 										children: "Approve"
 									}),
@@ -19669,16 +19682,14 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
-											if (blockFinal()) {
-												window.alert("Checker errors block final approval.");
-												return;
-											}
-											const remarks = window.prompt("Comment") || "";
-											if (!remarks.trim()) return;
-											const result = onApprovalDecision?.(ceData?.id, "approve-comment", remarks);
-											if (!result?.ok) return;
-											if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
-											if (result.final) setCeStatus(result.nextStatus || "Done");
+											if (blockFinal()) return;
+											void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												const result = onApprovalDecision?.(ceData?.id, "approve-comment", asked.text);
+												if (!result?.ok) return;
+												if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+												if (result.final) setCeStatus(result.nextStatus || "Done");
+											});
 										},
 										children: "Approve with comment"
 									}),
@@ -19686,12 +19697,13 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
-											const remarks = window.prompt("What needs to change?");
-											if (!remarks || !remarks.trim()) return;
-											const result = onApprovalDecision?.(ceData?.id, "request-edit", remarks.trim());
-											if (!result?.ok) return;
-											if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
-											setCeStatus(result.nextStatus || "For revision");
+											void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												const result = onApprovalDecision?.(ceData?.id, "request-edit", asked.text);
+												if (!result?.ok) return;
+												if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+												setCeStatus(result.nextStatus || "For revision");
+											});
 										},
 										children: "Request edit"
 									}),
@@ -19721,16 +19733,17 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm",
 								onClick: () => {
-									const instruction = window.prompt("Revision instruction from sales or the approver");
-									if (!instruction || !instruction.trim()) return;
-									dispatch({
-										type: "PATCH_PROJECT_INFO",
-										patch: {
-											revisionPending: true,
-											revisionNote: instruction.trim()
-										}
+									void askReason({ title: "Revise", label: "Revision instruction from sales or the approver", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										dispatch({
+											type: "PATCH_PROJECT_INFO",
+											patch: {
+												revisionPending: true,
+												revisionNote: asked.text
+											}
+										});
+										setCeStatus("For revision");
 									});
-									setCeStatus("For revision");
 								},
 								children: "Revise"
 							}),
@@ -21888,10 +21901,11 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 					row.canRevise ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						onClick: () => {
-							const note = window.prompt("Revision instruction or RCE change");
-							if (!note || !String(note).trim()) return;
-							setOpen(false);
-							onRevise?.(row.ceId, String(note).trim());
+							void askReason({ title: "Revise", label: "Revision instruction or RCE change", required: true }).then((asked) => {
+								if (!asked.ok) return;
+								setOpen(false);
+								onRevise?.(row.ceId, asked.text);
+							});
 						},
 						children: "Revise"
 					}) : null,
@@ -22416,9 +22430,10 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm mon-reject",
 										onClick: () => {
-											const note = window.prompt("Reason for sending this estimate back");
-											if (note == null || !String(note).trim()) return;
-											onDecide?.(row, "reject", String(note).trim());
+											void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												onDecide?.(row, "reject", asked.text);
+											});
 										},
 										children: "Reject"
 									}),
@@ -22426,9 +22441,10 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
-											const note = window.prompt("Comment");
-											if (note == null || !String(note).trim()) return;
-											onDecide?.(row, "approve-comment", String(note).trim());
+											void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												onDecide?.(row, "approve-comment", asked.text);
+											});
 										},
 										children: "Approve with comment"
 									}),
@@ -22436,9 +22452,10 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
-											const note = window.prompt("What needs to change?");
-											if (note == null || !String(note).trim()) return;
-											onDecide?.(row, "request-edit", String(note).trim());
+											void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												onDecide?.(row, "request-edit", asked.text);
+											});
 										},
 										children: "Request edit"
 									})
@@ -24988,30 +25005,33 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm mon-reject",
 								onClick: () => {
-									const note = window.prompt("Reason for sending this estimate back");
-									if (note == null || !String(note).trim()) return;
-									onApprovalDecision?.(approvalCe.id, "reject", String(note).trim());
-									setApprovalCe(null);
+									void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										onApprovalDecision?.(approvalCe.id, "reject", asked.text);
+										setApprovalCe(null);
+									});
 								},
 								children: "Reject"
 							}), engineOn && ((documents?.[approvalCe.id]?.approval || approvalCe.approval || {}).engine === "v2") && /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm",
 								onClick: () => {
-									const note = window.prompt("Comment");
-									if (note == null || !String(note).trim()) return;
-									onApprovalDecision?.(approvalCe.id, "approve-comment", String(note).trim());
-									setApprovalCe(null);
+									void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										onApprovalDecision?.(approvalCe.id, "approve-comment", asked.text);
+										setApprovalCe(null);
+									});
 								},
 								children: "Approve with comment"
 							}), engineOn && ((documents?.[approvalCe.id]?.approval || approvalCe.approval || {}).engine === "v2") && /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm",
 								onClick: () => {
-									const note = window.prompt("What needs to change?");
-									if (note == null || !String(note).trim()) return;
-									onApprovalDecision?.(approvalCe.id, "request-edit", String(note).trim());
-									setApprovalCe(null);
+									void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										onApprovalDecision?.(approvalCe.id, "request-edit", asked.text);
+										setApprovalCe(null);
+									});
 								},
 								children: "Request edit"
 							}), /* @__PURE__ */ jsx("button", {
@@ -26193,10 +26213,10 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		}, 700);
 		return () => clearTimeout(timer);
 	}, [form, checklist, company, readOnly, draftKey]);
-	const handleSubmit = () => {
+	const handleSubmit = async () => {
 		if (readOnly) return;
 		if (!String(form.rceNo || "").trim()) {
-			window.alert(typeof navigator !== "undefined" && navigator.onLine === false ? DOC_NUMBER_OFFLINE : "Waiting for a document number.");
+			setFieldErrors([typeof navigator !== "undefined" && navigator.onLine === false ? DOC_NUMBER_OFFLINE : "Waiting for a document number."]);
 			return;
 		}
 		const hard = rceHardBlocks(form, company);
@@ -26213,14 +26233,9 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		const soft = rceSoftWarns(form, checklist, attachments);
 		let overrideReason = "";
 		if (soft.length) {
-			overrideReason = window.prompt(`Soft warnings (enter a reason to submit anyway):
-
-- ${soft.join("\n- ")}`);
-			if (overrideReason == null) return;
-			if (!String(overrideReason).trim()) {
-				window.alert("Override reason is required when warnings remain.");
-				return;
-			}
+			const asked = await askReason({ title: "Submit anyway", label: `Soft warnings:\n- ${soft.join("\n- ")}`, required: true });
+			if (!asked.ok) return;
+			overrideReason = asked.text;
 		}
 		try {
 			localStorage.removeItem(draftKey);
@@ -27197,9 +27212,9 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 								className: "ce-btn-ghost",
 								type: "button",
 								onClick: () => {
-									const why = remarks || window.prompt("Reject remarks (required)");
-									if (!why) return;
-									onReject?.(rce, why);
+									const send = (why) => { if (why) onReject?.(rce, why); };
+									if (String(remarks || "").trim()) { send(String(remarks).trim()); return; }
+									void askReason({ title: "Reject", label: "Reject remarks", required: true }).then((asked) => { if (asked.ok) send(asked.text); });
 								},
 								children: "Reject"
 							}),
@@ -27207,9 +27222,9 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 								className: "ce-btn-ghost",
 								type: "button",
 								onClick: () => {
-									const why = remarks || window.prompt("Comment");
-									if (!why || !String(why).trim()) return;
-									onAccept?.(rce, why, "approve-comment");
+									const send = (why) => { if (why) onAccept?.(rce, why, "approve-comment"); };
+									if (String(remarks || "").trim()) { send(String(remarks).trim()); return; }
+									void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => { if (asked.ok) send(asked.text); });
 								},
 								children: "Approve with comment"
 							}),
@@ -27217,9 +27232,9 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 								className: "ce-btn-ghost",
 								type: "button",
 								onClick: () => {
-									const why = remarks || window.prompt("What needs to change?");
-									if (!why || !String(why).trim()) return;
-									onAccept?.(rce, why, "request-edit");
+									const send = (why) => { if (why) onAccept?.(rce, why, "request-edit"); };
+									if (String(remarks || "").trim()) { send(String(remarks).trim()); return; }
+									void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => { if (asked.ok) send(asked.text); });
 								},
 								children: "Request edit"
 							})
@@ -27239,9 +27254,10 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 								onWithdraw?.(rce);
 								return;
 							}
-							const why = window.prompt("Withdraw remarks (required)");
-							if (!why || !String(why).trim()) return;
-							onWithdraw?.(rce, String(why).trim());
+							void askReason({ title: "Withdraw", label: "Withdraw remarks", required: true }).then((asked) => {
+								if (!asked.ok) return;
+								onWithdraw?.(rce, asked.text);
+							});
 						},
 						children: "Withdraw request"
 					}),
@@ -27255,9 +27271,10 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 						className: "ce-btn-ghost",
 						type: "button",
 						onClick: () => {
-							const why = window.prompt("Cancel / revise remarks");
-							if (!why) return;
-							onCancelRequest?.(rce, why);
+							void askReason({ title: "Cancel or revise", label: "Cancel / revise remarks", required: true }).then((asked) => {
+								if (!asked.ok) return;
+								onCancelRequest?.(rce, asked.text);
+							});
 						},
 						children: "Request cancel / revise (needs Final)"
 					}),
@@ -27936,6 +27953,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [notifications, setNotifications] = useState(() => Array.isArray(extras.notifications) ? extras.notifications : []);
 	const [proposals, setProposals] = useState(() => Array.isArray(extras.proposals) ? extras.proposals : []);
 	const [jobOrders, setJobOrders] = useState(() => Array.isArray(extras.jobOrders) ? extras.jobOrders : []);
+	const [markups, setMarkups] = useState(() => Array.isArray(extras.markups) ? extras.markups : []);
+	const [release1Message, setRelease1Message] = useState("");
 	const [dbWipeRequests, setDbWipeRequests] = useState(() => Array.isArray(extras.dbWipeRequests) ? extras.dbWipeRequests : []);
 	const [dbFocusSheet, setDbFocusSheet] = useState(null);
 	const [wizardRce, setWizardRce] = useState(null);
@@ -27978,7 +27997,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					notifications,
 					dbWipeRequests,
 					proposals,
-					jobOrders
+					jobOrders,
+					markups
 				}
 			}
 		};
@@ -28002,6 +28022,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		dbWipeRequests,
 		proposals,
 		jobOrders,
+		markups,
 		persistTick
 	]);
 	const [selectedRCE, setSelectedRCE] = useState(null);
@@ -28072,14 +28093,31 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			...(partial.monitoringTab ? { monitoringTab: partial.monitoringTab } : {})
 		}));
 	};
-	const sendRelease1Mail = (toUserId, subject, text) => {
-		if (!release1MonitorOn) return;
-		const payload = release1MailRequest(toUserId, adminConfig.users || [], subject, text);
-		if (!payload) return;
+	const release1Note = (message) => setRelease1Message(String(message || "That was not saved."));
+	const markupForCe = (ceId) => {
+		const stored = (markups || []).find((row) => row && row.ceId === ceId);
+		if (stored) return stored;
+		const legacy = (ceList || []).find((row) => row && row.id === ceId)?.markup;
+		return legacy && typeof legacy === "object" ? legacy : null;
+	};
+	const rememberMarkup = (markup) => {
+		const row = { ...markup, kind: "markup", id: markup.id || `${markup.ceId || "markup"}-MK` };
+		setMarkups((prev) => {
+			const list = Array.isArray(prev) ? prev : [];
+			const index = list.findIndex((item) => item && (item.id === row.id || row.ceId && item.ceId === row.ceId));
+			if (index < 0) return [row, ...list];
+			return list.map((item, i) => i === index ? row : item);
+		});
+		return row;
+	};
+	const primaryApproverName = (doc) => personName(doc?.steps?.[Number(doc?.currentIndex) || 0]?.userId, adminConfig.users || []);
+	const sendRelease1Mail = (toUserId, template, label, force) => {
+		if (!force && !release1MonitorOn) return;
+		if (!toUserId || !template) return;
 		void fetch("/api/release1-mail", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(payload)
+			body: JSON.stringify({ toUserId, template, label: String(label || "") })
 		}).catch(() => {});
 	};
 	const patchRce = (id, fn) => {
@@ -28127,6 +28165,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (current && release1SalesViewOn && ceIsSealed((ceList || []).find((row) => row.id === id)?.status, current)) {
 			const ceRow = (ceList || []).find((row) => row.id === id) || null;
 			const nextBody = buildDoc(current);
+			if (!Object.prototype.hasOwnProperty.call(current, "markup")) delete nextBody.markup;
 			const nextSummary = {
 				...ceRow || {},
 				lastEdited: ceRow?.lastEdited || "",
@@ -28135,7 +28174,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				project: doc?.meta?.title || ceRow?.project,
 				status: doc?.ceStatus || ceRow?.status
 			};
-			if (!lockedCeChangeAllowed({ summary: ceRow, document: current }, { summary: nextSummary, document: nextBody }, { sales: release1SalesActor })) return;
+			const gate = release1WriteAllowed({ kind: "ce", oldPayload: { summary: ceRow, document: current }, newPayload: { summary: nextSummary, document: nextBody }, sales: release1SalesActor });
+			if (!gate.ok) {
+				release1Note(gate.message || "Approved estimates cannot be changed.");
+				return;
+			}
 		}
 		setDocuments((prev) => ({
 			...prev,
@@ -28241,88 +28284,6 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 		writeReminderStamps(reminderStore, reminderUser, nextStamps);
 	}, [engineFlag, ceList, adminConfig?.notifyMatrix]);
-	const release1SeenRef = useRef(new Set());
-	useEffect(() => {
-		if (!release1MonitorOn) return undefined;
-		const now = new Date().toISOString();
-		const items = [];
-		(proposals || []).forEach((row) => {
-			if (row && row.status === "Submitted") items.push({ ...row, kind: "proposal" });
-		});
-		(jobOrders || []).forEach((row) => {
-			if (row && (row.status === "Submitted" || row.status === "For approval")) items.push({ ...row, kind: "jobOrder" });
-		});
-		(ceList || []).forEach((row) => {
-			if (row?.markup && row.markup.status === "For approval") items.push({ ...row.markup, kind: "markup", ceId: row.id });
-		});
-		const openProposals = (proposals || []).filter((row) => row && (row.status === "Approved" || row.status === "Sent"));
-		if (!items.length && !openProposals.length) return undefined;
-		let cancelled = false;
-		const users = adminConfig?.users || [];
-		const allow = (event) => !(approvalEngineOn(adminConfig) && !matrixAllows(adminConfig?.notifyMatrix, event));
-		fetch("/api/release1-escalate", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ items, proposals: openProposals, now })
-		}).then((response) => response && response.ok ? response.json() : null).then((body) => {
-			if (cancelled || !body || body.ok !== true) return;
-			const seen = release1SeenRef.current;
-			(body.escalated || []).forEach((row) => {
-				const doc = row && row.doc;
-				if (!doc) return;
-				const key = `esc:${doc.kind}:${doc.controlNo || doc.joNo || doc.ceId || doc.id}:${doc.currentIndex}:${row.toUserId}`;
-				if (seen.has(key)) return;
-				seen.add(key);
-				const stored = escalationDoc(doc);
-				if (doc.kind === "proposal") setProposals((prev) => (prev || []).map((item) => item.controlNo === stored.controlNo ? stored : item));
-				else if (doc.kind === "jobOrder") setJobOrders((prev) => (prev || []).map((item) => item.id === stored.id || item.joNo === stored.joNo ? stored : item));
-				else if (doc.kind === "markup") {
-					setCeList((prev) => prev.map((item) => item.id === doc.ceId ? { ...item, markup: stored } : item));
-					setActiveCE((cur) => cur && cur.id === doc.ceId ? { ...cur, markup: stored } : cur);
-				}
-				const label = String(doc.controlNo || doc.joNo || doc.ceId || "");
-				if (allow("Escalated")) setNotifications((prev) => pushNotice(prev, {
-					type: "Escalated",
-					title: "Escalated",
-					body: `${label} moved after 12 hours`,
-					toUserId: String(row.toUserId || ""),
-					ceId: doc.ceId || "",
-					view: "reports"
-				}));
-				if (!String(row.toUserId || "").includes("@")) {
-					const payload = release1MailRequest(row.toUserId, users, "Escalated", `${label} moved after 12 hours`);
-					if (payload) void fetch("/api/release1-mail", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify(payload)
-					}).catch(() => {});
-				}
-			});
-			(body.expiring || []).forEach((row) => {
-				const key = `exp:${row.id}`;
-				if (!row || seen.has(key)) return;
-				seen.add(key);
-				if (allow("Proposal expiring")) setNotifications((prev) => pushNotice(prev, {
-					type: "Proposal expiring",
-					title: "Proposal expiring",
-					body: `${row.id} is near its validity date`,
-					toUserId: String(row.toUserId || ""),
-					view: "reports"
-				}));
-				if (!String(row.toUserId || "").includes("@")) {
-					const payload = release1MailRequest(row.toUserId, users, "Proposal expiring", `${row.id} is near its validity date`);
-					if (payload) void fetch("/api/release1-mail", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify(payload)
-					}).catch(() => {});
-				}
-			});
-		}).catch(() => {});
-		return () => {
-			cancelled = true;
-		};
-	}, [proposals, jobOrders, ceList, adminConfig]);
 	const approvalFlowInput = (docType) => {
 		const party = adminConfig?.approvalFinal?.[docType] || {};
 		return {
@@ -28854,8 +28815,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		let reason = "";
 		if (kind === "alt" || kind === "ad") {
 			const list = adminConfig.suffixReasons || [];
-			const hint = list.length ? ` ${list.join(", ")}` : "";
-			reason = window.prompt(kind === "alt" ? `Reason for the alternate.${hint}` : `Reason for the addendum.${hint}`) || "";
+			const hint = list.length ? ` Choices: ${list.join(", ")}` : "";
+			const asked = await askReason({ title: kind === "alt" ? "Alternate" : "Addendum", label: `Reason${hint}`, required: true });
+			if (!asked.ok) return;
+			reason = asked.text;
 		}
 		const plan = planSuffix(kind, {
 			ids,
@@ -28867,7 +28830,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			awarded
 		});
 		if (!plan.ok) {
-			window.alert(plan.error);
+			notice({ type: "Release 1", title: "Could not copy", body: plan.error || "Could not copy.", view: "editor" });
 			return;
 		}
 		let id = plan.id;
@@ -28876,12 +28839,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (issued) id = issued;
 		} catch (err) {
 			if (!missingSuffixRpc(err)) {
-				window.alert(err?.message || "Could not take that suffix.");
+				notice({ type: "Release 1", title: "Could not copy", body: err?.message || "Could not take that suffix.", view: "editor" });
 				return;
 			}
 		}
 		if ((ceList || []).some((ce) => String(ce.id).toUpperCase() === String(id).toUpperCase())) {
-			window.alert(`${id} already exists.`);
+			notice({ type: "Release 1", title: "Could not copy", body: `${id} already exists.`, view: "editor" });
 			return;
 		}
 		const today = todayLocal();
@@ -28910,7 +28873,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				})]
 			};
 		} catch (err) {
-			window.alert(err?.message || "Could not copy the estimate.");
+			notice({ type: "Release 1", title: "Could not copy", body: err?.message || "Could not copy the estimate.", view: "editor" });
 			return;
 		}
 		const newCE = {
@@ -29713,6 +29676,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			toUserId: built.toUserId,
 			view: "editor"
 		});
+		sendRelease1Mail(built.toUserId, "ce-approved", String(built.ceId || ceId), true);
 	};
 	const handleCeApprovalDecision = (ceId, decision, remarks) => {
 		const ce = ceList.find((c) => c.id === ceId);
@@ -30102,15 +30066,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		setCeList((prev) => prev.map((row) => row.id === ce.id ? { ...row, reminderAt: now } : row));
 		if (activeCE?.id === ce.id) setActiveCE((cur) => cur ? { ...cur, reminderAt: now } : cur);
 	};
-	const editorPayload = activeCE && documents[activeCE.id] ? {
-		...activeCE,
-		...documents[activeCE.id],
-		...(activeCE.markup ? { markup: activeCE.markup } : {})
-	} : activeCE;
+	const editorPayload = activeCE && documents[activeCE.id] ? (() => {
+		const doc = documents[activeCE.id];
+		const merged = { ...activeCE, ...doc };
+		if (!Object.prototype.hasOwnProperty.call(doc, "markup")) delete merged.markup;
+		return merged;
+	})() : activeCE;
 	const handleMarkup = (action, payload) => {
 		if (!release1MarkupOn || !activeCE?.id) return;
 		const ceId = activeCE.id;
-		const current = (ceList || []).find((row) => row.id === ceId)?.markup || activeCE.markup || null;
+		const current = markupForCe(ceId);
 		let result = { ok: false, message: "Markup was not saved." };
 		if (action === "create") {
 			if (current) return;
@@ -30118,14 +30083,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
 		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
 		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
-		else if (action === "approve" || action === "return") result = decideMarkup(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks });
+		else if (action === "approve" || action === "return") result = decideMarkup(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
 		if (!result?.ok || !result.markup) {
-			window.alert(result?.message || "Markup was not saved.");
+			release1Note(result?.message || "Markup was not saved.");
 			return;
 		}
-		const markup = result.markup;
-		setCeList((prev) => prev.map((row) => row.id === ceId ? { ...row, markup } : row));
-		setActiveCE((cur) => cur && cur.id === ceId ? { ...cur, markup } : cur);
+		setRelease1Message("");
+		const markup = rememberMarkup({ ...result.markup, ceId });
 		if (result.toUserId) {
 			notice({
 				type: "Needs your approval",
@@ -30135,7 +30099,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: result.toUserId,
 				view: "editor"
 			});
-			sendRelease1Mail(result.toUserId, "Needs your approval", `${ceId} markup is waiting`);
+			sendRelease1Mail(result.toUserId, "needs-approval", ceId);
 		}
 		if (release1MonitorOn && markup.status === "Approved") {
 			notice({
@@ -30146,7 +30110,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: markup.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(markup.ownerId, "Document approved", `${ceId} markup was approved`);
+			sendRelease1Mail(markup.ownerId, "approved", ceId);
 		}
 		if (release1MonitorOn && action === "return") {
 			notice({
@@ -30157,7 +30121,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: markup.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(markup.ownerId, "Returned", `${ceId} markup was returned`);
+			sendRelease1Mail(markup.ownerId, "returned", ceId);
 		}
 	};
 	const handleProposal = async (action, payload) => {
@@ -30165,25 +30129,56 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		const ceId = activeCE.id;
 		const current = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled") || null;
 		const others = proposals || [];
+		const markup = markupForCe(ceId);
+		const guardPr = async (controlNo, prNo) => {
+			const guarded = claimProposalNumber({
+				registry: (proposals || []).map((row) => ({ controlNo: row.controlNo, prNo: row.prNo, ownerId: row.ownerId })),
+				controlNo,
+				prNo,
+				actorId: release1ActorId,
+				admin: actingLevel === "admin"
+			});
+			if (!guarded.ok) return guarded;
+			if (!String(prNo || "").trim()) return { ok: true };
+			return claimProposalPr(controlNo, String(prNo).trim(), ceId);
+		};
 		let result = { ok: false, message: "Proposal was not saved." };
+		if (action === "delete-draft") {
+			const removed = deleteDraftProposal(current, { byUserId: release1ActorId });
+			if (!removed.ok) {
+				release1Note(removed.message || "That draft was not deleted.");
+				return;
+			}
+			setRelease1Message("");
+			setProposals((prev) => (prev || []).filter((row) => row !== current && row.controlNo !== current.controlNo));
+			notice({
+				type: "Draft proposal deleted",
+				title: "Draft proposal deleted",
+				body: `${current.controlNo} deleted by ${personName(release1ActorId, adminConfig.users || []) || "Unnamed"}`,
+				ceId,
+				view: "editor"
+			});
+			return;
+		}
 		if (action === "create") {
-			if (current || activeCE.markup?.status !== "Approved") return;
+			if (current || markup?.status !== "Approved") return;
 			let controlNo = "";
 			try {
 				controlNo = await allocateProposalControl() || "";
 			} catch (err) {
-				window.alert(err?.message || "Could not take a proposal number.");
+				release1Note(err?.message || "Could not take a proposal number.");
 				return;
 			}
 			if (!controlNo) {
-				window.alert("Proposal numbers are not on this database yet.");
+				release1Note("Proposal numbers are not on this database yet.");
 				return;
 			}
 			result = createProposal({
 				controlNo,
 				byUserId: release1ActorId,
 				ceId,
-				parts: activeCE.markup.parts,
+				parts: markup.parts,
+				directCost: markup.directCost,
 				clauses: adminConfig.proposalClauses,
 				header: "Proposal",
 				prDate: todayLocal(),
@@ -30191,9 +30186,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			});
 		} else if (action === "patch") {
 			if (payload?.prNo != null && current) {
-				const claimed = await claimProposalPr(current.controlNo, payload.prNo, ceId);
+				const claimed = await guardPr(current.controlNo, payload.prNo);
 				if (!claimed.ok) {
-					window.alert(claimed.message || "That PR number is already used.");
+					release1Note(claimed.message || "That PR number is already used.");
 					return;
 				}
 			}
@@ -30201,16 +30196,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		} else if (action === "submit") {
 			const withPr = payload?.prNo != null ? patchProposal(current, { prNo: payload.prNo }, others) : { ok: true, proposal: current };
 			if (!withPr.ok || !withPr.proposal) {
-				window.alert(withPr.message || "Proposal was not saved.");
+				release1Note(withPr.message || "Proposal was not saved.");
 				return;
 			}
-			const claimed = await claimProposalPr(withPr.proposal.controlNo, withPr.proposal.prNo, ceId);
+			const claimed = await guardPr(withPr.proposal.controlNo, withPr.proposal.prNo);
 			if (!claimed.ok) {
-				window.alert(claimed.message || "That PR number is already used.");
+				release1Note(claimed.message || "That PR number is already used.");
 				return;
 			}
 			result = submitProposal(withPr.proposal, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, others });
-		} else if (action === "approve" || action === "return") result = decideProposal(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks });
+		} else if (action === "approve" || action === "return") result = decideProposal(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
 		else if (action === "sent") result = markProposalSent(current, { byUserId: release1ActorId });
 		else if (action === "lost") result = markProposalLost(current, { byUserId: release1ActorId, remarks: payload?.remarks });
 		else if (action === "expired") result = markProposalExpired(current, { byUserId: release1ActorId, remarks: payload?.remarks });
@@ -30218,9 +30213,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		else if (action === "no-revision") result = noRevisionNeeded(current, { byUserId: release1ActorId, remarks: payload?.remarks });
 		else if (action === "cancel") result = cancelProposal(current, { byUserId: release1ActorId, remarks: payload?.remarks });
 		if (!result?.ok || !result.proposal) {
-			window.alert(result?.message || "Proposal was not saved.");
+			release1Note(result?.message || "Proposal was not saved.");
 			return;
 		}
+		setRelease1Message("");
 		const proposal = result.proposal;
 		setProposals((prev) => {
 			const list = Array.isArray(prev) ? prev : [];
@@ -30237,7 +30233,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: result.toUserId,
 				view: "editor"
 			});
-			sendRelease1Mail(result.toUserId, "Needs your approval", `${ceId} proposal is waiting`);
+			sendRelease1Mail(result.toUserId, "needs-approval", proposal.controlNo || ceId);
 		}
 		if (release1MonitorOn && proposal.status === "Approved") {
 			notice({
@@ -30248,7 +30244,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: proposal.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(proposal.ownerId, "Document approved", `${proposal.controlNo} was approved`);
+			sendRelease1Mail(proposal.ownerId, "approved", proposal.controlNo);
 		}
 		if (release1MonitorOn && action === "return") {
 			notice({
@@ -30259,7 +30255,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: proposal.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(proposal.ownerId, "Returned", `${proposal.controlNo} was returned`);
+			sendRelease1Mail(proposal.ownerId, "returned", proposal.controlNo);
 		}
 	};
 	const handleJobOrder = async (action, payload) => {
@@ -30267,25 +30263,26 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		const ceId = activeCE.id;
 		const current = (jobOrders || []).find((row) => (row.ceIds || []).includes(ceId) && row.status !== "Cancelled") || null;
 		const proposal = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled") || null;
+		const salesManager = isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 		let result = { ok: false, message: "Job order was not saved." };
 		if (action === "create") {
 			if (current) return;
 			let seq = 0;
 			try {
-				seq = await allocateJobOrderSeq() || 0;
+				seq = await allocateJobOrderSeq(payload?.year || phYear()) || 0;
 			} catch (err) {
-				window.alert(err?.message || "Could not take a job order number.");
+				release1Note(err?.message || "Could not take a job order number.");
 				return;
 			}
 			if (!seq) {
-				window.alert("Job order numbers are not on this database yet.");
+				release1Note("Job order numbers are not on this database yet.");
 				return;
 			}
 			result = createJobOrder({
 				byUserId: release1ActorId,
 				seq,
 				dateIssued: todayLocal(),
-				year: phYear(),
+				year: payload?.year || phYear(),
 				controlNo: proposal?.controlNo || "",
 				prNo: proposal?.prNo || "",
 				client: activeCE.client || "",
@@ -30296,42 +30293,84 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (result.ok && result.jobOrder) {
 				const claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
 				if (!claimed.ok) {
-					window.alert(claimed.message || "That job order number is already used.");
+					release1Note(claimed.message || "That job order number is already used.");
 					return;
 				}
 			}
-		} else if (action === "patch") result = patchJobOrder(current, payload);
+		} else if (action === "patch") result = patchJobOrder(current, payload, { byUserId: release1ActorId });
 		else if (action === "submit") result = submitJobOrder(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists });
-		else if (action === "approve" || action === "return") result = decideJobOrder(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: editorName });
-		else if (action === "revise") result = reviseJobOrder(current, { byUserId: release1ActorId });
-		else if (action === "cancel") result = cancelJobOrder(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "approve" || action === "return") result = decideJobOrder(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
+		else if (action === "revise") {
+			result = reviseJobOrder(current, { byUserId: release1ActorId, registry: (jobOrders || []).map((row) => row.joNo) });
+			if (result.ok && result.jobOrder) {
+				const claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				if (!claimed.ok) {
+					release1Note(claimed.message || "That job order number is already used.");
+					return;
+				}
+			}
+		} else if (action === "cancel") result = cancelJobOrder(current, { byUserId: release1ActorId, remarks: payload?.remarks, admin: actingLevel === "admin", salesManager });
 		if (!result?.ok || !result.jobOrder) {
-			window.alert(result?.message || "Job order was not saved.");
+			release1Note(result?.message || "Job order was not saved.");
 			return;
 		}
-		const jobOrder = result.jobOrder;
+		let jobOrder = result.jobOrder;
+		if (result.effect?.award) {
+			const proposalRow = (proposals || []).find((row) => row.controlNo === result.effect.proposalControl) || proposal;
+			const awarded = applyAward({
+				ces: ceList,
+				documents,
+				proposal: proposalRow,
+				effect: result.effect,
+				byUserId: release1ActorId
+			});
+			if (!awarded.ok) {
+				release1Note(awarded.message || "Award was not saved.");
+				return;
+			}
+			setCeList(awarded.ces);
+			setDocuments(awarded.documents);
+			const active = (awarded.ces || []).find((row) => row.id === activeCE.id);
+			if (active) setActiveCE(active);
+			if (awarded.proposal) {
+				setProposals((prev) => (prev || []).map((row) => row.controlNo === awarded.proposal.controlNo ? awarded.proposal : row));
+			}
+			jobOrder = { ...jobOrder, award: awarded.award };
+		}
+		if (result.effect?.clear) {
+			const award = current?.award;
+			if (!award) {
+				release1Note("The previous estimate status is missing.");
+				return;
+			}
+			const proposalRow = (proposals || []).find((row) => row.controlNo === award.proposalControl || row.controlNo === result.effect.proposalControl);
+			const restored = applyCancel({
+				ces: ceList,
+				documents,
+				proposal: proposalRow,
+				award,
+				byUserId: release1ActorId,
+				remarks: payload?.remarks
+			});
+			if (!restored.ok) {
+				release1Note(restored.message || "Cancel was not saved.");
+				return;
+			}
+			setCeList(restored.ces);
+			setDocuments(restored.documents);
+			const active = (restored.ces || []).find((row) => row.id === activeCE.id);
+			if (active) setActiveCE(active);
+			if (restored.proposal) {
+				setProposals((prev) => (prev || []).map((row) => row.controlNo === restored.proposal.controlNo ? restored.proposal : row));
+			}
+		}
+		setRelease1Message("");
 		setJobOrders((prev) => {
 			const list = Array.isArray(prev) ? prev : [];
-			const index = list.findIndex((row) => row.id === jobOrder.id || row.joNo === current?.joNo);
+			const index = list.findIndex((row) => row.id === jobOrder.id || row.joNo === current?.joNo || row.id === current?.id);
 			if (index < 0) return [jobOrder, ...list];
 			return list.map((row, i) => i === index ? jobOrder : row);
 		});
-		if (result.effect?.award) {
-			const ids = new Set(result.effect.ceIds || []);
-			setCeList((prev) => prev.map((row) => ids.has(row.id) ? { ...row, status: "Awarded", awardStatus: "Awarded", awardJo: result.effect.joNo } : row));
-			setActiveCE((cur) => cur && ids.has(cur.id) ? { ...cur, status: "Awarded", awardStatus: "Awarded", awardJo: result.effect.joNo } : cur);
-			setProposals((prev) => prev.map((row) => {
-				if (row.controlNo !== result.effect.proposalControl) return row;
-				const won = markProposalWon(row, { byUserId: release1ActorId, remarks: result.effect.joNo });
-				return won.ok && won.proposal ? won.proposal : row;
-			}));
-		}
-		if (result.effect?.clear) {
-			const ids = new Set(result.effect.ceIds || []);
-			setCeList((prev) => prev.map((row) => ids.has(row.id) && row.awardStatus === "Awarded" ? { ...row, status: "Done", awardStatus: "", awardJo: "" } : row));
-			setActiveCE((cur) => cur && ids.has(cur.id) && cur.awardStatus === "Awarded" ? { ...cur, status: "Done", awardStatus: "", awardJo: "" } : cur);
-			setProposals((prev) => prev.map((row) => row.controlNo === result.effect.proposalControl && row.status === "Won" ? { ...row, status: "Approved" } : row));
-		}
 		if (result.toUserId) {
 			notice({
 				type: "Needs your approval",
@@ -30341,7 +30380,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: result.toUserId,
 				view: "editor"
 			});
-			sendRelease1Mail(result.toUserId, "Needs your approval", `${jobOrder.joNo} is waiting`);
+			sendRelease1Mail(result.toUserId, "needs-approval", jobOrder.joNo);
 		}
 		if (release1MonitorOn && jobOrder.status === "Approved") {
 			notice({
@@ -30352,7 +30391,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: jobOrder.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(jobOrder.ownerId, "Document approved", `${jobOrder.joNo} was approved`);
+			sendRelease1Mail(jobOrder.ownerId, "approved", jobOrder.joNo);
 		}
 		if (release1MonitorOn && action === "return") {
 			notice({
@@ -30363,7 +30402,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				toUserId: jobOrder.ownerId,
 				view: "editor"
 			});
-			sendRelease1Mail(jobOrder.ownerId, "Returned", `${jobOrder.joNo} was returned`);
+			sendRelease1Mail(jobOrder.ownerId, "returned", jobOrder.joNo);
 		}
 	};
 	const handleMonitor = (action, row, toUserId) => {
@@ -30386,9 +30425,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			now
 		});
 		if (!result.ok || !result.doc) {
-			window.alert(result.message || "That was not saved.");
+			release1Note(result.message || "That was not saved.");
 			return;
 		}
+		setRelease1Message("");
 		if (row.kind === "proposal") setProposals((prev) => (prev || []).map((item) => item.controlNo === result.doc.controlNo ? result.doc : item));
 		else setJobOrders((prev) => (prev || []).map((item) => item.id === result.doc.id || item.joNo === result.doc.joNo ? result.doc : item));
 		notice({
@@ -30507,24 +30547,28 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 	}
 	const release1Now = new Date().toISOString();
+	const release1Users = adminConfig.users || [];
 	const release1MonitorView = release1MonitorOn ? {
-		sales: salesWorklist({ proposals, jobOrders, now: release1Now }),
+		sales: salesWorklist({ proposals, jobOrders, users: release1Users, now: release1Now }),
 		pending: pendingApprovals([
 			...(proposals || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "proposal" })),
 			...(jobOrders || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "jobOrder" })),
-			...(ceList || []).filter((row) => row?.markup && row.markup.status === "For approval").map((row) => ({ ...row.markup, kind: "markup", id: row.id }))
-		], release1Now),
+			...(markups || []).filter((row) => row && row.status === "For approval").map((row) => ({ ...row, kind: "markup", id: row.ceId || row.id }))
+		], release1Now, release1Users),
 		dashboard: monitorDashboard({
 			proposals,
+			users: release1Users,
 			ces: (ceList || []).map((row) => ({
 				awardStatus: row.awardStatus || "",
 				status: row.status || "",
+				salesRepId: row.salesOwnerId || "",
+				salesOwnerId: row.salesOwnerId || "",
 				received: row.rceReceived || row.dateReceived || "",
 				done: (row.status === "Done" || row.status === "Awarded") ? (row.done || String(row.lastEdited || "").slice(0, 10)) : ""
 			})),
 			now: release1Now
 		}),
-		accounts: (adminConfig.users || []).map((user) => ({ id: accountId(user), label: accountId(user) })).filter((row) => row.id),
+		accounts: release1Users.map((user) => ({ id: accountId(user), label: personName(accountId(user), release1Users) })).filter((row) => row.id),
 		canTakeOver: release1MonitorSales,
 		canReassign: release1CanReassign,
 		actorId: release1ActorId,
@@ -30882,10 +30926,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onSalesCeRequest: handleSalesCeRequest,
 						onAcceptSalesCeRequest: handleAcceptSalesCeRequest,
 						onMarkup: handleMarkup,
+						markup: activeCE ? markupForCe(activeCE.id) : null,
 						proposal: (proposals || []).find((row) => row.ceId === activeCE?.id && row.status !== "Cancelled") || null,
 						onProposal: handleProposal,
 						jobOrder: (jobOrders || []).find((row) => (row.ceIds || []).includes(activeCE?.id) && row.status !== "Cancelled") || null,
-						onJobOrder: handleJobOrder
+						onJobOrder: handleJobOrder,
+						ceOptions: (ceList || []).filter((row) => row && row.id).map((row) => ({ id: row.id, label: [row.id, row.project].filter(Boolean).join(" ") })),
+						release1Message
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);

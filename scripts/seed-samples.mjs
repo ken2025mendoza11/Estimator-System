@@ -374,7 +374,7 @@ function release1Proposal({ id, controlNo, status, ceId, ownerId, prNo }) {
 		ceNo: ceId,
 		ceRev: "0",
 		scope: "Sample scope",
-		groups: [{ key: "BOL", label: "BOL", amount: 1000000, selling: 2000000 }],
+		groups: [{ key: "BOL", label: "BOL", direct: 1000000, selling: 2000000 }],
 		direct: 1000000,
 		total: 2000000,
 		percent: 100,
@@ -419,6 +419,7 @@ function release1JobOrder({ role, seq, controlNo, ceId, ownerId, status }) {
 		duration: "30 days",
 		ceIds: [ceId],
 		poFileName: `PO-${role}.pdf`,
+		poKind: "PO",
 		drawingNames: [],
 		ceQuantity: [{ id: `sample-qty-${role}`, description: "Welder", role: "Welder", qty: 2, unit: "day" }],
 		status,
@@ -429,6 +430,17 @@ function release1JobOrder({ role, seq, controlNo, ceId, ownerId, status }) {
 		steps: [],
 		currentIndex: -1,
 		timeline: [{ id: `sample-jo-${role}-${status}`, at: APPROVAL_AT, who: ownerId, action: status === "Approved" ? "Job order approved" : "Job order created", remarks: "" }],
+		...(status === "Approved" ? {
+			award: {
+				joNo,
+				ceIds: [ceId],
+				proposalControl: controlNo,
+				previousCeStatus: { [ceId]: "Done" },
+				previousProposalStatus: "Approved",
+				at: APPROVAL_AT,
+				who: ownerId,
+			},
+		} : {}),
 	};
 }
 
@@ -461,8 +473,9 @@ export function release1Samples(ordStart = 800) {
 			ord: ord++,
 			extra: { project: `Sample ${role} markup`, assignedTo: LOGIN_NAMES[role], approval: { status: "accepted" } },
 		});
-		markupDoc.payload.summary.markup = release1Markup(markupId, ownerId, role);
 		docs.push(markupDoc);
+		const markupRecord = { ...release1Markup(markupId, ownerId, role), id: `SAMPLE-R1-${tag}-MK` };
+		docs.push({ kind: "markup", id: markupRecord.id, ord: ord++, sample: true, status: "Approved", payload: markupRecord });
 		const proposal = release1Proposal({
 			id: `SAMPLE-R1-${tag}-PROPOSAL`,
 			controlNo: proposalControl,
@@ -483,9 +496,6 @@ export function release1Samples(ordStart = 800) {
 			ord: ord++,
 			extra: { project: `Sample ${role} awarded`, assignedTo: LOGIN_NAMES[role], approval: { status: "accepted" } },
 		});
-		awarded.payload.summary.awardStatus = "Awarded";
-		awarded.payload.summary.awardJo = awardedJo.joNo;
-		awarded.payload.summary.markup = release1Markup(awardedId, ownerId, `${role}-awarded`);
 		docs.push(awarded);
 		const won = release1Proposal({
 			id: `SAMPLE-R1-${tag}-WON`,

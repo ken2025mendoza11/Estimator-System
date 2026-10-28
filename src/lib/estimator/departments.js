@@ -55,6 +55,45 @@ export function isSales(user, flagOn) {
 }
 
 /**
+ * A Sales manager can cancel a job order they do not own. A sales rep cannot.
+ * @param {unknown} user
+ * @param {boolean} [flagOn]
+ * @returns {boolean}
+ */
+export function isSalesManager(user, flagOn) {
+	if (!isSales(user, flagOn) || !user || typeof user !== "object") return false;
+	const row = /** @type {Record<string, unknown>} */ (user);
+	const level = String(row.level || row.role || "").trim().toLowerCase();
+	const title = `${row.designation || ""} ${row.label || ""}`.toLowerCase();
+	return level === "lead" || level === "head" || title.includes("manager");
+}
+
+/**
+ * Sales manager approves. The other Sales rep is the backup. Null when those accounts are not in the list.
+ * @param {unknown[] | null | undefined} users
+ * @returns {{ markup: { userId: string, backupUserId: string }[], proposal: { userId: string, backupUserId: string }[], jobOrder: { userId: string, backupUserId: string }[] } | null}
+ */
+export function release1SalesApprovers(users) {
+	const active = (Array.isArray(users) ? users : []).filter((user) => {
+		if (!user || typeof user !== "object") return false;
+		const status = String(/** @type {{ accountStatus?: unknown, status?: unknown }} */ (user).accountStatus || /** @type {{ status?: unknown }} */ (user).status || "active");
+		return status === "active";
+	});
+	const idOf = (/** @type {Record<string, unknown>} */ user) => String(user.userKey || user.userId || user.id || "").trim();
+	const sales = active.filter((user) => {
+		const row = /** @type {Record<string, unknown>} */ (user);
+		return fixedDepartment(row) === "Sales" && String(row.role || row.level || "").toLowerCase() === "staff";
+	});
+	const manager = active.find((user) => isSalesManager(user, true));
+	const managerId = manager ? idOf(/** @type {Record<string, unknown>} */ (manager)) : "";
+	const backup = [...sales].reverse().find((user) => idOf(/** @type {Record<string, unknown>} */ (user)) !== managerId) || sales[0];
+	const backupId = backup ? idOf(/** @type {Record<string, unknown>} */ (backup)) : "";
+	if (!managerId || !backupId || managerId === backupId) return null;
+	const row = { userId: managerId, backupUserId: backupId };
+	return { markup: [row], proposal: [{ ...row }], jobOrder: [{ ...row }] };
+}
+
+/**
  * Cost Estimating. Same rule as the old costing list when the department is not set.
  * @param {unknown} user
  * @param {boolean} [flagOn]
@@ -113,6 +152,20 @@ export function findAccount(users, query) {
 export function backupSignatureLabel(name) {
 	const display = String(name || "").trim();
 	return display ? `for ${display}` : "";
+}
+
+/**
+ * The name shown on a screen. An account id is never shown.
+ * @param {unknown} userId
+ * @param {unknown[] | null | undefined} users
+ * @returns {string}
+ */
+export function personName(userId, users) {
+	const id = String(userId || "").trim();
+	if (!id) return "";
+	const hit = (Array.isArray(users) ? users : []).find((user) => accountId(user) === id);
+	const name = hit && typeof hit === "object" ? String(/** @type {{ name?: unknown }} */ (hit).name || "").trim() : "";
+	return name || "Unnamed";
 }
 
 /**

@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { personName } from "../lib/estimator/departments";
 import { actorMayDecideProposal, newerCeBanner, proposalEditable } from "../lib/estimator/proposal";
 import { proposalDocxBytes, proposalPdfBytes } from "../lib/estimator/proposalDocx";
+import { askReason } from "../lib/estimator/reasonBox";
 
 /** @param {unknown} value */
 function money(value) {
@@ -23,9 +25,19 @@ function saveBytes(bytes, name, type) {
 }
 
 /**
- * @param {{ proposal: any, sales: boolean, actorId: string, liveRev?: string, onProposal?: (action: string, payload?: any) => void }} props
+ * @param {{ title: string, label: string, required?: boolean, action: string, onProposal?: (action: string, payload?: any) => void }} props
  */
-export function ProposalPanel({ proposal, sales, actorId, liveRev, onProposal }) {
+function ask(props) {
+	void askReason({ title: props.title, label: props.label, required: props.required !== false }).then((result) => {
+		if (!result.ok) return;
+		props.onProposal?.(props.action, { remarks: result.text });
+	});
+}
+
+/**
+ * @param {{ proposal: any, sales: boolean, actorId: string, users?: unknown[], liveRev?: string, onProposal?: (action: string, payload?: any) => void }} props
+ */
+export function ProposalPanel({ proposal, sales, actorId, users, liveRev, onProposal }) {
 	const [prNo, setPrNo] = useState("");
 	if (!proposal) return null;
 	const open = proposalEditable(proposal);
@@ -33,12 +45,15 @@ export function ProposalPanel({ proposal, sales, actorId, liveRev, onProposal })
 	const mayDecide = actorMayDecideProposal(proposal, actorId);
 	const holder = proposal.status === "Submitted" ? proposal.steps?.[proposal.currentIndex] : null;
 	const rev = Number(proposal.rev) > 0 ? ` Rev ${proposal.rev}` : "";
+	const name = (/** @type {unknown} */ id) => personName(id, users) || "Unnamed";
+	const neverSubmitted = proposal.status === "Draft" && !(proposal.steps || []).length && !(proposal.timeline || []).some((/** @type {any} */ row) => /submitted/i.test(String(row?.action || "")));
 
 	return (
 		<div className="ce-card wiz-card">
 			<h3 className="ce-serif">Proposal {proposal.controlNo}{rev}</h3>
 			{banner ? <p className="scope-edit-banner">{banner}</p> : null}
 			<p>Status {proposal.status} · Total {money(proposal.total)} · Valid until {proposal.validUntil || "—"}</p>
+			{proposal.approverFor ? <p className="wiz-hint">Signature {proposal.approverFor}</p> : null}
 			{open ? (
 				<div className="wiz-grid">
 					<label className="wiz-field">
@@ -66,8 +81,8 @@ export function ProposalPanel({ proposal, sales, actorId, liveRev, onProposal })
 					<li key={group.key || group.label}>{group.label}: {money(group.selling)}</li>
 				))}
 			</ul>
-			<p className="wiz-hint">Sales Rep {proposal.salesRepId || "—"} · Approver {proposal.approverId || "—"} · Client conforme {proposal.clientConforme || "—"}</p>
-			{holder ? <p className="wiz-hint">Waiting for {holder.userId}{holder.backupUserId ? ` (backup ${holder.backupUserId})` : ""}</p> : null}
+			<p className="wiz-hint">Sales Rep {name(proposal.salesRepId)} · Approver {name(proposal.approverId)} · Client conforme {proposal.clientConforme || "—"}</p>
+			{holder ? <p className="wiz-hint">Waiting for {name(holder.userId)}{holder.backupUserId ? ` (backup ${name(holder.backupUserId)})` : ""}</p> : null}
 			<div className="wiz-grid">
 				<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => { void proposalDocxBytes(proposal).then((bytes) => saveBytes(bytes, `proposal-${proposal.controlNo}.docx`, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")); }}>Word</button>
 				<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => saveBytes(proposalPdfBytes(proposal), `proposal-${proposal.controlNo}.pdf`, "application/pdf")}>PDF</button>
@@ -78,31 +93,40 @@ export function ProposalPanel({ proposal, sales, actorId, liveRev, onProposal })
 					<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onProposal?.("approve")}>Approve proposal</button>
 				) : null}
 				{mayDecide ? (
-					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => { const why = window.prompt("Return remark (required)"); if (why && String(why).trim()) onProposal?.("return", { remarks: String(why).trim() }); }}>Return proposal</button>
+					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => ask({ title: "Return proposal", label: "Return remark", action: "return", onProposal })}>Return proposal</button>
 				) : null}
 				{proposal.status === "Approved" && sales ? (
 					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => onProposal?.("sent")}>Mark sent</button>
 				) : null}
 				{(proposal.status === "Approved" || proposal.status === "Sent") && sales ? (
-					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => { const why = window.prompt("Remark (required)"); if (why && String(why).trim()) onProposal?.("lost", { remarks: String(why).trim() }); }}>Lost</button>
+					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => ask({ title: "Lost", label: "Remark", action: "lost", onProposal })}>Lost</button>
 				) : null}
 				{(proposal.status === "Approved" || proposal.status === "Sent") && sales ? (
-					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => { const why = window.prompt("Remark (required)"); if (why && String(why).trim()) onProposal?.("expired", { remarks: String(why).trim() }); }}>Expired</button>
+					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => ask({ title: "Expired", label: "Remark", action: "expired", onProposal })}>Expired</button>
 				) : null}
-				{(proposal.status === "Approved" || proposal.status === "Expired") && sales ? (
-					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => { const why = proposal.status === "Expired" ? window.prompt("Revision remark (required)") : ""; if (proposal.status === "Expired" && (!why || !String(why).trim())) return; onProposal?.("revise", { remarks: String(why || "").trim() }); }}>Generate revision</button>
+				{(proposal.status === "Approved" || proposal.status === "Sent" || proposal.status === "Expired") && sales ? (
+					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => {
+						if (proposal.status !== "Expired") {
+							onProposal?.("revise", { remarks: "" });
+							return;
+						}
+						ask({ title: "Revise proposal", label: "Revision remark", action: "revise", onProposal });
+					}}>Generate revision</button>
 				) : null}
 				{proposal.status === "Expired" && sales ? (
-					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => { const why = window.prompt("Remark (required)"); if (why && String(why).trim()) onProposal?.("no-revision", { remarks: String(why).trim() }); }}>No revision needed</button>
+					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => ask({ title: "No revision", label: "Remark", action: "no-revision", onProposal })}>No revision needed</button>
 				) : null}
 				{(proposal.status === "Draft" || proposal.status === "Submitted") && sales ? (
 					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => onProposal?.("cancel")}>Cancel</button>
+				) : null}
+				{neverSubmitted && sales && actorId === proposal.ownerId ? (
+					<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => onProposal?.("delete-draft")}>Delete draft</button>
 				) : null}
 			</div>
 			{(proposal.timeline || []).length ? (
 				<ul>
 					{(proposal.timeline || []).map((/** @type {any} */ row) => (
-						<li key={row.id}>{row.action} · {row.who}{row.remarks ? ` · ${row.remarks}` : ""}</li>
+						<li key={row.id}>{row.action} · {name(row.who)}{row.remarks ? ` · ${row.remarks}` : ""}</li>
 					))}
 				</ul>
 			) : null}

@@ -1,4 +1,6 @@
 import { actorMayDecideMarkup, markupPercentsOpen } from "../lib/estimator/markup";
+import { personName } from "../lib/estimator/departments";
+import { askReason } from "../lib/estimator/reasonBox";
 
 /** @param {unknown} value */
 function money(value) {
@@ -18,14 +20,15 @@ function Field({ label, value, disabled, onChange }) {
 }
 
 /**
- * @param {{ markup: any, sales: boolean, actorId: string, onMarkup?: (action: string, payload?: any) => void }} props
+ * @param {{ markup: any, sales: boolean, actorId: string, users?: unknown[], onMarkup?: (action: string, payload?: any) => void }} props
  */
-export function MarkupPanel({ markup, sales, actorId, onMarkup }) {
+export function MarkupPanel({ markup, sales, actorId, users, onMarkup }) {
 	if (!markup) return null;
 	const open = markupPercentsOpen(markup);
 	const parts = markup.parts || { profit: 0, contingency: 0, markup: 0 };
 	const mayDecide = actorMayDecideMarkup(markup, actorId);
 	const holder = markup.status === "For approval" ? markup.steps?.[markup.currentIndex] : null;
+	const name = (/** @type {unknown} */ id) => personName(id, users) || "Unnamed";
 
 	/** @param {string} key @param {string} value */
 	function setPart(key, value) {
@@ -39,6 +42,7 @@ export function MarkupPanel({ markup, sales, actorId, onMarkup }) {
 			<p className="wiz-hint">Direct cost only. Selling = direct cost × (1 + profit + contingency + mark up).</p>
 			<p>Direct cost {money(markup.directCost)}</p>
 			<p>Selling {money(markup.selling)} · {markup.status}</p>
+			{markup.approverFor ? <p className="wiz-hint">Signature {markup.approverFor}</p> : null}
 			<div className="wiz-grid">
 				{["100", "75", "65"].map((preset) => (
 					<button key={preset} type="button" className="ce-btn-ghost ce-btn-sm" disabled={!open} onClick={() => onMarkup?.("preset", { preset })}>
@@ -51,7 +55,7 @@ export function MarkupPanel({ markup, sales, actorId, onMarkup }) {
 				<Field label="Contingency %" value={parts.contingency} disabled={!open} onChange={(value) => setPart("contingency", value)} />
 				<Field label="Mark up %" value={parts.markup} disabled={!open} onChange={(value) => setPart("markup", value)} />
 			</div>
-			{holder ? <p className="wiz-hint">Waiting for {holder.userId}{holder.backupUserId ? ` (backup ${holder.backupUserId})` : ""}</p> : null}
+			{holder ? <p className="wiz-hint">Waiting for {name(holder.userId)}{holder.backupUserId ? ` (backup ${name(holder.backupUserId)})` : ""}</p> : null}
 			{open && sales && actorId === markup.ownerId ? (
 				<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onMarkup?.("submit")}>Submit markup</button>
 			) : null}
@@ -63,9 +67,10 @@ export function MarkupPanel({ markup, sales, actorId, onMarkup }) {
 						type="button"
 						className="ce-btn-ghost ce-btn-sm"
 						onClick={() => {
-							const remarks = window.prompt("Return remark (required)");
-							if (!remarks || !String(remarks).trim()) return;
-							onMarkup?.("return", { remarks: String(remarks).trim() });
+							void askReason({ title: "Return markup", label: "Return remark", required: true }).then((result) => {
+								if (!result.ok) return;
+								onMarkup?.("return", { remarks: result.text });
+							});
 						}}
 					>
 						Return markup
@@ -75,7 +80,7 @@ export function MarkupPanel({ markup, sales, actorId, onMarkup }) {
 			{(markup.timeline || []).length ? (
 				<ul>
 					{(markup.timeline || []).map((/** @type {any} */ row) => (
-						<li key={row.id}>{row.action} · {row.who}{row.remarks ? ` · ${row.remarks}` : ""}</li>
+						<li key={row.id}>{row.action} · {name(row.who)}{row.remarks ? ` · ${row.remarks}` : ""}</li>
 					))}
 				</ul>
 			) : null}

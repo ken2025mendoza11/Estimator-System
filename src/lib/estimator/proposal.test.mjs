@@ -98,11 +98,13 @@ test("approval, revise, lost, expired, and won", () => {
 	const submitted = submitProposal(proposal, { byUserId: "sales-1", approverLists: lists });
 	if (!submitted.proposal) throw new Error("missing submit");
 	assert.equal(decideProposal(submitted.proposal, { actorId: "sales-1", decision: "approve" }).ok, false);
-	const returned = decideProposal(submitted.proposal, { actorId: "mgr-2", decision: "return", remarks: "Fix the scope" });
+	const returned = decideProposal(submitted.proposal, { actorId: "mgr-2", decision: "return", remarks: "Fix the scope", approverName: "Primary Approver" });
 	if (!returned.proposal) throw new Error("missing return");
 	assert.equal(returned.proposal.status, "Draft");
 	assert.equal(returned.proposal.timeline.at(-1).who, "mgr-2");
-	assert.match(returned.proposal.timeline.at(-1).remarks, /for mgr-1/);
+	assert.match(returned.proposal.timeline.at(-1).remarks, /for Primary Approver/);
+	assert.equal(returned.proposal.steps[0].forUserId, "mgr-1");
+	assert.equal(returned.proposal.timeline.at(-1).remarks.includes("mgr-1"), false);
 	const again = submitProposal(returned.proposal, { byUserId: "sales-1", approverLists: lists });
 	if (!again.proposal) throw new Error("missing again");
 	const approved = decideProposal(again.proposal, { actorId: "mgr-1", decision: "approve" });

@@ -14,6 +14,7 @@ import { supabaseConfigError } from "@/lib/supabase/client";
 import { ensureSupabaseAccess } from "@/lib/supabase/session";
 import { AccessGate, WelcomeTour } from "@/components/AccessScreens";
 import CostEstimatorApp from "@/components/CostEstimatorApp";
+import { ReasonAskHost } from "@/components/ReasonAsk";
 import { clearSaveError, isSigningOut, readSaveError, writeSaveError } from "@/lib/estimator/clientSession";
 import { dropReadOnlyDirtyKeys } from "@/lib/estimator/viewOnlySave";
 
@@ -531,6 +532,7 @@ export function EstimatorShell({ mobileView = null }: { mobileView?: { kind: str
           }}
         />
       ) : null}
+      <ReasonAskHost />
       <CostEstimatorApp
       key={bootKey}
       initialWorkspace={workspace}

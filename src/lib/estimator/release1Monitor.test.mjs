@@ -113,8 +113,13 @@ test("after 12 hours a waiting step moves to its backup, or the next level when 
 	assert.equal(first.doc.timeline[0].who, "appr-1");
 	assert.equal(first.doc.timeline[0].action, "Escalated");
 	const again = escalateWaiting(first.doc, "2026-10-29T12:00:00.000Z");
-	assert.equal(again.ok, false);
-	assert.equal(again.message, "Already escalated.");
+	assert.equal(again.ok, true);
+	if (!again.ok) return;
+	assert.equal(again.toUserId, "appr-2");
+	assert.equal(again.doc.currentIndex, 1);
+	const same = escalateWaiting(first.doc, NOW);
+	assert.equal(same.ok, false);
+	assert.equal(same.message, "Not due.");
 
 	const noBackup = {
 		status: "Submitted",
@@ -225,7 +230,7 @@ test("the monitor flag is off until the TEST seed, and new notices can be turned
 	const monitor = readFileSync(new URL("./release1Monitor.js", import.meta.url), "utf8");
 	assert.equal(app.includes("release1Monitor: false"), true);
 	assert.equal(seed.includes("release1Monitor: true"), true);
-	assert.equal(app.includes("/api/release1-escalate"), true);
+	assert.equal(app.includes("/api/release1-escalate"), false);
 	assert.equal(app.includes("/api/release1-mail"), true);
 	assert.equal(reports.includes("#b45309"), true);
 	assert.equal(reports.includes("Sales list"), true);

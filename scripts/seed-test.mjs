@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { hashPassword } from "better-auth/crypto";
 import pg from "pg";
 import { TEST_USERS, seedRefusal } from "../src/lib/auth/test-login.ts";
+import { release1SalesApprovers } from "../src/lib/estimator/departments.js";
 import { buildDirectCes } from "./seed-documents.mjs";
 import { buildSampleSet, rceRequestRow, roleRowFor } from "./seed-samples.mjs";
 import { ceMirrorRows } from "./seed-mirror.mjs";
@@ -298,6 +299,48 @@ async function upsertRceRequest(row) {
   });
 }
 
+async function registerSampleCounters(sample) {
+  const note = (label, result, err) => {
+    const reason = err ? String(err?.message || err) : String(result?.reason || "The database refused it.");
+    console.log(`${label} was not registered. ${reason.slice(0, 160)}`);
+  };
+  for (const row of sample.jobOrders || []) {
+    if (!row?.joNo) continue;
+    try {
+      const result = await sb("rpc/claim_job_order_no", {
+        method: "POST",
+        body: { p_jo_no: row.joNo, p_control: row.controlNo || "", p_ces: (row.ceIds || []).join(",") },
+      });
+      if (result && result.ok === false) note(`Sample job order number ${row.joNo}`, result);
+    } catch (err) {
+      note(`Sample job order number ${row.joNo}`, null, err);
+    }
+  }
+  for (const doc of (sample.docs || []).filter((item) => item.kind === "proposal")) {
+    const pr = String(doc.payload?.prNo || "").trim();
+    const control = String(doc.payload?.controlNo || doc.id || "");
+    if (!pr || !control) continue;
+    try {
+      const result = await sb("rpc/claim_proposal_pr", {
+        method: "POST",
+        body: { p_control: control, p_pr: pr, p_ce: doc.payload?.ceId || "" },
+      });
+      if (result && result.ok === false) note(`Sample proposal number ${control}`, result);
+    } catch (err) {
+      note(`Sample proposal number ${control}`, null, err);
+    }
+  }
+  try {
+    const result = await sb("rpc/release1_advance_sample_counters", {
+      method: "POST",
+      body: { p_proposal: 3614, p_year: "26", p_jo_seq: 14 },
+    });
+    if (result && result.ok === false) note("Sample counters", result);
+  } catch (err) {
+    note("Sample counters", null, err);
+  }
+}
+
 async function mergeRelease1JobOrders(jobOrders) {
   if (!jobOrders.length) return;
   const existing = await sb("workspace_docs?kind=eq.schema&doc_id=eq.company&select=payload,version");
@@ -328,7 +371,12 @@ async function upsertDoc(kind, id, payload, ord) {
   await sb("workspace_docs", { method: "POST", body: { ...row, version: 1 } });
 }
 
-function accountDepartmentFor(role) {
+function accountDepartmentFor(userOrRole) {
+  if (userOrRole && typeof userOrRole === "object") {
+    if (userOrRole.accountDepartment) return userOrRole.accountDepartment;
+    return accountDepartmentFor(userOrRole.role);
+  }
+  const role = userOrRole;
   if (role === "head") return "Management";
   if (role === "admin") return "Admin";
   if (role === "staff" || role === "lead") return "Cost Estimating";
@@ -336,6 +384,8 @@ function accountDepartmentFor(role) {
 }
 
 function approverListsFor(users) {
+  const wired = release1SalesApprovers(users);
+  if (wired) return wired;
   const active = users.filter((user) => (user.accountStatus || "active") === "active");
   const idOf = (role) => {
     const user = active.find((row) => row.role === role);
@@ -371,9 +421,9 @@ function adminConfig(users, extras = []) {
         ...(user.userKey ? { userId: user.userKey } : {}),
         name: user.name,
         email: user.email,
-        designation: user.label,
+        designation: user.designation || user.label,
         department: "Costing",
-        accountDepartment: user.accountStatus && user.accountStatus !== "active" ? "" : accountDepartmentFor(user.role),
+        accountDepartment: user.accountStatus && user.accountStatus !== "active" ? "" : accountDepartmentFor(user),
         level: user.role,
         status: user.accountStatus || "active",
       })),
@@ -490,6 +540,7 @@ async function seedSupabase(ce, users) {
     await upsertDoc(doc.kind, doc.id, doc.payload, doc.ord);
   }
   await mergeRelease1JobOrders(sample.jobOrders || []);
+  await registerSampleCounters(sample);
   const rceRows = await sb("rce_requests?select=id");
   const rceIds = new Set((Array.isArray(rceRows) ? rceRows : []).map((row) => row.id));
   const ceRows = await sb("workspace_docs?kind=eq.ce&deleted_at=is.null&select=doc_id,payload");
