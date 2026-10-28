@@ -41,7 +41,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
 | 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
 | 35 | Release 1 fix round 2 | done | `grok/phase-35` | https://github.com/ken2025mendoza11/Estimator-System/pull/34 |
-| 36 | Release 1 fix round 3 | done | `grok/phase-36` | |
+| 36 | Release 1 fix round 3 | done | `grok/phase-36` | https://github.com/ken2025mendoza11/Estimator-System/pull/35 |
 
 ## Step 1 done
 
@@ -66,7 +66,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 36 done
 
-Stacked on `grok/phase-35` (https://github.com/ken2025mendoza11/Estimator-System/pull/34 is still open). Draft PR into grok/phase-35. Do not merge to `main`.
+Stacked on `grok/phase-35` (https://github.com/ken2025mendoza11/Estimator-System/pull/34 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/35. Do not merge to `main`.
 
 - A `ce-approved` email reads the stored cost estimate (`kind` `ce`) and uses the CE number. The browser sends `kind` with `docId`. A markup email uses the markup label (`ceId`, else the markup id), not a proposal or job order that shares that estimate.
 - If the notifications save hits a version conflict, the server re-reads that record, adds the notices again, and retries up to 3 times. The response reports `noticeSave` (`ok`, `attempts`, `conflict`). Markups, proposals, and job orders are saved once, so a retry does not write them again with a stale version.
