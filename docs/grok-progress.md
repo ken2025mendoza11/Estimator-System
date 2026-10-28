@@ -42,7 +42,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
 | 35 | Release 1 fix round 2 | done | `grok/phase-35` | https://github.com/ken2025mendoza11/Estimator-System/pull/34 |
 | 36 | Release 1 fix round 3 | done | `grok/phase-36` | https://github.com/ken2025mendoza11/Estimator-System/pull/35 |
-| 37 | Release 1 fix round 4 | done | `grok/phase-37` | |
+| 37 | Release 1 fix round 4 | done | `grok/phase-37` | https://github.com/ken2025mendoza11/Estimator-System/pull/36 |
 
 ## Step 1 done
 
@@ -67,7 +67,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 37 done
 
-Stacked on `grok/phase-36` (https://github.com/ken2025mendoza11/Estimator-System/pull/35 is still open). Draft PR into grok/phase-36. Do not merge to `main`.
+Stacked on `grok/phase-36` (https://github.com/ken2025mendoza11/Estimator-System/pull/35 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/36. Do not merge to `main`.
 
 - Before the seed writes to a database, it prints the Supabase project ref and the sign-in database name. It stops unless the URL host is exactly `nqxijgsbpffewizzefwi.supabase.co` and `DATABASE_URL` names the database `estimator-test-auth`. A longer host, the live project `rgppzzwitldwbfkgezoz`, and the live database `estimator-auth` are refused. The connection string is not printed. `--fixture-only` still writes only the local fixture and does not connect. The older guard still runs first: `ESTIMATOR_TEST_LOGIN` is `1`, `VERCEL_ENV` is not `production`, and `ESTIMATOR_TEST_SUPABASE_URL` equals `VITE_SUPABASE_URL`.
 - A markup email uses the CE number stored on the estimate, not the internal estimate id, and not a proposal or job order that shares that estimate. If that estimate has no document number, the mail is not sent.
