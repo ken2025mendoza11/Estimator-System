@@ -18,7 +18,11 @@ export const DEFAULT_NOTIFY_MATRIX = [
 	{ event: "Closing requested", enabled: true },
 	{ event: "Reminder", enabled: true },
 	{ event: "RCE changed", enabled: true },
-	{ event: "CE approved", enabled: true }
+	{ event: "CE approved", enabled: true },
+	{ event: "Document approved", enabled: true },
+	{ event: "Returned", enabled: true },
+	{ event: "Escalated", enabled: true },
+	{ event: "Proposal expiring", enabled: true }
 ];
 
 export function normalizeNotifyMatrix(raw) {

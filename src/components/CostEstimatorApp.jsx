@@ -49,7 +49,7 @@ import { Phase8Admin } from "./Phase8Admin";
 import { Phase9Admin } from "./Phase9Admin";
 import { Phase10Admin } from "./Phase10Admin";
 import { Release1Admin } from "./Release1Admin";
-import { accountId, findAccount, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
+import { accountId, findAccount, isAdminDepartment, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
 import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "../lib/estimator/salesView";
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
 import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
@@ -58,6 +58,7 @@ import { canGenerateProposal, cancelProposal, createProposal, decideProposal, ma
 import { ProposalPanel } from "./ProposalPanel";
 import { canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
 import { JobOrderPanel } from "./JobOrderPanel";
+import { escalationDoc, monitorDashboard, pendingApprovals, reassignDoc, release1MailRequest, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -86,6 +87,9 @@ let release1ProposalOn = false;
 let release1ProposalSales = false;
 let release1JobOrderOn = false;
 let release1JobOrderSales = false;
+let release1MonitorOn = false;
+let release1MonitorSales = false;
+let release1CanReassign = false;
 let release1ActorId = "";
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
@@ -4818,7 +4822,8 @@ function defaultAdminConfig() {
 			release1WithdrawRequest: false,
 			release1Markup: false,
 			release1Proposal: false,
-			release1JobOrder: false
+			release1JobOrder: false,
+			release1Monitor: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4939,7 +4944,8 @@ function normalizeAdminConfig(raw) {
 			release1WithdrawRequest: src.features?.release1WithdrawRequest === true,
 			release1Markup: src.features?.release1Markup === true,
 			release1Proposal: src.features?.release1Proposal === true,
-			release1JobOrder: src.features?.release1JobOrder === true
+			release1JobOrder: src.features?.release1JobOrder === true,
+			release1Monitor: src.features?.release1Monitor === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -27902,6 +27908,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1ProposalSales = release1ProposalOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1JobOrderOn = adminConfig.features?.release1JobOrder === true;
 	release1JobOrderSales = release1JobOrderOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1MonitorOn = adminConfig.features?.release1Monitor === true;
+	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
@@ -28003,6 +28011,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const realLevel = ["admin", "head", "lead", "staff"].includes(String(accountRole || "").toLowerCase()) ? String(accountRole).toLowerCase() : "staff";
 	const isAdminAccount = realLevel === "admin" && !!accountUserId;
 	const lockedName = accountName || currentUserName || "";
+	release1CanReassign = release1MonitorOn && (isAdminAccount || isAdminDepartment(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) || (adminConfig.authorisations?.takeover || []).some((name) => name === release1ActorId || (lockedName && name === lockedName)));
 	useEffect(() => {
 		if (!isAdminAccount) {
 			if (lockedName && editingUser !== lockedName) setEditingUser(lockedName);
@@ -28062,6 +28071,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			...(partial.toUserId ? { toUserId: String(partial.toUserId) } : {}),
 			...(partial.monitoringTab ? { monitoringTab: partial.monitoringTab } : {})
 		}));
+	};
+	const sendRelease1Mail = (toUserId, subject, text) => {
+		if (!release1MonitorOn) return;
+		const payload = release1MailRequest(toUserId, adminConfig.users || [], subject, text);
+		if (!payload) return;
+		void fetch("/api/release1-mail", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload)
+		}).catch(() => {});
 	};
 	const patchRce = (id, fn) => {
 		setRceList((prev) => prev.map((r) => (r.id || r.rceNo) === id ? fn(r) : r));
@@ -28222,6 +28241,88 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 		writeReminderStamps(reminderStore, reminderUser, nextStamps);
 	}, [engineFlag, ceList, adminConfig?.notifyMatrix]);
+	const release1SeenRef = useRef(new Set());
+	useEffect(() => {
+		if (!release1MonitorOn) return undefined;
+		const now = new Date().toISOString();
+		const items = [];
+		(proposals || []).forEach((row) => {
+			if (row && row.status === "Submitted") items.push({ ...row, kind: "proposal" });
+		});
+		(jobOrders || []).forEach((row) => {
+			if (row && (row.status === "Submitted" || row.status === "For approval")) items.push({ ...row, kind: "jobOrder" });
+		});
+		(ceList || []).forEach((row) => {
+			if (row?.markup && row.markup.status === "For approval") items.push({ ...row.markup, kind: "markup", ceId: row.id });
+		});
+		const openProposals = (proposals || []).filter((row) => row && (row.status === "Approved" || row.status === "Sent"));
+		if (!items.length && !openProposals.length) return undefined;
+		let cancelled = false;
+		const users = adminConfig?.users || [];
+		const allow = (event) => !(approvalEngineOn(adminConfig) && !matrixAllows(adminConfig?.notifyMatrix, event));
+		fetch("/api/release1-escalate", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ items, proposals: openProposals, now })
+		}).then((response) => response && response.ok ? response.json() : null).then((body) => {
+			if (cancelled || !body || body.ok !== true) return;
+			const seen = release1SeenRef.current;
+			(body.escalated || []).forEach((row) => {
+				const doc = row && row.doc;
+				if (!doc) return;
+				const key = `esc:${doc.kind}:${doc.controlNo || doc.joNo || doc.ceId || doc.id}:${doc.currentIndex}:${row.toUserId}`;
+				if (seen.has(key)) return;
+				seen.add(key);
+				const stored = escalationDoc(doc);
+				if (doc.kind === "proposal") setProposals((prev) => (prev || []).map((item) => item.controlNo === stored.controlNo ? stored : item));
+				else if (doc.kind === "jobOrder") setJobOrders((prev) => (prev || []).map((item) => item.id === stored.id || item.joNo === stored.joNo ? stored : item));
+				else if (doc.kind === "markup") {
+					setCeList((prev) => prev.map((item) => item.id === doc.ceId ? { ...item, markup: stored } : item));
+					setActiveCE((cur) => cur && cur.id === doc.ceId ? { ...cur, markup: stored } : cur);
+				}
+				const label = String(doc.controlNo || doc.joNo || doc.ceId || "");
+				if (allow("Escalated")) setNotifications((prev) => pushNotice(prev, {
+					type: "Escalated",
+					title: "Escalated",
+					body: `${label} moved after 12 hours`,
+					toUserId: String(row.toUserId || ""),
+					ceId: doc.ceId || "",
+					view: "reports"
+				}));
+				if (!String(row.toUserId || "").includes("@")) {
+					const payload = release1MailRequest(row.toUserId, users, "Escalated", `${label} moved after 12 hours`);
+					if (payload) void fetch("/api/release1-mail", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload)
+					}).catch(() => {});
+				}
+			});
+			(body.expiring || []).forEach((row) => {
+				const key = `exp:${row.id}`;
+				if (!row || seen.has(key)) return;
+				seen.add(key);
+				if (allow("Proposal expiring")) setNotifications((prev) => pushNotice(prev, {
+					type: "Proposal expiring",
+					title: "Proposal expiring",
+					body: `${row.id} is near its validity date`,
+					toUserId: String(row.toUserId || ""),
+					view: "reports"
+				}));
+				if (!String(row.toUserId || "").includes("@")) {
+					const payload = release1MailRequest(row.toUserId, users, "Proposal expiring", `${row.id} is near its validity date`);
+					if (payload) void fetch("/api/release1-mail", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload)
+					}).catch(() => {});
+				}
+			});
+		}).catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [proposals, jobOrders, ceList, adminConfig]);
 	const approvalFlowInput = (docType) => {
 		const party = adminConfig?.approvalFinal?.[docType] || {};
 		return {
@@ -30025,14 +30126,39 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		const markup = result.markup;
 		setCeList((prev) => prev.map((row) => row.id === ceId ? { ...row, markup } : row));
 		setActiveCE((cur) => cur && cur.id === ceId ? { ...cur, markup } : cur);
-		if (result.toUserId) notice({
-			type: "Needs your approval",
-			title: "Markup approval",
-			body: `${ceId} markup is waiting`,
-			ceId,
-			toUserId: result.toUserId,
-			view: "editor"
-		});
+		if (result.toUserId) {
+			notice({
+				type: "Needs your approval",
+				title: "Markup approval",
+				body: `${ceId} markup is waiting`,
+				ceId,
+				toUserId: result.toUserId,
+				view: "editor"
+			});
+			sendRelease1Mail(result.toUserId, "Needs your approval", `${ceId} markup is waiting`);
+		}
+		if (release1MonitorOn && markup.status === "Approved") {
+			notice({
+				type: "Document approved",
+				title: "Markup approved",
+				body: `${ceId} markup was approved`,
+				ceId,
+				toUserId: markup.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(markup.ownerId, "Document approved", `${ceId} markup was approved`);
+		}
+		if (release1MonitorOn && action === "return") {
+			notice({
+				type: "Returned",
+				title: "Markup returned",
+				body: `${ceId} markup was returned`,
+				ceId,
+				toUserId: markup.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(markup.ownerId, "Returned", `${ceId} markup was returned`);
+		}
 	};
 	const handleProposal = async (action, payload) => {
 		if (!release1ProposalOn || !activeCE?.id) return;
@@ -30102,14 +30228,39 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (index < 0) return [proposal, ...list];
 			return list.map((row, i) => i === index ? proposal : row);
 		});
-		if (result.toUserId) notice({
-			type: "Needs your approval",
-			title: "Proposal approval",
-			body: `${ceId} proposal is waiting`,
-			ceId,
-			toUserId: result.toUserId,
-			view: "editor"
-		});
+		if (result.toUserId) {
+			notice({
+				type: "Needs your approval",
+				title: "Proposal approval",
+				body: `${ceId} proposal is waiting`,
+				ceId,
+				toUserId: result.toUserId,
+				view: "editor"
+			});
+			sendRelease1Mail(result.toUserId, "Needs your approval", `${ceId} proposal is waiting`);
+		}
+		if (release1MonitorOn && proposal.status === "Approved") {
+			notice({
+				type: "Document approved",
+				title: "Proposal approved",
+				body: `${proposal.controlNo} was approved`,
+				ceId,
+				toUserId: proposal.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(proposal.ownerId, "Document approved", `${proposal.controlNo} was approved`);
+		}
+		if (release1MonitorOn && action === "return") {
+			notice({
+				type: "Returned",
+				title: "Proposal returned",
+				body: `${proposal.controlNo} was returned`,
+				ceId,
+				toUserId: proposal.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(proposal.ownerId, "Returned", `${proposal.controlNo} was returned`);
+		}
 	};
 	const handleJobOrder = async (action, payload) => {
 		if (!release1JobOrderOn || !activeCE?.id) return;
@@ -30181,13 +30332,71 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			setActiveCE((cur) => cur && ids.has(cur.id) && cur.awardStatus === "Awarded" ? { ...cur, status: "Done", awardStatus: "", awardJo: "" } : cur);
 			setProposals((prev) => prev.map((row) => row.controlNo === result.effect.proposalControl && row.status === "Won" ? { ...row, status: "Approved" } : row));
 		}
-		if (result.toUserId) notice({
-			type: "Needs your approval",
-			title: "Job order approval",
-			body: `${jobOrder.joNo} is waiting`,
-			ceId,
-			toUserId: result.toUserId,
-			view: "editor"
+		if (result.toUserId) {
+			notice({
+				type: "Needs your approval",
+				title: "Job order approval",
+				body: `${jobOrder.joNo} is waiting`,
+				ceId,
+				toUserId: result.toUserId,
+				view: "editor"
+			});
+			sendRelease1Mail(result.toUserId, "Needs your approval", `${jobOrder.joNo} is waiting`);
+		}
+		if (release1MonitorOn && jobOrder.status === "Approved") {
+			notice({
+				type: "Document approved",
+				title: "Job order approved",
+				body: `${jobOrder.joNo} was approved`,
+				ceId,
+				toUserId: jobOrder.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(jobOrder.ownerId, "Document approved", `${jobOrder.joNo} was approved`);
+		}
+		if (release1MonitorOn && action === "return") {
+			notice({
+				type: "Returned",
+				title: "Job order returned",
+				body: `${jobOrder.joNo} was returned`,
+				ceId,
+				toUserId: jobOrder.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(jobOrder.ownerId, "Returned", `${jobOrder.joNo} was returned`);
+		}
+	};
+	const handleMonitor = (action, row, toUserId) => {
+		if (!release1MonitorOn || !row) return;
+		const now = new Date().toISOString();
+		let doc = null;
+		if (row.kind === "proposal") doc = (proposals || []).find((item) => item.controlNo === row.id || item.id === row.id);
+		else if (row.kind === "jobOrder") doc = (jobOrders || []).find((item) => item.joNo === row.id || item.id === row.id);
+		if (!doc) return;
+		const result = action === "reassign" ? reassignDoc({
+			doc,
+			actorId: release1ActorId,
+			toUserId,
+			authorized: release1CanReassign,
+			now
+		}) : takeOverApproved({
+			doc,
+			actorId: release1ActorId,
+			sales: release1MonitorSales,
+			now
+		});
+		if (!result.ok || !result.doc) {
+			window.alert(result.message || "That was not saved.");
+			return;
+		}
+		if (row.kind === "proposal") setProposals((prev) => (prev || []).map((item) => item.controlNo === result.doc.controlNo ? result.doc : item));
+		else setJobOrders((prev) => (prev || []).map((item) => item.id === result.doc.id || item.joNo === result.doc.joNo ? result.doc : item));
+		notice({
+			type: "Transferred",
+			title: action === "reassign" ? "Reassigned" : "Taken over",
+			body: `${row.kind} ${row.id}`,
+			toUserId: result.doc.ownerId,
+			view: "reports"
 		});
 	};
 	const openArchived = (ceId) => {
@@ -30297,6 +30506,31 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			}
 		});
 	}
+	const release1Now = new Date().toISOString();
+	const release1MonitorView = release1MonitorOn ? {
+		sales: salesWorklist({ proposals, jobOrders, now: release1Now }),
+		pending: pendingApprovals([
+			...(proposals || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "proposal" })),
+			...(jobOrders || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "jobOrder" })),
+			...(ceList || []).filter((row) => row?.markup && row.markup.status === "For approval").map((row) => ({ ...row.markup, kind: "markup", id: row.id }))
+		], release1Now),
+		dashboard: monitorDashboard({
+			proposals,
+			ces: (ceList || []).map((row) => ({
+				awardStatus: row.awardStatus || "",
+				status: row.status || "",
+				received: row.rceReceived || row.dateReceived || "",
+				done: (row.status === "Done" || row.status === "Awarded") ? (row.done || String(row.lastEdited || "").slice(0, 10)) : ""
+			})),
+			now: release1Now
+		}),
+		accounts: (adminConfig.users || []).map((user) => ({ id: accountId(user), label: accountId(user) })).filter((row) => row.id),
+		canTakeOver: release1MonitorSales,
+		canReassign: release1CanReassign,
+		actorId: release1ActorId,
+		onTakeOver: (row) => handleMonitor("takeover", row),
+		onReassign: (row, toUserId) => handleMonitor("reassign", row, toUserId)
+	} : null;
 	return /* @__PURE__ */ jsx("div", {
 		className: "ce-app",
 		style: adminConfig.features?.branding === true ? brandingVars(adminConfig.branding) : undefined,
@@ -30323,7 +30557,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				},
 				testMode: Boolean(testDeployment) && isAdminAccount,
 				canAdmin: isAdminAccount,
-				reportsOn: adminConfig.features?.reports === true,
+				reportsOn: adminConfig.features?.reports === true || release1MonitorOn,
 				scheduleOn: adminConfig.features?.schedule === true,
 				onMarkRead: () => {
 					setLocalReminders((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));
@@ -30461,9 +30695,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					setCurrentView(n.view || "monitoring");
 				},
 				children: [
-					currentView === "reports" && adminConfig.features?.reports === true && /* @__PURE__ */ jsx(Phase6Reports, {
+					currentView === "reports" && (adminConfig.features?.reports === true || release1MonitorOn) && /* @__PURE__ */ jsx(Phase6Reports, {
 						ceList,
-						documents
+						documents,
+						reportOn: adminConfig.features?.reports === true,
+						monitor: release1MonitorView
 					}),
 					currentView === "project-schedule" && adminConfig.features?.schedule === true && /* @__PURE__ */ jsx(Phase10Schedule, {
 						plans: (ceList || []).map((ce) => {

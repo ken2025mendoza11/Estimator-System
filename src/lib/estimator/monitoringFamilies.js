@@ -16,6 +16,15 @@ function memberTags(row) {
 	return tags;
 }
 
+/** The account id that currently holds an approval step. A used backup wins. */
+export function holderId(row) {
+	const steps = row?.steps || row?.approval?.steps || [];
+	const index = Number(row?.currentIndex ?? row?.approval?.currentIndex ?? 0);
+	const step = steps[index] || {};
+	if (step.usedBackup && step.backupUserId) return String(step.backupUserId);
+	return String(step.userId || "");
+}
+
 /**
  * @param {unknown[]} rows
  */
