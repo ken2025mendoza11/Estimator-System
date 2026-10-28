@@ -34,6 +34,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 26 | Accounts and roles foundation | done | `grok/phase-26` | https://github.com/ken2025mendoza11/Estimator-System/pull/25 |
 | 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
 | 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
+| 29 | Markup on an approved estimate | done | `grok/phase-29` | |
 
 ## Step 1 done
 
@@ -55,6 +56,18 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 29 done
+
+Stacked on `grok/phase-28` (https://github.com/ken2025mendoza11/Estimator-System/pull/27 is still open). Draft PR: pending. Do not merge to `main`.
+
+- Flag `release1Markup` is off in the app. The TEST seed turns it on. While it is off, there is no Generate Markup button.
+- While it is on, Sales sees Generate Markup on an approved estimate (Done, Accepted, or Awarded). The direct cost is the total already on screen (`screenOfficialTotal` / the official rows). Markup does not recompute CE lines and does not write the cost estimate document.
+- Presets: 100% = 35 + 15 + 50, 75% = 35 + 10 + 30, 65% = 35 + 10 + 20. Each percent stays editable. Selling = direct cost × (1 + total %). A direct cost of 1,000,000 sells at 2,000,000 / 1,750,000 / 1,650,000.
+- Submit uses the Markup approver list from Admin, in order. The listed backup can approve and is logged as that account id, with `for <approver id>`. Return needs a remark. Percents lock after submit and unlock if returned. Timeline `who` is the account id.
+- Stored on the CE row in the workspace JSON. SQL: none.
+
+Tests: `src/lib/estimator/markup.test.mjs`. `npm test` 389 + 97, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
 
 ## Step 28 done
 
