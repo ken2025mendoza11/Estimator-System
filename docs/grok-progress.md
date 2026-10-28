@@ -38,6 +38,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
 | 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
 | 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
+| 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | Draft PR: pending |
 
 ## Step 1 done
 
@@ -59,6 +60,20 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 33 done
+
+Stacked on `grok/phase-32` (https://github.com/ken2025mendoza11/Estimator-System/pull/31 is still open). Draft PR: pending. Do not merge to `main`.
+
+- The TEST seed now has one sample at each Release 1 stage for staff, lead, head, and admin: accepted RCE, done CE, approved markup, approved proposal, submitted job order, and Awarded (with a Won proposal and an approved job order). Markup direct cost is the stored 1,000,000 snapshot, selling 2,000,000. Job orders have quantities and no prices.
+- Proposals are written as proposal documents. Job orders are merged into the existing schema document. Other schema keys are kept. The seed was not run.
+- `scripts/step33.test.mjs` walks an accepted RCE to a done CE, markup, proposal, and job order. Approval sets the estimate Awarded and the proposal Won. Cancel clears both. Timeline `who` is the account id.
+- Go-live checklist: [docs/release1-golive.md](release1-golive.md). Ken runs it. Backup first. Fifteen SQL files in order, rollbacks in reverse, flags to turn on together, then `npm run seed:test` on `estimator-test` only.
+- No new SQL. No new flag. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Tests: `scripts/step33.test.mjs`. `npm test` 407 + 98, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Open: SQL is not applied. The mail key is empty. Nothing calls `/api/release1-escalate` on a clock yet. `checkerV2` and `docSuffixes` stay off until Ken turns them on with the other flags.
 
 ## Step 32 done
 

@@ -1,6 +1,7 @@
 // @ts-nocheck
 /** Fixed TEST sample rows. No network, no secrets, no random ids. */
 import { beginEngineApproval } from "../src/lib/estimator/approvalEngine.js";
+import { formatJobOrderNo } from "../src/lib/estimator/docNumbers.js";
 
 /** Labels from CostEstimatorApp.jsx defaultBoardColors(). */
 export const RCE_STATUSES = [
@@ -35,6 +36,8 @@ export const INSPECTION_STATUSES = ["Filed", "For review", "Noted", "For revisio
 
 export const SAMPLE_ROLES = ["staff", "lead", "head", "admin"];
 export const QUEUE_LEVELS = ["staff", "lead", "head"];
+/** One fixed sample at each Release 1 stage, for every login role. */
+export const RELEASE1_STAGES = ["rce", "ce", "markup", "proposal", "jobOrder", "awarded"];
 
 const CLIENT = "Sample Client";
 const WHEN = "2026-10-21";
@@ -341,6 +344,162 @@ function queueApproval(level, docNo) {
 	});
 }
 
+function release1Markup(ceId, ownerId, role) {
+	return {
+		ceId,
+		directCost: 1000000,
+		parts: { profit: 35, contingency: 15, markup: 50 },
+		preset: "100",
+		selling: 2000000,
+		status: "Approved",
+		ownerId,
+		steps: [],
+		currentIndex: -1,
+		timeline: [{ id: `sample-markup-${role}`, at: APPROVAL_AT, who: ownerId, action: "Markup approved", remarks: "" }],
+	};
+}
+
+function release1Proposal({ id, controlNo, status, ceId, ownerId, prNo }) {
+	return {
+		id,
+		sample: true,
+		controlNo,
+		rev: 0,
+		prNo,
+		prDate: WHEN,
+		header: "Proposal",
+		client: CLIENT,
+		project: `Sample ${id}`,
+		ceId,
+		ceNo: ceId,
+		ceRev: "0",
+		scope: "Sample scope",
+		groups: [{ key: "BOL", label: "BOL", amount: 1000000, selling: 2000000 }],
+		direct: 1000000,
+		total: 2000000,
+		percent: 100,
+		clauses: "Sample clauses",
+		validityDays: 30,
+		validUntil: "2026-11-20",
+		salesRepId: ownerId,
+		ownerId,
+		approverId: LOGIN_IDS.head,
+		clientConforme: "",
+		status,
+		finalApproved: true,
+		steps: [],
+		currentIndex: -1,
+		timeline: [{ id: `sample-proposal-${id}`, at: APPROVAL_AT, who: ownerId, action: "Proposal approved", remarks: "" }],
+	};
+}
+
+function release1JobOrder({ role, seq, controlNo, ceId, ownerId, status }) {
+	const joNo = formatJobOrderNo(seq, "SW", "SAM", "2026", controlNo, 0);
+	return {
+		id: joNo,
+		sample: true,
+		joNo,
+		seq,
+		rev: 0,
+		type: "SW",
+		clientCode: "SAM",
+		year: "2026",
+		controlNo,
+		dateIssued: WHEN,
+		client: CLIENT,
+		poRef: `PO-${role}`,
+		project: `Sample ${role} job order`,
+		prNo: `PR R1-${role}-${controlNo}`,
+		salesRepId: ownerId,
+		salesPosition: "Sales",
+		inCharge: "Site lead",
+		inChargePosition: "Engineer",
+		clientContact: "Client contact",
+		clientContactPosition: "Manager",
+		duration: "30 days",
+		ceIds: [ceId],
+		poFileName: `PO-${role}.pdf`,
+		drawingNames: [],
+		ceQuantity: [{ id: `sample-qty-${role}`, description: "Welder", role: "Welder", qty: 2, unit: "day" }],
+		status,
+		finalApproved: status === "Approved",
+		ownerId,
+		approverId: status === "Approved" ? LOGIN_IDS.lead : "",
+		approverFor: "",
+		steps: [],
+		currentIndex: -1,
+		timeline: [{ id: `sample-jo-${role}-${status}`, at: APPROVAL_AT, who: ownerId, action: status === "Approved" ? "Job order approved" : "Job order created", remarks: "" }],
+	};
+}
+
+/** Fixed RCE, CE, markup, proposal, job order, and Awarded rows. No network and no random ids. */
+export function release1Samples(ordStart = 800) {
+	const docs = [];
+	const jobOrders = [];
+	let ord = ordStart;
+	SAMPLE_ROLES.forEach((role, index) => {
+		const ownerId = LOGIN_IDS[role];
+		const tag = slug(role);
+		const rceId = `SAMPLE-R1-${tag}-RCE`;
+		const ceId = `SAMPLE-R1-${tag}-CE`;
+		const markupId = `SAMPLE-R1-${tag}-MARKUP`;
+		const awardedId = `SAMPLE-R1-${tag}-AWARDED`;
+		const proposalControl = String(3601 + index);
+		const awardedControl = String(3611 + index);
+		docs.push(rceDoc("Accepted", { id: rceId, ord: ord++, jobType: "Onsite" }));
+		docs.push(ceDoc({
+			id: ceId,
+			status: "Done",
+			jobType: "Onsite",
+			ord: ord++,
+			extra: { project: `Sample ${role} estimate`, assignedTo: LOGIN_NAMES[role] },
+		}));
+		const markupDoc = ceDoc({
+			id: markupId,
+			status: "Done",
+			jobType: "Onsite",
+			ord: ord++,
+			extra: { project: `Sample ${role} markup`, assignedTo: LOGIN_NAMES[role], approval: { status: "accepted" } },
+		});
+		markupDoc.payload.summary.markup = release1Markup(markupId, ownerId, role);
+		docs.push(markupDoc);
+		const proposal = release1Proposal({
+			id: `SAMPLE-R1-${tag}-PROPOSAL`,
+			controlNo: proposalControl,
+			status: "Approved",
+			ceId: markupId,
+			ownerId,
+			prNo: `PR R1-${role}-${proposalControl}`,
+		});
+		docs.push({ kind: "proposal", id: proposal.id, ord: ord++, sample: true, status: proposal.status, payload: proposal });
+		const openJo = release1JobOrder({ role, seq: index + 1, controlNo: proposalControl, ceId: markupId, ownerId, status: "Submitted" });
+		jobOrders.push(openJo);
+		const awardedJo = release1JobOrder({ role, seq: index + 11, controlNo: awardedControl, ceId: awardedId, ownerId, status: "Approved" });
+		jobOrders.push(awardedJo);
+		const awarded = ceDoc({
+			id: awardedId,
+			status: "Awarded",
+			jobType: "Onsite",
+			ord: ord++,
+			extra: { project: `Sample ${role} awarded`, assignedTo: LOGIN_NAMES[role], approval: { status: "accepted" } },
+		});
+		awarded.payload.summary.awardStatus = "Awarded";
+		awarded.payload.summary.awardJo = awardedJo.joNo;
+		awarded.payload.summary.markup = release1Markup(awardedId, ownerId, `${role}-awarded`);
+		docs.push(awarded);
+		const won = release1Proposal({
+			id: `SAMPLE-R1-${tag}-WON`,
+			controlNo: awardedControl,
+			status: "Won",
+			ceId: awardedId,
+			ownerId,
+			prNo: `PR R1-${role}-${awardedControl}`,
+		});
+		docs.push({ kind: "proposal", id: won.id, ord: ord++, sample: true, status: won.status, payload: won });
+	});
+	return { docs, jobOrders, ord };
+}
+
 export function pendingAccounts(users) {
 	return (users || []).filter((user) => user.accountStatus === "pending");
 }
@@ -472,7 +631,10 @@ export function buildSampleSet() {
 		docs.push(inspectionDoc(status, rce.id, ce.id, ord++));
 	});
 
-	return { users, docs };
+	const release1 = release1Samples(ord);
+	docs.push(...release1.docs);
+
+	return { users, docs, jobOrders: release1.jobOrders };
 }
 
 /** Role row for the test seed. Active people have a finished profile and have seen the welcome. */

@@ -298,6 +298,19 @@ async function upsertRceRequest(row) {
   });
 }
 
+async function mergeRelease1JobOrders(jobOrders) {
+  if (!jobOrders.length) return;
+  const existing = await sb("workspace_docs?kind=eq.schema&doc_id=eq.company&select=payload,version");
+  const row = Array.isArray(existing) ? existing[0] : null;
+  const payload = row?.payload && typeof row.payload === "object" ? { ...row.payload } : {};
+  const app = payload.__app && typeof payload.__app === "object" ? { ...payload.__app } : {};
+  const prior = Array.isArray(app.jobOrders) ? app.jobOrders : [];
+  const byId = new Map(prior.filter((item) => item && item.id).map((item) => [item.id, item]));
+  for (const item of jobOrders) byId.set(item.id, item);
+  payload.__app = { ...app, jobOrders: [...byId.values()] };
+  await upsertDoc("schema", "company", payload, 0);
+}
+
 async function upsertDoc(kind, id, payload, ord) {
   const existing = await sb(
     `workspace_docs?kind=eq.${encodeURIComponent(kind)}&doc_id=eq.${encodeURIComponent(id)}&select=version`,
@@ -476,6 +489,7 @@ async function seedSupabase(ce, users) {
   for (const doc of sample.docs) {
     await upsertDoc(doc.kind, doc.id, doc.payload, doc.ord);
   }
+  await mergeRelease1JobOrders(sample.jobOrders || []);
   const rceRows = await sb("rce_requests?select=id");
   const rceIds = new Set((Array.isArray(rceRows) ? rceRows : []).map((row) => row.id));
   const ceRows = await sb("workspace_docs?kind=eq.ce&deleted_at=is.null&select=doc_id,payload");
