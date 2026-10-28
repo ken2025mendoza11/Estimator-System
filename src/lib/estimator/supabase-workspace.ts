@@ -1152,6 +1152,23 @@ export async function claimProposalPr(controlNo: string, prNo: string, ceId: str
   return { ok: true };
 }
 
+/** Clear a proposal's PR claim. Does not delete the proposal. Skipped when release_proposal_pr is not applied yet. */
+export async function releaseProposalPr(controlNo: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("release_proposal_pr", {
+    p_control: controlNo,
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /release_proposal_pr/i.test(message)) return { ok: true, skipped: true };
+    return { ok: false, message: message || "Could not release that PR number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "Could not release that PR number." };
+  return { ok: true };
+}
+
 /** Server counter. Null means the SQL function is not applied yet and the caller uses the local format. */
 export async function allocateDocNumber(kind: string, company: string, year: number): Promise<string | null> {
   await ensureSupabaseAccess();
@@ -1210,7 +1227,8 @@ export async function saveWorkspaceToSupabase(
     throw err;
   }
   const plan = planSave(local, revisions, force, hold, options?.tombstones !== false);
-  const kindOrder: Record<string, number> = { rce: 0, masterlist: 1, ce: 2 };
+  // Job orders live on the schema document. Save that before the estimate so an award can see the job order.
+  const kindOrder: Record<string, number> = { rce: 0, masterlist: 1, schema: 2, ce: 3 };
   plan.writes.sort(
     (a, b) => (kindOrder[a.kind] ?? 5) - (kindOrder[b.kind] ?? 5),
   );

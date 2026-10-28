@@ -3,6 +3,7 @@
 import { holderId } from "./monitoringFamilies.js";
 import { escalationDue } from "./reminders.js";
 import { speedDays, winRate } from "./reports.js";
+import { matrixAllows } from "./notifyMatrix.js";
 import { accountId, personName } from "./departments.js";
 
 export const RELEASE1_MONITOR_FLAG = "release1Monitor";
@@ -132,12 +133,19 @@ export function monitorDashboard(input) {
 	(input?.proposals || []).forEach((row) => bucket(row.salesRepId || row.ownerId).proposals.push(row));
 	const bySalesRep = Object.values(buckets).map((group) => {
 		const aging = group.proposals.reduce((oldest, row) => Math.max(oldest, ageDays(row.prDate || row.timeline?.[0]?.at, input?.now)), 0);
+		const ceRows = group.ces.map((row) => ({
+			awardStatus: row.awardStatus || (String(row.status || "") === "Awarded" ? "Awarded" : ""),
+		}));
+		const proposalRows = group.proposals.flatMap((row) => {
+			const status = String(row.status || "");
+			if (status === "Won") return [{ awardStatus: "Awarded" }];
+			if (status === "Lost") return [{ awardStatus: "Lost" }];
+			return [];
+		});
 		return {
 			salesRepId: group.salesRepId,
 			salesRepName: group.salesRepName,
-			winRate: winRate(group.ces.map((row) => ({
-				awardStatus: row.awardStatus || (String(row.status || "") === "Awarded" ? "Awarded" : ""),
-			}))),
+			winRate: winRate([...ceRows, ...proposalRows]),
 			ceTurnaroundDays: speedDays(group.ces.map((row) => ({
 				received: row.received || row.dateReceived || "",
 				done: row.status === "Done" || row.status === "Awarded" ? (row.done || row.lastEdited || "") : "",
@@ -312,15 +320,74 @@ export function runServerEscalation(documents, now) {
 }
 
 /**
+ * The in-app notice that phase 33 showed for an escalation or an expiring proposal.
+ * @param {any} alert
+ * @param {unknown} now
+ */
+export function inAppNoticeFromAlert(alert, now) {
+	const template = String(alert?.template || "");
+	const type = template === "expiring" ? "Proposal expiring" : template === "escalated" ? "Escalated" : "";
+	const toUserId = String(alert?.toUserId || "").trim();
+	if (!type || !toUserId) return null;
+	const doc = alert?.doc || {};
+	const label = String(doc.controlNo || doc.joNo || doc.ceId || doc.id || "");
+	return {
+		id: crypto.randomUUID(),
+		at: String(now || ""),
+		read: false,
+		type,
+		title: type,
+		body: label,
+		to: "*",
+		toRole: "",
+		rceId: "",
+		ceId: String(doc.ceId || ""),
+		view: "editor",
+		toUserId,
+	};
+}
+
+/**
+ * Add the in-app notices. A turned-off matrix row is skipped. The list stays on the notifications record.
+ * @param {unknown} existing
+ * @param {any[]} alerts
+ * @param {unknown} now
+ * @param {unknown} matrix
+ */
+export function appendInAppNotices(existing, alerts, now, matrix) {
+	let list = Array.isArray(existing) ? existing.slice() : [];
+	for (const alert of alerts || []) {
+		const notice = inAppNoticeFromAlert(alert, now);
+		if (!notice || !matrixAllows(matrix, notice.type)) continue;
+		list = [notice, ...list].slice(0, 80);
+	}
+	return list;
+}
+
+/**
+ * Mail only the documents whose save succeeded.
+ * @param {any[]} notices
+ * @param {{ failed?: { id?: string }[] } | null | undefined} saveResult
+ */
+export function noticesToMail(notices, saveResult) {
+	const failed = new Set((saveResult?.failed || []).map((row) => String(row?.id || "")));
+	return (notices || []).filter((notice) => {
+		const doc = notice?.doc || {};
+		const id = String(doc.id || doc.controlNo || doc.joNo || doc.ceId || "");
+		return id !== "" && !failed.has(id);
+	});
+}
+
+/**
  * The server calls read and save. The browser does not.
- * @param {{ read: () => Promise<{ markups?: any[], proposals?: any[], jobOrders?: any[] }>, save: (documents: { markups?: any[], proposals?: any[], jobOrders?: any[] }) => Promise<void>, now?: unknown }} input
+ * @param {{ read: () => Promise<{ markups?: any[], proposals?: any[], jobOrders?: any[], notifications?: any[], notifyMatrix?: unknown }>, save: (documents: { markups?: any[], proposals?: any[], jobOrders?: any[] }, notices: any[], now: string) => Promise<unknown>, now?: unknown }} input
  */
 export async function executeServerEscalation(input) {
 	const loaded = await input.read();
 	const now = input?.now ? String(input.now) : new Date().toISOString();
 	const result = runServerEscalation(loaded, now);
-	await input.save(result.documents);
-	return result;
+	const saved = await input.save(result.documents, result.notices, now);
+	return { ...result, now, saved };
 }
 
 /**

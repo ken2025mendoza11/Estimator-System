@@ -39,7 +39,7 @@ import { foldFamilyRows } from "../lib/estimator/monitoringFamilies";
 import { cleanHolidayDate } from "../lib/estimator/phCalendar";
 import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/estimator/priceCheck";
 import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
-import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr } from "../lib/estimator/supabase-workspace";
+import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr, releaseProposalPr } from "../lib/estimator/supabase-workspace";
 import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
 import { Phase6Admin } from "./Phase6Admin";
 import { Phase6Reports } from "./Phase6Reports";
@@ -28117,7 +28117,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		void fetch("/api/release1-mail", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ toUserId, template, label: String(label || "") })
+			body: JSON.stringify({ toUserId, template, docId: String(label || "") })
 		}).catch(() => {});
 	};
 	const patchRce = (id, fn) => {
@@ -30127,7 +30127,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const handleProposal = async (action, payload) => {
 		if (!release1ProposalOn || !activeCE?.id) return;
 		const ceId = activeCE.id;
-		const current = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled") || null;
+		const current = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled" && row.deleted !== true) || null;
 		const others = proposals || [];
 		const markup = markupForCe(ceId);
 		const guardPr = async (controlNo, prNo) => {
@@ -30145,12 +30145,30 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		let result = { ok: false, message: "Proposal was not saved." };
 		if (action === "delete-draft") {
 			const removed = deleteDraftProposal(current, { byUserId: release1ActorId });
-			if (!removed.ok) {
+			if (!removed.ok || !removed.proposal) {
 				release1Note(removed.message || "That draft was not deleted.");
 				return;
 			}
+			if (String(current.prNo || "").trim()) {
+				const released = claimProposalNumber({
+					registry: (proposals || []).map((row) => ({ controlNo: row.controlNo, prNo: row.prNo, ownerId: row.ownerId })),
+					controlNo: current.controlNo,
+					prNo: "",
+					actorId: release1ActorId,
+					admin: actingLevel === "admin"
+				});
+				if (!released.ok) {
+					release1Note(released.message || "That PR number was not released.");
+					return;
+				}
+				const remote = await releaseProposalPr(current.controlNo);
+				if (!remote.ok && !remote.skipped) {
+					release1Note(remote.message || "That PR number was not released.");
+					return;
+				}
+			}
 			setRelease1Message("");
-			setProposals((prev) => (prev || []).filter((row) => row !== current && row.controlNo !== current.controlNo));
+			setProposals((prev) => (prev || []).map((row) => row.controlNo === removed.proposal.controlNo ? removed.proposal : row));
 			notice({
 				type: "Draft proposal deleted",
 				title: "Draft proposal deleted",
@@ -30262,7 +30280,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (!release1JobOrderOn || !activeCE?.id) return;
 		const ceId = activeCE.id;
 		const current = (jobOrders || []).find((row) => (row.ceIds || []).includes(ceId) && row.status !== "Cancelled") || null;
-		const proposal = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled") || null;
+		const proposal = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled" && row.deleted !== true) || null;
 		const salesManager = isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 		let result = { ok: false, message: "Job order was not saved." };
 		if (action === "create") {
@@ -30322,7 +30340,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				documents,
 				proposal: proposalRow,
 				effect: result.effect,
-				byUserId: release1ActorId
+				byUserId: release1ActorId,
+				jobOrders: [jobOrder, ...(jobOrders || []).filter((row) => row && row.id !== jobOrder.id && row.joNo !== jobOrder.joNo)]
 			});
 			if (!awarded.ok) {
 				release1Note(awarded.message || "Award was not saved.");
@@ -30350,7 +30369,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				proposal: proposalRow,
 				award,
 				byUserId: release1ActorId,
-				remarks: payload?.remarks
+				remarks: payload?.remarks,
+				jobOrders: [jobOrder, ...(jobOrders || []).filter((row) => row && row.id !== jobOrder.id && row.joNo !== jobOrder.joNo)]
 			});
 			if (!restored.ok) {
 				release1Note(restored.message || "Cancel was not saved.");
@@ -30927,7 +30947,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onAcceptSalesCeRequest: handleAcceptSalesCeRequest,
 						onMarkup: handleMarkup,
 						markup: activeCE ? markupForCe(activeCE.id) : null,
-						proposal: (proposals || []).find((row) => row.ceId === activeCE?.id && row.status !== "Cancelled") || null,
+						proposal: (proposals || []).find((row) => row.ceId === activeCE?.id && row.status !== "Cancelled" && row.deleted !== true) || null,
 						onProposal: handleProposal,
 						jobOrder: (jobOrders || []).find((row) => (row.ceIds || []).includes(activeCE?.id) && row.status !== "Cancelled") || null,
 						onJobOrder: handleJobOrder,

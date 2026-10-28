@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { personName } from "../lib/estimator/departments";
 import { uploadNamedBlob } from "../lib/estimator/file-storage";
-import { actorMayDecideJobOrder, jobOrderEditable, quantityAttachmentText } from "../lib/estimator/jobOrder";
-import { jobOrderPdfBytes } from "../lib/estimator/jobOrderPdf";
+import { actorMayDecideJobOrder, jobOrderEditable } from "../lib/estimator/jobOrder";
+import { jobOrderPdfBytes, quantityAttachmentPdfBytes } from "../lib/estimator/jobOrderPdf";
 import { askReason } from "../lib/estimator/reasonBox";
 
 /**
@@ -240,7 +240,7 @@ export function JobOrderPanel({ jobOrder, sales, actorId, users, ceOptions, crea
 			{holder ? <p className="wiz-hint">Waiting for {name(holder.userId)}{holder.backupUserId ? ` (backup ${name(holder.backupUserId)})` : ""}</p> : null}
 			<div className="wiz-grid">
 				<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => saveFile(jobOrderPdfBytes(jobOrder, users), `${jobOrder.joNo}.pdf`, "application/pdf")}>SY3 PDF</button>
-				<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => saveFile(quantityAttachmentText(jobOrder.ceQuantity), `${jobOrder.joNo}-quantities.txt`, "text/plain")}>Quantities file</button>
+				<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => saveFile(quantityAttachmentPdfBytes(jobOrder.ceQuantity), `${jobOrder.joNo}-quantities.pdf`, "application/pdf")}>Quantities PDF</button>
 				{open && sales && actorId === jobOrder.ownerId ? (
 					<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onJobOrder?.("submit")}>Submit job order</button>
 				) : null}
