@@ -32,7 +32,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 24 | View-only autosave, sign-out, signatures | done | `grok/phase-24` | https://github.com/ken2025mendoza11/Estimator-System/pull/23 |
 | 25 | No save on load, assigned approvals, inspection DRAFT | done | `grok/phase-25` | https://github.com/ken2025mendoza11/Estimator-System/pull/24 |
 | 26 | Accounts and roles foundation | done | `grok/phase-26` | https://github.com/ken2025mendoza11/Estimator-System/pull/25 |
-| 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | |
+| 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
 
 ## Step 1 done
 
@@ -57,7 +57,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 27 done
 
-Stacked on `grok/phase-26` (https://github.com/ken2025mendoza11/Estimator-System/pull/25 is still open). Draft PR: opened against `grok/phase-26`. Do not merge to `main`.
+Stacked on `grok/phase-26` (https://github.com/ken2025mendoza11/Estimator-System/pull/25 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/26. Do not merge to `main`.
 
 - Flag `release1SalesView` is off in the app. The TEST seed turns it on. While it is on, the estimate hides Contingency %, Discount %, Awarded, Lost, and the JO number. The stored percents stay in the net, so an old estimate with contingency or discount keeps the same total. Nothing is migrated.
 - Sales cannot Revise or Edit an approved estimate from the editor, the monitoring row, or the library. Cost Estimating can still start a revision. The save is refused in the app when the flag is on, and on the server after the SQL is applied.
