@@ -51,6 +51,7 @@ import { Phase10Admin } from "./Phase10Admin";
 import { Release1Admin } from "./Release1Admin";
 import { accountId, findAccount, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
 import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "../lib/estimator/salesView";
+import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -72,6 +73,8 @@ let equipmentRatesOn = false;
 let release1DepartmentsOn = false;
 let release1SalesViewOn = false;
 let release1SalesActor = false;
+let release1WithdrawRequestOn = false;
+let release1ActorId = "";
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
 	return String(template ?? "").replace(/\{(\w+)\}/g, (_, key) => {
@@ -4799,7 +4802,8 @@ function defaultAdminConfig() {
 			schedule: false,
 			microsoftLinkFlow: false,
 			release1Departments: false,
-			release1SalesView: false
+			release1SalesView: false,
+			release1WithdrawRequest: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4916,7 +4920,8 @@ function normalizeAdminConfig(raw) {
 			schedule: src.features?.schedule === true,
 			microsoftLinkFlow: src.features?.microsoftLinkFlow === true,
 			release1Departments: src.features?.release1Departments === true,
-			release1SalesView: src.features?.release1SalesView === true
+			release1SalesView: src.features?.release1SalesView === true,
+			release1WithdrawRequest: src.features?.release1WithdrawRequest === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -6850,6 +6855,7 @@ function rceIsFinalAccepted(rce) {
 	return st === "accepted" || st === "approved";
 }
 function rceCanWithdraw(rce) {
+	if (release1WithdrawRequestOn === true) return rceWithdrawAllowed(rce, true);
 	if (!rce) return false;
 	const ap = rce.approval;
 	if (!ap || ap.status !== "in-progress") return rce.status === "Pending" || rce.status === "For approval";
@@ -18391,7 +18397,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -19235,7 +19241,32 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 							void runIssuePack("excel");
 						},
 						children: "Excel"
-					})] }) : null
+					})] }) : null,
+					release1WithdrawRequestOn && release1SalesActor && !estimateOpen && onSalesCeRequest ? /* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							const why = window.prompt("Revision request (required)");
+							if (!why || !String(why).trim()) return;
+							onSalesCeRequest("revision", String(why).trim());
+						},
+						children: "Request revision"
+					}), /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							const why = window.prompt("New estimate request (required)");
+							if (!why || !String(why).trim()) return;
+							onSalesCeRequest("new", String(why).trim());
+						},
+						children: "Request new CE"
+					})] }) : null,
+					release1WithdrawRequestOn && onAcceptSalesCeRequest && actorMayAcceptCeRequest(ceData?.salesCeRequest, release1ActorId) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => onAcceptSalesCeRequest(),
+						children: "Take CE request"
+					}) : null
 				]
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
@@ -27114,7 +27145,15 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 					rceCanWithdraw(rce) && /* @__PURE__ */ jsx("button", {
 						className: "ce-btn-ghost",
 						type: "button",
-						onClick: () => onWithdraw?.(rce),
+						onClick: () => {
+							if (!release1WithdrawRequestOn) {
+								onWithdraw?.(rce);
+								return;
+							}
+							const why = window.prompt("Withdraw remarks (required)");
+							if (!why || !String(why).trim()) return;
+							onWithdraw?.(rce, String(why).trim());
+						},
 						children: "Withdraw request"
 					}),
 					accepted && rce.status !== "For revision" && !rce.cancelPending && canFinal && /* @__PURE__ */ jsx("button", {
@@ -27773,6 +27812,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1DepartmentsOn = adminConfig.features?.release1Departments === true;
 	release1SalesViewOn = adminConfig.features?.release1SalesView === true;
 	release1SalesActor = release1SalesViewOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1WithdrawRequestOn = adminConfig.features?.release1WithdrawRequest === true;
+	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
 		setElSeed(calc);
@@ -28356,9 +28397,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			to: rce.preparedBy || rce.submittedBy
 		});
 	};
-	const handleWithdrawRCE = (rce) => {
+	const handleWithdrawRCE = (rce, remarks) => {
 		if (!rceCanWithdraw(rce)) {
-			window.alert("After the first accept, cancel needs Final.");
+			window.alert(release1WithdrawRequestOn ? "After the final approver accepts, withdraw is closed." : "After the first accept, cancel needs Final.");
+			return;
+		}
+		const logged = release1WithdrawRequestOn ? withdrawLog({ who: accountUserId, remarks }) : { ok: true, entry: { who: editorName, action: "Withdrawn", remarks: "" } };
+		if (!logged.ok) {
+			window.alert(logged.message || "A remark is required.");
 			return;
 		}
 		const id = rce.id || rce.rceNo;
@@ -28370,10 +28416,103 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				status: "withdrawn"
 			},
 			timeline: appendTimeline(r.timeline, timelineEntry({
-				who: editorName,
-				action: "Withdrawn"
+				...logged.entry,
+				...(release1WithdrawRequestOn ? { whoName: editorName } : {})
 			}))
 		}));
+	};
+	const handleSalesCeRequest = (kind, remarks) => {
+		if (!release1WithdrawRequestOn || !release1SalesActor) return;
+		const id = activeCE?.id;
+		if (!id) return;
+		const approver = costingApproverForRequest({
+			approverLists: adminConfig.approverLists,
+			users: adminConfig.users || [],
+			departmentsOn: release1DepartmentsOn === true
+		});
+		const planned = planSalesCeRequest({
+			kind,
+			remark: remarks,
+			byUserId: accountUserId,
+			approver,
+			existing: documents?.[id]?.salesCeRequest
+		});
+		if (!planned.ok) {
+			window.alert(planned.message || "The request was not sent.");
+			return;
+		}
+		setDocuments((prev) => {
+			const doc = prev[id] || {};
+			return {
+				...prev,
+				[id]: {
+					...doc,
+					salesCeRequest: planned.request,
+					timeline: appendTimeline(doc.timeline, timelineEntry({ ...planned.entry, whoName: editorName }))
+				}
+			};
+		});
+		notice({
+			type: planned.notice.type,
+			title: planned.notice.title,
+			body: planned.notice.body,
+			toUserId: planned.notice.toUserId,
+			ceId: id,
+			view: "editor"
+		});
+	};
+	const handleAcceptSalesCeRequest = () => {
+		if (!release1WithdrawRequestOn || release1SalesActor) return;
+		const id = activeCE?.id;
+		if (!id) return;
+		const doc = documents[id] || {};
+		const routed = acceptSalesCeRequest({
+			request: doc.salesCeRequest,
+			actorId: accountUserId,
+			approval: doc.approval,
+			flow: approvalFlowInput("ce"),
+			owner: doc.approval?.owner || activeCE?.assignedTo || ""
+		});
+		if (!routed.ok) {
+			window.alert(routed.message || "You cannot take this request.");
+			return;
+		}
+		const today = todayLocal();
+		setDocuments((prev) => {
+			const current = prev[id] || {};
+			const revision = routed.next === "revision";
+			return {
+				...prev,
+				[id]: {
+					...current,
+					salesCeRequest: routed.request,
+					...(revision ? {
+						ceStatus: "For revision",
+						projectInfo: {
+							...current.projectInfo || {},
+							revisionPending: true,
+							revisionNote: routed.request.remark || ""
+						}
+					} : {}),
+					timeline: appendTimeline(current.timeline, timelineEntry({ ...routed.entry, whoName: editorName }))
+				}
+			};
+		});
+		if (routed.next === "revision") {
+			setCeList((prev) => prev.map((ce) => ce.id === id ? {
+				...ce,
+				status: "For revision",
+				lastEdited: today,
+				lastEditedBy: editorName
+			} : ce));
+			setIsEditorLocked(false);
+		}
+		if (routed.next === "new-ce") {
+			const rceId = activeCE?.rceId || doc.rceId || "";
+			const rce = (rceList || []).find((row) => (row.id || row.rceNo) === rceId) || null;
+			setWizardRce(rce);
+			setCurrentView("ce-wizard");
+		}
 	};
 	const handleReviseRCE = (rce) => {
 		const id = rce.id || rce.rceNo;
@@ -30169,7 +30308,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						goToSearch: () => setCurrentView("dashboard"),
 						editingUser: editorName,
 						isEditorLocked,
-						readOnly: ceIsSealed(activeCE?.status, documents?.[activeCE?.id]),
+						readOnly: ceIsSealed(activeCE?.status, documents?.[activeCE?.id]) || (release1WithdrawRequestOn && release1SalesActor),
 						onUserActivity: () => setEditingUser(editorName),
 						onLock: () => setIsEditorLocked(true),
 						onTakeOver: handleTakeOver,
@@ -30223,7 +30362,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 								return normalizeAdminConfig({ ...cfg, checker: { ...cfg.checker, words } });
 							});
 						},
-						combinedLabel: adminConfig.features?.docSuffixes === true ? combinedLabelFor(activeCE?.id, ceList, documents) : ""
+						combinedLabel: adminConfig.features?.docSuffixes === true ? combinedLabelFor(activeCE?.id, ceList, documents) : "",
+						onSalesCeRequest: handleSalesCeRequest,
+						onAcceptSalesCeRequest: handleAcceptSalesCeRequest
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);

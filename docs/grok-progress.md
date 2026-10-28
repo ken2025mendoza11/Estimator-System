@@ -33,6 +33,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 25 | No save on load, assigned approvals, inspection DRAFT | done | `grok/phase-25` | https://github.com/ken2025mendoza11/Estimator-System/pull/24 |
 | 26 | Accounts and roles foundation | done | `grok/phase-26` | https://github.com/ken2025mendoza11/Estimator-System/pull/25 |
 | 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
+| 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
 
 ## Step 1 done
 
@@ -54,6 +55,17 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 28 done
+
+Stacked on `grok/phase-27` (https://github.com/ken2025mendoza11/Estimator-System/pull/26 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/27. Do not merge to `main`.
+
+- Flag `release1WithdrawRequest` is off in the app. The TEST seed turns it on. While it is off, withdraw still closes after the first approval.
+- While it is on, Withdraw shows after submit (Pending, For approval, Rejected, For revision) and stays up after a reviewer approves. It closes when the final approver approves, and when the request is already Cancelled. A remark is required. The timeline `who` is the account id.
+- On a view-only estimate, Sales can request a revision or a new estimate. The request is addressed to the first Cost Estimating account on the Markup, Proposal, or Job order lists. Sales cannot accept it and cannot edit the estimate. The Cost Estimating approver, or that approver's backup, accepts it. A revision sets For revision so the normal submit path runs. A new estimate opens the existing wizard. Both actions are logged by account id. No email.
+- SQL: none.
+
+Tests: `src/lib/estimator/ceRequest.test.mjs`. `npm test` 385 + 97, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
 
 ## Step 27 done
 
