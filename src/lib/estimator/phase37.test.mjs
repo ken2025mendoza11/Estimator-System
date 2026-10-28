@@ -37,15 +37,23 @@ test("the seed refuses the live project and the live sign-in database, and allow
 
 	const liveDb = seedWriteTarget({
 		VITE_SUPABASE_URL: testUrl,
-		DATABASE_URL: "postgres://seed-user:secret-not-logged@ep-wandering-morning-aotsri1h-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+		DATABASE_URL: "postgres://seed-user:secret-not-logged@ep-wandering-morning-aocsri1h-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
 	});
 	assert.equal(liveDb.ok, false);
 	assert.equal(liveDb.supabaseProject, ESTIMATOR_TEST_PROJECT_REF);
-	assert.equal(liveDb.signInEndpoint, "ep-wandering-morning-aotsri1h");
+	assert.equal(liveDb.signInEndpoint, "ep-wandering-morning-aocsri1h");
 	assert.match(liveDb.message, /not an allowed estimator-test sign-in endpoint/);
-	assert.equal(liveDb.lines[1], "Sign-in endpoint: ep-wandering-morning-aotsri1h");
+	assert.equal(liveDb.lines[1], "Sign-in endpoint: ep-wandering-morning-aocsri1h");
 	assert.equal(liveDb.lines.join("\n").includes("secret-not-logged"), false);
 	assert.equal(liveDb.lines.join("\n").includes("neon.tech"), false);
+
+	const liveDirect = seedWriteTarget({
+		VITE_SUPABASE_URL: testUrl,
+		DATABASE_URL: "postgres://seed-user:secret-not-logged@ep-wandering-morning-aocsri1h.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+	});
+	assert.equal(liveDirect.ok, false);
+	assert.equal(liveDirect.signInEndpoint, "ep-wandering-morning-aocsri1h");
+	assert.match(liveDirect.message, /not an allowed estimator-test sign-in endpoint/);
 
 	const allowed = seedWriteTarget({
 		VITE_SUPABASE_URL: `${testUrl}/`,
@@ -57,6 +65,13 @@ test("the seed refuses the live project and the live sign-in database, and allow
 		`Supabase project: ${ESTIMATOR_TEST_PROJECT_REF}`,
 		"Sign-in endpoint: ep-jolly-sound-azpo5a4b",
 	]);
+
+	const allowedDirect = seedWriteTarget({
+		VITE_SUPABASE_URL: testUrl,
+		DATABASE_URL: "postgres://seed-user:secret-not-logged@ep-jolly-sound-azpo5a4b.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+	});
+	assert.equal(allowedDirect.ok, true);
+	assert.equal(allowedDirect.signInEndpoint, "ep-jolly-sound-azpo5a4b");
 
 	const seed = text("scripts/seed-test.mjs");
 	const guard = seed.indexOf("seedWriteTarget(process.env)");
