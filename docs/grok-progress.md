@@ -29,6 +29,9 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 21 | Keep access rollback from dropping profile columns | done | `grok/phase-21` | https://github.com/ken2025mendoza11/Estimator-System/pull/20 |
 | 22 | TEST sample data set | done | `grok/phase-22` | https://github.com/ken2025mendoza11/Estimator-System/pull/21 |
 | 23 | Preview test fixes | done | `grok/phase-23` | https://github.com/ken2025mendoza11/Estimator-System/pull/22 |
+| 24 | View-only autosave, sign-out, signatures | done | `grok/phase-24` | https://github.com/ken2025mendoza11/Estimator-System/pull/23 |
+| 25 | No save on load, assigned approvals, inspection DRAFT | done | `grok/phase-25` | https://github.com/ken2025mendoza11/Estimator-System/pull/24 |
+| 26 | Accounts and roles foundation | done | `grok/phase-26` | |
 
 ## Step 1 done
 
@@ -50,6 +53,20 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 26 done
+
+Stacked on `grok/phase-25` (https://github.com/ken2025mendoza11/Estimator-System/pull/24 is still open). Draft PR is on `grok/phase-26`. Do not merge to `main`.
+
+- Fixed departments are Sales, Cost Estimating, Management, and Admin. Admin sets one per account id. The old free-text `department` column is not retyped and is not rewritten.
+- Flag `release1Departments` is off in the app. The TEST seed turns it on. While it is off, `salesMembers`, `costingMembers`, and `userMayReviseEstimate` keep the old text match.
+- While it is on, a set department wins. An account with no fixed department still uses the old text, so old "Costing" rows keep working. A name is not an identity: lookup is by account id, and a name is used only while the flag is off.
+- Admin → Release 1 sets the department and the Markup, Proposal, and Job order approver lists. Each approver has a backup account id. A backup label is `for <name>`. The access queue has the same department control.
+- SQL (not run): `supabase/p26-departments-approvers-2026-10-28.sql` and its rollback. The app still loads when the column and functions are missing. The TEST seed was not run.
+
+Tests: `src/lib/estimator/departments.test.mjs`. `npm test` 378 + 97, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (one new warning, on the new admin file). Build ok. Golden totals unchanged.
+
+Ken: apply the SQL on `estimator-test`, then re-run `npm run seed:test` if the sample departments and approver list should be stored. Saving the lists in Admin writes them locally either way.
 
 ## Step 25 done
 

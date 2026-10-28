@@ -48,6 +48,8 @@ import { Phase7Admin } from "./Phase7Admin";
 import { Phase8Admin } from "./Phase8Admin";
 import { Phase9Admin } from "./Phase9Admin";
 import { Phase10Admin } from "./Phase10Admin";
+import { Release1Admin } from "./Release1Admin";
+import { accountId, findAccount, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -66,6 +68,7 @@ import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, override
 let reopenCalcLine = null;
 let calcConstantsNow = null;
 let equipmentRatesOn = false;
+let release1DepartmentsOn = false;
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
 	return String(template ?? "").replace(/\{(\w+)\}/g, (_, key) => {
@@ -3354,15 +3357,10 @@ function estimatorInitials(name, users) {
 	return letters.join("").toUpperCase();
 }
 function salesMembers(users) {
-	return (users || []).filter((user) => /sales/i.test(`${user?.department || ""} ${user?.designation || ""}`) && String(user?.status || "active").toLowerCase() !== "inactive");
+	return (users || []).filter((user) => String(user?.status || "active").toLowerCase() !== "inactive" && isSales(user, release1DepartmentsOn));
 }
 function costingMembers(users) {
-	return (users || []).filter((user) => {
-		if (String(user?.status || "active").toLowerCase() === "inactive") return false;
-		const blob = `${user?.department || ""} ${user?.designation || ""}`;
-		if (/sales/i.test(blob)) return false;
-		return /cost/i.test(blob) || /estimat/i.test(blob);
-	});
+	return (users || []).filter((user) => String(user?.status || "active").toLowerCase() !== "inactive" && isCostEstimating(user, release1DepartmentsOn));
 }
 function ceAmountLabel(doc) {
 	const tasks = doc?.tasks;
@@ -3381,11 +3379,11 @@ function combinedLabelFor(id, list, docs) {
 	if (!rows.some((row) => parseCeNumber(row.id).addendum)) return "";
 	return fmt(combinedTotal(rows));
 }
-function userMayReviseEstimate(users, name, level) {
+function userMayReviseEstimate(users, name, level, userId) {
 	const lvl = String(level || "").toLowerCase();
 	if (lvl === "lead" || lvl === "head" || lvl === "admin") return true;
-	const user = (users || []).find((u) => String(u?.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
-	return /sales/i.test(`${user?.department || ""} ${user?.designation || ""}`);
+	const user = findAccount(users, { userId, name, flagOn: release1DepartmentsOn });
+	return isSales(user, release1DepartmentsOn);
 }
 function ceFullySigned(doc) {
 	const approval = doc?.approval;
@@ -4796,7 +4794,8 @@ function defaultAdminConfig() {
 			routeFuel: false,
 			sowTagging: false,
 			schedule: false,
-			microsoftLinkFlow: false
+			microsoftLinkFlow: false,
+			release1Departments: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4911,7 +4910,8 @@ function normalizeAdminConfig(raw) {
 			routeFuel: src.features?.routeFuel === true,
 			sowTagging: src.features?.sowTagging === true,
 			schedule: src.features?.schedule === true,
-			microsoftLinkFlow: src.features?.microsoftLinkFlow === true
+			microsoftLinkFlow: src.features?.microsoftLinkFlow === true,
+			release1Departments: src.features?.release1Departments === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -4933,7 +4933,8 @@ function normalizeAdminConfig(raw) {
 		directRates: directFormula(src.directRates),
 		calcConstants: normalizeCalcConstants(src.calcConstants),
 		boardColors: normalizeBoardColors(src.boardColors),
-		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : []
+		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : [],
+		approverLists: normalizeApproverLists(src.approverLists)
 	};
 }
 function uid(_prefix) {
@@ -5247,7 +5248,8 @@ function AdminHub({ config, onChange }) {
 					["phase7", "Phase 7"],
 					["phase8", "Phase 8"],
 					["phase9", "Phase 9"],
-					["phase10", "Phase 10"]
+					["phase10", "Phase 10"],
+					["release1", "Release 1"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -5306,6 +5308,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "phase10" && /* @__PURE__ */ jsx(Phase10Admin, {
+				cfg,
+				patch
+			}),
+			tab === "release1" && /* @__PURE__ */ jsx(Release1Admin, {
 				cfg,
 				patch
 			})
@@ -27731,6 +27737,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [elSeed, setElSeed] = useState(null);
 	calcConstantsNow = adminConfig.calcConstants;
 	equipmentRatesOn = adminConfig.features?.equipmentRates === true;
+	release1DepartmentsOn = adminConfig.features?.release1Departments === true;
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
 		setElSeed(calc);
@@ -30355,6 +30362,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsxs(Fragment, { children: [
 						/* @__PURE__ */ jsx(AccessQueue, {
 							microsoftLinkFlow: adminConfig?.features?.microsoftLinkFlow === true,
+							departmentsOn: adminConfig?.features?.release1Departments === true,
+							onAccountDepartment: (userKey, department) => {
+								if (!isAdminAccount) return;
+								setAdminConfig((prev) => normalizeAdminConfig({
+									...prev,
+									users: (prev.users || []).map((user) => accountId(user) === userKey ? { ...user, accountDepartment: department } : user)
+								}));
+							},
 							onMicrosoftLinkFlow: (checked) => {
 								if (!isAdminAccount) return;
 								setAdminConfig((prev) => normalizeAdminConfig({

@@ -13,13 +13,15 @@ import {
 	markAccessReminded,
 	removeAllowlistEntry,
 	requestAccountLink,
+	setAccountDepartment,
 	setPublicBranding
 } from "../lib/supabase/account-role";
+import { DEPARTMENTS } from "../lib/estimator/departments";
 import { QUEUE_TABS, compareAccounts, linkAllowed, queueRows, reminderDue } from "../lib/estimator/loginUi";
 
 const ROLES = ["staff", "lead", "head", "admin"];
 
-export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow }) {
+export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow, departmentsOn = false, onAccountDepartment }) {
 	const [tab, setTab] = useState("pending");
 	const [rows, setRows] = useState([]);
 	const [pairs, setPairs] = useState([]);
@@ -105,6 +107,29 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow }) 
 					{visible.map((row) => (
 						<li key={row.userKey || row.email}>
 							<span>{row.name ? `${row.name} · ` : ""}{row.email || row.userKey} · {row.role || "staff"} · {row.status || "pending"}</span>
+							{departmentsOn ? (
+								<label className="ce-login-field">
+									<span className="ce-field-label">Department</span>
+									<select
+										className="ce-input"
+										aria-label={`Department for ${row.email || row.userKey}`}
+										value={DEPARTMENTS.includes(row.accountDepartment) ? row.accountDepartment : ""}
+										disabled={busy === row.userKey}
+										onChange={(event) => {
+											const value = event.target.value;
+											run(row.userKey, () => setAccountDepartment(row.userKey, value).then((result) => {
+												onAccountDepartment?.(row.userKey, value);
+												return result;
+											}));
+										}}
+									>
+										<option value="">Not set</option>
+										{DEPARTMENTS.map((department) => (
+											<option key={department} value={department}>{department}</option>
+										))}
+									</select>
+								</label>
+							) : null}
 							{row.reason ? <span>{row.reason}</span> : null}
 							<span className="ce-login-actions">
 								{ROLES.map((role) => (
