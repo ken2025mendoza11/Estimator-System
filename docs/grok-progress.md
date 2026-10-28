@@ -37,6 +37,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
 | 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
 | 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
+| 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
 
 ## Step 1 done
 
@@ -58,6 +59,21 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 32 done
+
+Stacked on `grok/phase-31` (https://github.com/ken2025mendoza11/Estimator-System/pull/30 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/31. Do not merge to `main`.
+
+- Flag `release1Monitor` is off in the app. The TEST seed turns it on. While it is off, Reports stays as it was.
+- While it is on, Reports lists proposals and job orders with status, age, and the account id that holds them. A backup that has already stepped in is the holder. Pending approvals show who holds the step and for how long. At 12 hours the row is coloured `#b45309`.
+- Win rate and CE turnaround come from the existing report functions. Proposal aging is counted by sales account id. Cost-estimate totals are not recomputed.
+- Escalation runs on `POST /api/release1-escalate`. It does not read the database. The app posts waiting markups, proposals, and job orders while it is open. Ken, or a scheduler, can POST the same body when the app is closed. After 12 hours the current step moves to its backup. If that step has no backup, it moves to the next approver. A step escalates once. The timeline `who` is the approver account id.
+- In-app notices: approval needed, document approved, returned, escalated, and proposal expiring. Each can be turned off in the notice matrix. An unknown event stays on.
+- Email uses `POST /api/release1-mail`. Server env vars, empty in `.env.example`: `RELEASE1_MAIL_KEY`, `RELEASE1_MAIL_URL`, `RELEASE1_MAIL_FROM`. Do not prefix them with `VITE_`. If the key or URL is empty, the server skips the send and logs that, without the key. An account id is not used as an address. The app looks up that account's email. The escalate route emails only when `toUserId` already contains `@`.
+- Another Sales account can take over an approved or sent proposal or job order. An admin, an Admin-department account, or an account on the existing takeover list can reassign it. The timeline `who` is the actor account id.
+- No SQL.
+
+Tests: `src/lib/estimator/release1Monitor.test.mjs`. `npm test` 404 + 98, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
 
 ## Step 31 done
 

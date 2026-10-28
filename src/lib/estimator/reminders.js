@@ -49,6 +49,14 @@ export function dueReminderSlots({ now = new Date(), lastNotifiedAt = "" } = {})
 	return slots.filter((slot) => Date.parse(slot.at) > last);
 }
 
+/** True after the waiting time reaches the given hours. Default is 12. */
+export function escalationDue(since, now, hours = 12) {
+	const start = Date.parse(String(since || ""));
+	const end = now instanceof Date ? now.getTime() : Date.parse(String(now || ""));
+	if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+	return (end - start) / 36e5 >= Number(hours);
+}
+
 export function pendingClosingStatus(target) {
 	return `Pending ${target} approval`;
 }

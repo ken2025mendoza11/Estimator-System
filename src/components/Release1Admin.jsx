@@ -101,6 +101,15 @@ export function Release1Admin({ cfg, patch }) {
 				<span>Job order from an approved proposal</span>
 			</label>
 			<p className="wiz-hint">The job order number comes from the database. It shows quantities only. An approved job order marks the estimate Awarded and the proposal Won. Cancel clears both.</p>
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={features.release1Monitor === true}
+					onChange={(event) => patch({ features: { ...features, release1Monitor: event.target.checked === true } })}
+				/>
+				<span>Sales monitor, 12-hour escalation, and email</span>
+			</label>
+			<p className="wiz-hint">Shows proposals and job orders, who holds an approval, and proposal aging. After 12 hours the server moves the step to the backup, or to the next approver when there is no backup. Email is skipped when the server key is empty.</p>
 			{on ? (
 				<div>
 					<h4 className="ce-serif admin-subhead">Department</h4>
