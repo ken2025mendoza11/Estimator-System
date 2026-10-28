@@ -377,7 +377,7 @@ function adminConfig(users, extras = []) {
     ],
     pending,
     designations: ["Cost Estimator", "Department Head"],
-    features: { approvalEngineV2: true, release1Departments: true, release1SalesView: true, release1WithdrawRequest: true, release1Markup: true, release1Proposal: true },
+    features: { approvalEngineV2: true, release1Departments: true, release1SalesView: true, release1WithdrawRequest: true, release1Markup: true, release1Proposal: true, release1JobOrder: true },
     approverLists: approverListsFor(users),
     approvalFlows: {
       ce: [

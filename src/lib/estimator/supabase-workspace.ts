@@ -1068,6 +1068,41 @@ function remember(
   revisions[docKey(kind, id)] = { version, hash: deleted ? "" : hash, synced, deleted };
 }
 
+/** 3-digit job-order sequence. Null means next_job_order_seq is not applied yet. */
+export async function allocateJobOrderSeq(): Promise<number | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_job_order_seq");
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /next_job_order_seq/i.test(message)) return null;
+    throw error;
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, seq?: number, reason?: string }) : {};
+  if (body.ok === false) throw new Error(body.reason || "Could not take a job order number.");
+  const seq = Number(body.seq);
+  return Number.isFinite(seq) && seq > 0 ? seq : null;
+}
+
+/** Register the full job-order number. Skipped when claim_job_order_no is not applied yet. */
+export async function claimJobOrderNo(joNo: string, controlNo: string, ceIds: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("claim_job_order_no", {
+    p_jo_no: joNo,
+    p_control: controlNo,
+    p_ces: ceIds || "",
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /claim_job_order_no/i.test(message)) return { ok: true, skipped: true };
+    return { ok: false, message: message || "Could not save that job order number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "That job order number is already used." };
+  return { ok: true };
+}
+
 /** Server proposal control number. Null means next_proposal_control_no is not applied yet. */
 export async function allocateProposalControl(): Promise<string | null> {
   await ensureSupabaseAccess();
