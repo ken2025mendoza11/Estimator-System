@@ -43,7 +43,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 35 | Release 1 fix round 2 | done | `grok/phase-35` | https://github.com/ken2025mendoza11/Estimator-System/pull/34 |
 | 36 | Release 1 fix round 3 | done | `grok/phase-36` | https://github.com/ken2025mendoza11/Estimator-System/pull/35 |
 | 37 | Release 1 fix round 4 | done | `grok/phase-37` | https://github.com/ken2025mendoza11/Estimator-System/pull/36 |
-| 38 | Release 1 fix round 5 | done | `grok/phase-38` | |
+| 38 | Release 1 fix round 5 | done | `grok/phase-38` | https://github.com/ken2025mendoza11/Estimator-System/pull/37 |
 
 ## Step 1 done
 
@@ -68,7 +68,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 38 done
 
-Stacked on `grok/phase-37` (https://github.com/ken2025mendoza11/Estimator-System/pull/36 is still open). Draft PR into `grok/phase-37`. Do not merge to `main`.
+Stacked on `grok/phase-37` (https://github.com/ken2025mendoza11/Estimator-System/pull/36 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/37. Do not merge to `main`.
 
 - Before the seed writes to a database, it prints the Supabase project ref and the Neon endpoint id. The database name is not the check: both the test project (`estimator-test-auth`) and the live project (`estimator-auth`) use `neondb`. The endpoint is the first label of the `DATABASE_URL` host, with one `-pooler` ending removed. It is allowed only when that id is in `TEST_SIGN_IN_ENDPOINTS`, which holds only `ep-jolly-sound-azpo5a4b`. The live endpoint `ep-wandering-morning-aotsri1h`, an unknown endpoint, and a host that only contains the test id inside a longer name are refused. The password and the full address are not printed. The Supabase host must still be exactly `nqxijgsbpffewizzefwi.supabase.co`. `--fixture-only` still writes only the local fixture and does not connect. The older guard still runs first: `ESTIMATOR_TEST_LOGIN` is `1`, `VERCEL_ENV` is not `production`, and `ESTIMATOR_TEST_SUPABASE_URL` equals `VITE_SUPABASE_URL`.
 - Go-live describes that check, and notes that a Vercel preview may use its own Neon branch of the test sign-in project (`preview/grok/...`), copied from main when the branch is created. Test users seeded into main appear only in a preview whose branch is created or reset after the seed. Neon and Vercel settings were not changed. How the current preview gets `DATABASE_URL` is not known from this repo.
