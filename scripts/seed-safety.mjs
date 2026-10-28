@@ -1,8 +1,11 @@
 /** The estimator-test Supabase project ref. The seed writes only when the URL host is exactly this ref. */
 export const ESTIMATOR_TEST_PROJECT_REF = "nqxijgsbpffewizzefwi";
 
-/** The TEST sign-in database. The live database name is estimator-auth and is refused. */
-export const TEST_SIGN_IN_DATABASE = "estimator-test-auth";
+/**
+ * Neon endpoint IDs the seed may write. For now this is only the main endpoint
+ * of the test sign-in project. The live endpoint is not on this list.
+ */
+export const TEST_SIGN_IN_ENDPOINTS = ["ep-jolly-sound-azpo5a4b"];
 
 /**
  * Project ref from a Supabase URL. A longer or shorter host does not match.
@@ -25,17 +28,18 @@ export function supabaseProjectRef(supabaseUrl) {
 }
 
 /**
- * Database name from a Postgres URL. The user, host, and query are ignored.
+ * Neon endpoint id: the first host label, with one "-pooler" ending removed.
+ * The database name is not used. Both projects name that database neondb.
  * @param {unknown} databaseUrl
  * @returns {string}
  */
-export function signInDatabaseName(databaseUrl) {
+export function signInEndpointId(databaseUrl) {
 	const raw = String(databaseUrl || "").trim();
 	if (!raw) return "";
 	try {
-		const name = decodeURIComponent(new URL(raw).pathname.replace(/^\/+|\/+$/g, ""));
-		if (!name || name.includes("/")) return "";
-		return name;
+		const first = new URL(raw).hostname.toLowerCase().split(".")[0] || "";
+		if (!first) return "";
+		return first.endsWith("-pooler") ? first.slice(0, -"-pooler".length) : first;
 	} catch {
 		return "";
 	}
@@ -47,15 +51,15 @@ export function signInDatabaseName(databaseUrl) {
  */
 export function seedWriteTarget(env) {
 	const supabaseProject = supabaseProjectRef(env?.VITE_SUPABASE_URL);
-	const signInDatabase = signInDatabaseName(env?.DATABASE_URL);
+	const signInEndpoint = signInEndpointId(env?.DATABASE_URL);
 	const projectOk = supabaseProject === ESTIMATOR_TEST_PROJECT_REF;
-	const databaseOk = signInDatabase === TEST_SIGN_IN_DATABASE;
+	const endpointOk = TEST_SIGN_IN_ENDPOINTS.includes(signInEndpoint);
 	const lines = [
 		`Supabase project: ${supabaseProject || "(none)"}`,
-		`Sign-in database: ${signInDatabase || "(none)"}`,
+		`Sign-in endpoint: ${signInEndpoint || "(none)"}`,
 	];
 	let message = "";
 	if (!projectOk) message = "Refusing to seed. The Supabase URL is not the estimator-test project.";
-	else if (!databaseOk) message = "Refusing to seed. DATABASE_URL is not the estimator-test-auth sign-in database.";
-	return { ok: projectOk && databaseOk, supabaseProject, signInDatabase, lines, message };
+	else if (!endpointOk) message = "Refusing to seed. DATABASE_URL is not an allowed estimator-test sign-in endpoint.";
+	return { ok: projectOk && endpointOk, supabaseProject, signInEndpoint, lines, message };
 }

@@ -1,8 +1,7 @@
 /**
  * Seed the TEST project only. Refuses unless the Supabase URL is the
- * estimator-test project and DATABASE_URL is the estimator-test-auth
- * sign-in database (see seedRefusal and seedWriteTarget). Upserts by id.
- * Does not delete rows.
+ * estimator-test project and DATABASE_URL is an allowed Neon endpoint
+ * (see seedRefusal and seedWriteTarget). Upserts by id. Does not delete rows.
  *
  *   npm run seed:test
  *   npx tsx scripts/seed-test.mjs --fixture-only
