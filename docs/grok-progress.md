@@ -42,6 +42,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
 | 35 | Release 1 fix round 2 | done | `grok/phase-35` | https://github.com/ken2025mendoza11/Estimator-System/pull/34 |
 | 36 | Release 1 fix round 3 | done | `grok/phase-36` | https://github.com/ken2025mendoza11/Estimator-System/pull/35 |
+| 37 | Release 1 fix round 4 | done | `grok/phase-37` | |
 
 ## Step 1 done
 
@@ -63,6 +64,20 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 37 done
+
+Stacked on `grok/phase-36` (https://github.com/ken2025mendoza11/Estimator-System/pull/35 is still open). Draft PR into grok/phase-36. Do not merge to `main`.
+
+- Before the seed writes to a database, it prints the Supabase project ref and the sign-in database name. It stops unless the URL host is exactly `nqxijgsbpffewizzefwi.supabase.co` and `DATABASE_URL` names the database `estimator-test-auth`. A longer host, the live project `rgppzzwitldwbfkgezoz`, and the live database `estimator-auth` are refused. The connection string is not printed. `--fixture-only` still writes only the local fixture and does not connect. The older guard still runs first: `ESTIMATOR_TEST_LOGIN` is `1`, `VERCEL_ENV` is not `production`, and `ESTIMATOR_TEST_SUPABASE_URL` equals `VITE_SUPABASE_URL`.
+- A markup email uses the CE number stored on the estimate, not the internal estimate id, and not a proposal or job order that shares that estimate. If that estimate has no document number, the mail is not sent.
+- Go-live describes that check. SQL order is unchanged: 1 `p1a` through 17 `p35`. No new SQL.
+
+SQL (not run): none new. Roll back from 17. The p34 rollback still deletes saved markups (`delete from workspace_docs where kind = 'markup'`).
+
+Tests: `src/lib/estimator/phase37.test.mjs` (`the seed refuses the live project and the live sign-in database, and allows only the test pair`, `a markup email uses the CE number, not the internal estimate id`). `npm ci` then `npm test` 432 + 99, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Open: SQL is not applied. The mail key is empty. Ken has not set the scheduler. Do not configure a cron from this repo. `checkerV2` and `docSuffixes` stay off until Ken turns them on with the other flags. The seed was not run.
 
 ## Step 36 done
 

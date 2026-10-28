@@ -165,8 +165,21 @@ export async function saveRelease1Store(loaded, documents, fetchImpl = fetch) {
 }
 
 /**
+ * The estimate a markup belongs to. This is the internal id, not the CE number.
+ * @param {{ markups?: any[] } | null | undefined} documents
+ * @param {unknown} docId
+ * @returns {string}
+ */
+export function markupEstimateId(documents, docId) {
+	const id = String(docId || "").trim();
+	if (!id) return "";
+	const hit = (documents?.markups || []).find((/** @type {any} */ doc) => doc && [doc.id, doc.ceId].some((/** @type {unknown} */ value) => String(value || "") === id));
+	return hit ? String(hit.ceId || "").trim() : "";
+}
+
+/**
  * The label is taken from the stored document of that kind. Free text from the client is not used.
- * A markup is not labelled with a proposal or job order that shares the same estimate.
+ * A markup uses the CE number, not the internal estimate id, and not a proposal or job order that shares that estimate.
  * @param {{ proposals?: any[], markups?: any[], jobOrders?: any[], ces?: any[] } | null | undefined} documents
  * @param {unknown} docId
  * @param {unknown} [kind]
@@ -184,7 +197,10 @@ export function storedDocumentLabel(documents, docId, kind) {
 		const list = wanted === "markup" ? documents?.markups : wanted === "proposal" ? documents?.proposals : documents?.jobOrders;
 		const hit = (list || []).find((/** @type {any} */ doc) => doc && [doc.id, doc.controlNo, doc.joNo, doc.ceId].some((/** @type {unknown} */ value) => String(value || "") === id));
 		if (!hit) return "";
-		if (wanted === "markup") return String(hit.ceId || hit.id || "");
+		if (wanted === "markup") {
+			const ce = (documents?.ces || []).find((/** @type {any} */ row) => ceMatches(row, String(hit.ceId || "")));
+			return ce ? ceDocumentNumber(ce) : "";
+		}
 		if (wanted === "proposal") return String(hit.controlNo || hit.id || "");
 		return String(hit.joNo || hit.id || "");
 	}
@@ -210,12 +226,20 @@ function ceMatches(row, id) {
 
 /**
  * The CE number shown on the estimate. The account id is not a number.
+ * The internal estimate id is not used when a document number is stored.
+ * @param {any} row
+ */
+function ceDocumentNumber(row) {
+	const summary = row?.summary && typeof row.summary === "object" ? row.summary : {};
+	const document = row?.document && typeof row.document === "object" ? row.document : {};
+	const info = document.projectInfo && typeof document.projectInfo === "object" ? document.projectInfo : {};
+	return String(info.docNo || document.docNo || document.ceNumber || summary.docNo || summary.ceNumber || summary.ceDisplay || "").trim();
+}
+
+/**
  * @param {any} row
  */
 function ceNumber(row) {
 	const summary = row?.summary && typeof row.summary === "object" ? row.summary : {};
-	const document = row?.document && typeof row.document === "object" ? row.document : {};
-	const info = document.projectInfo && typeof document.projectInfo === "object" ? document.projectInfo : {};
-	const number = String(info.docNo || document.docNo || document.ceNumber || summary.docNo || summary.ceNumber || summary.ceDisplay || "").trim();
-	return number || String(summary.id || row?.id || "").trim();
+	return ceDocumentNumber(row) || String(summary.id || row?.id || "").trim();
 }
