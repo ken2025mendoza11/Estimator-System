@@ -34,7 +34,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 26 | Accounts and roles foundation | done | `grok/phase-26` | https://github.com/ken2025mendoza11/Estimator-System/pull/25 |
 | 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
 | 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
-| 29 | Markup on an approved estimate | done | `grok/phase-29` | |
+| 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
 
 ## Step 1 done
 
@@ -59,7 +59,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 29 done
 
-Stacked on `grok/phase-28` (https://github.com/ken2025mendoza11/Estimator-System/pull/27 is still open). Draft PR: pending. Do not merge to `main`.
+Stacked on `grok/phase-28` (https://github.com/ken2025mendoza11/Estimator-System/pull/27 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/28. Do not merge to `main`.
 
 - Flag `release1Markup` is off in the app. The TEST seed turns it on. While it is off, there is no Generate Markup button.
 - While it is on, Sales sees Generate Markup on an approved estimate (Done, Accepted, or Awarded). The direct cost is the total already on screen (`screenOfficialTotal` / the official rows). Markup does not recompute CE lines and does not write the cost estimate document.
