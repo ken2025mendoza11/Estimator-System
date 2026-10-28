@@ -44,7 +44,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 36 | Release 1 fix round 3 | done | `grok/phase-36` | https://github.com/ken2025mendoza11/Estimator-System/pull/35 |
 | 37 | Release 1 fix round 4 | done | `grok/phase-37` | https://github.com/ken2025mendoza11/Estimator-System/pull/36 |
 | 38 | Release 1 fix round 5 | done | `grok/phase-38` | https://github.com/ken2025mendoza11/Estimator-System/pull/37 |
-| 39 | Live Neon endpoint spelling | done | `grok/phase-39` | |
+| 39 | Live Neon endpoint spelling | done | `grok/phase-39` | https://github.com/ken2025mendoza11/Estimator-System/pull/38 |
 
 ## Step 1 done
 
@@ -69,7 +69,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 39 done
 
-Stacked on `grok/phase-38` (https://github.com/ken2025mendoza11/Estimator-System/pull/37 is still open). Draft PR into grok/phase-38. Do not merge to `main`.
+Stacked on `grok/phase-38` (https://github.com/ken2025mendoza11/Estimator-System/pull/37 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/38. Do not merge to `main`.
 
 - The live Neon endpoint id was misspelled. It is `ep-wandering-morning-aocsri1h`. The seed still refuses that id with and without `-pooler`. Only `ep-jolly-sound-azpo5a4b` is allowed. Go-live uses the same id. No other behaviour changed.
 - No SQL. Neon, Vercel, and Supabase settings were not changed.
