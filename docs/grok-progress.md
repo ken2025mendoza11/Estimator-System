@@ -38,7 +38,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
 | 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
 | 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
-| 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | Draft PR: pending |
+| 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
 
 ## Step 1 done
 
@@ -63,7 +63,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 33 done
 
-Stacked on `grok/phase-32` (https://github.com/ken2025mendoza11/Estimator-System/pull/31 is still open). Draft PR: pending. Do not merge to `main`.
+Stacked on `grok/phase-32` (https://github.com/ken2025mendoza11/Estimator-System/pull/31 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/32. Do not merge to `main`.
 
 - The TEST seed now has one sample at each Release 1 stage for staff, lead, head, and admin: accepted RCE, done CE, approved markup, approved proposal, submitted job order, and Awarded (with a Won proposal and an approved job order). Markup direct cost is the stored 1,000,000 snapshot, selling 2,000,000. Job orders have quantities and no prices.
 - Proposals are written as proposal documents. Job orders are merged into the existing schema document. Other schema keys are kept. The seed was not run.
