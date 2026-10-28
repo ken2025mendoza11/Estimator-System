@@ -61,6 +61,15 @@ export function Release1Admin({ cfg, patch }) {
 				<span>Sales view of an approved estimate</span>
 			</label>
 			<p className="wiz-hint">Hides contingency, discount, Awarded, Lost, and the JO number. Sales can open an approved estimate, download PDF or Excel, and cannot revise it. The stored percents still apply to the net.</p>
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={features.release1WithdrawRequest === true}
+					onChange={(event) => patch({ features: { ...features, release1WithdrawRequest: event.target.checked === true } })}
+				/>
+				<span>Withdraw until final approval, and Sales CE requests</span>
+			</label>
+			<p className="wiz-hint">Withdraw stays available after submit until the final approver approves. Sales can request a revision or a new estimate. They still cannot edit it.</p>
 			{on ? (
 				<div>
 					<h4 className="ce-serif admin-subhead">Department</h4>

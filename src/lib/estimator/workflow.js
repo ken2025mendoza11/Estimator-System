@@ -1,6 +1,8 @@
 // @ts-nocheck
 /** Shared RCE/CE workflow: timeline, approval, notices, job status. */
 
+import { rceWithdrawAllowed } from "./ceRequest.js";
+
 export const PEOPLE_SETTABLE = [
   'On Park',
   'Waiting for information',
@@ -410,7 +412,8 @@ export function rceIsFinalAccepted(rce) {
   return st === 'accepted' || st === 'approved';
 }
 
-export function rceCanWithdraw(rce) {
+export function rceCanWithdraw(rce, flagOn) {
+  if (flagOn === true) return rceWithdrawAllowed(rce, true);
   if (!rce) return false;
   const ap = rce.approval;
   if (!ap || ap.status !== 'in-progress') {
