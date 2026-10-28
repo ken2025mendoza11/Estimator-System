@@ -52,6 +52,8 @@ import { Release1Admin } from "./Release1Admin";
 import { accountId, findAccount, isCostEstimating, isSales, normalizeApproverLists } from "../lib/estimator/departments";
 import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "../lib/estimator/salesView";
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
+import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
+import { MarkupPanel } from "./MarkupPanel";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -74,6 +76,8 @@ let release1DepartmentsOn = false;
 let release1SalesViewOn = false;
 let release1SalesActor = false;
 let release1WithdrawRequestOn = false;
+let release1MarkupOn = false;
+let release1MarkupSales = false;
 let release1ActorId = "";
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
@@ -4803,7 +4807,8 @@ function defaultAdminConfig() {
 			microsoftLinkFlow: false,
 			release1Departments: false,
 			release1SalesView: false,
-			release1WithdrawRequest: false
+			release1WithdrawRequest: false,
+			release1Markup: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4921,7 +4926,8 @@ function normalizeAdminConfig(raw) {
 			microsoftLinkFlow: src.features?.microsoftLinkFlow === true,
 			release1Departments: src.features?.release1Departments === true,
 			release1SalesView: src.features?.release1SalesView === true,
-			release1WithdrawRequest: src.features?.release1WithdrawRequest === true
+			release1WithdrawRequest: src.features?.release1WithdrawRequest === true,
+			release1Markup: src.features?.release1Markup === true
 		},
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -18397,7 +18403,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -19266,8 +19272,20 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => onAcceptSalesCeRequest(),
 						children: "Take CE request"
+					}) : null,
+					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: ceData?.markup }) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => onMarkup("create", { directCost: officialTotal }),
+						children: "Generate Markup"
 					}) : null
 				]
+			}) : null,
+			release1MarkupOn && onMarkup ? /* @__PURE__ */ jsx(MarkupPanel, {
+				markup: ceData?.markup || null,
+				sales: release1MarkupSales,
+				actorId: release1ActorId,
+				onMarkup
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
 				style: { position: "relative" },
@@ -27813,6 +27831,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1SalesViewOn = adminConfig.features?.release1SalesView === true;
 	release1SalesActor = release1SalesViewOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1WithdrawRequestOn = adminConfig.features?.release1WithdrawRequest === true;
+	release1MarkupOn = adminConfig.features?.release1Markup === true;
+	release1MarkupSales = release1MarkupOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
@@ -29908,8 +29928,37 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const editorPayload = activeCE && documents[activeCE.id] ? {
 		...activeCE,
-		...documents[activeCE.id]
+		...documents[activeCE.id],
+		...(activeCE.markup ? { markup: activeCE.markup } : {})
 	} : activeCE;
+	const handleMarkup = (action, payload) => {
+		if (!release1MarkupOn || !activeCE?.id) return;
+		const ceId = activeCE.id;
+		const current = (ceList || []).find((row) => row.id === ceId)?.markup || activeCE.markup || null;
+		let result = { ok: false, message: "Markup was not saved." };
+		if (action === "create") {
+			if (current) return;
+			result = createMarkup({ ceId, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100" });
+		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
+		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
+		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
+		else if (action === "approve" || action === "return") result = decideMarkup(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks });
+		if (!result?.ok || !result.markup) {
+			window.alert(result?.message || "Markup was not saved.");
+			return;
+		}
+		const markup = result.markup;
+		setCeList((prev) => prev.map((row) => row.id === ceId ? { ...row, markup } : row));
+		setActiveCE((cur) => cur && cur.id === ceId ? { ...cur, markup } : cur);
+		if (result.toUserId) notice({
+			type: "Needs your approval",
+			title: "Markup approval",
+			body: `${ceId} markup is waiting`,
+			ceId,
+			toUserId: result.toUserId,
+			view: "editor"
+		});
+	};
 	const openArchived = (ceId) => {
 		const archived = ceList.find((ce) => ce.id === ceId);
 		if (archived) setActiveCE(archived);
@@ -30364,7 +30413,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						combinedLabel: adminConfig.features?.docSuffixes === true ? combinedLabelFor(activeCE?.id, ceList, documents) : "",
 						onSalesCeRequest: handleSalesCeRequest,
-						onAcceptSalesCeRequest: handleAcceptSalesCeRequest
+						onAcceptSalesCeRequest: handleAcceptSalesCeRequest,
+						onMarkup: handleMarkup
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);

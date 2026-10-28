@@ -70,6 +70,15 @@ export function Release1Admin({ cfg, patch }) {
 				<span>Withdraw until final approval, and Sales CE requests</span>
 			</label>
 			<p className="wiz-hint">Withdraw stays available after submit until the final approver approves. Sales can request a revision or a new estimate. They still cannot edit it.</p>
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={features.release1Markup === true}
+					onChange={(event) => patch({ features: { ...features, release1Markup: event.target.checked === true } })}
+				/>
+				<span>Markup on an approved estimate</span>
+			</label>
+			<p className="wiz-hint">Sales can generate a markup from the estimate total. Profit, contingency, and mark up are editable. Approvers come from the Markup list.</p>
 			{on ? (
 				<div>
 					<h4 className="ce-serif admin-subhead">Department</h4>
