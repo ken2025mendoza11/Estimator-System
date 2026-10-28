@@ -236,3 +236,18 @@ test("Step 25: a stored ord that differs from the list position does not cause a
   const plan = planSave(splitWorkspace(workspace), revisions, new Set(), new Set());
   assert.equal(plan.writes.length, 0);
 });
+
+test("a proposal is its own document and comes back on the workspace", () => {
+  const payload = sample();
+  const app = (payload.schemaConfig as { __app: { proposals?: unknown[] } }).__app;
+  app.proposals = [{ id: "0012", controlNo: "0012", ceId: "CE-2026-001", prNo: "PR 26-360801", status: "Draft" }];
+  const docs = splitWorkspace(payload);
+  const proposal = docs.find((doc) => doc.kind === "proposal");
+  assert.equal(proposal?.id, "0012");
+  const schema = docs.find((doc) => doc.kind === "schema");
+  assert.equal(JSON.stringify(schema?.payload).includes("PR 26-360801"), false);
+  const { workspace } = assembleWorkspace(docs.map((doc) => ({ ...doc, version: 1 })), sample());
+  const stored = (workspace.schemaConfig as { __app: { proposals?: Array<{ prNo: string }> } }).__app.proposals;
+  assert.equal(stored?.[0].prNo, "PR 26-360801");
+});
+

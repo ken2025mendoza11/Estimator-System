@@ -39,7 +39,7 @@ import { foldFamilyRows } from "../lib/estimator/monitoringFamilies";
 import { cleanHolidayDate } from "../lib/estimator/phCalendar";
 import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/estimator/priceCheck";
 import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
-import { allocateCeSuffix, allocateDocNumber } from "../lib/estimator/supabase-workspace";
+import { allocateCeSuffix, allocateDocNumber, allocateProposalControl, claimProposalPr } from "../lib/estimator/supabase-workspace";
 import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
 import { Phase6Admin } from "./Phase6Admin";
 import { Phase6Reports } from "./Phase6Reports";
@@ -54,6 +54,8 @@ import { ceApprovedNotice, lockedCeChangeAllowed, salesOwnerAccountId } from "..
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
 import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
 import { MarkupPanel } from "./MarkupPanel";
+import { canGenerateProposal, cancelProposal, createProposal, decideProposal, markProposalExpired, markProposalLost, markProposalSent, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
+import { ProposalPanel } from "./ProposalPanel";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -78,6 +80,8 @@ let release1SalesActor = false;
 let release1WithdrawRequestOn = false;
 let release1MarkupOn = false;
 let release1MarkupSales = false;
+let release1ProposalOn = false;
+let release1ProposalSales = false;
 let release1ActorId = "";
 let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
@@ -4808,7 +4812,8 @@ function defaultAdminConfig() {
 			release1Departments: false,
 			release1SalesView: false,
 			release1WithdrawRequest: false,
-			release1Markup: false
+			release1Markup: false,
+			release1Proposal: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4927,8 +4932,10 @@ function normalizeAdminConfig(raw) {
 			release1Departments: src.features?.release1Departments === true,
 			release1SalesView: src.features?.release1SalesView === true,
 			release1WithdrawRequest: src.features?.release1WithdrawRequest === true,
-			release1Markup: src.features?.release1Markup === true
+			release1Markup: src.features?.release1Markup === true,
+			release1Proposal: src.features?.release1Proposal === true
 		},
+		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
 		authorisations: {
@@ -18403,7 +18410,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, proposal = null, onProposal = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -19278,6 +19285,23 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => onMarkup("create", { directCost: officialTotal }),
 						children: "Generate Markup"
+					}) : null,
+					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: ceData?.markup?.status, existing: proposal }) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => {
+							const official = buildOfficialBaseRows(state.tasks || [], state.pricing);
+							const groups = (official.rows || []).filter((row) => row.main).map((row) => ({ key: row.key, label: row.label, direct: row.computed }));
+							onProposal("create", {
+								groups,
+								scope: sowText,
+								client: ceData?.client || state.meta?.client || "",
+								project: ceData?.project || state.meta?.title || "",
+								ceNo: ceData?.id || "",
+								ceRev: String(state.projectInfo?.revNo || "")
+							});
+						},
+						children: "Generate Proposal"
 					}) : null
 				]
 			}) : null,
@@ -19286,6 +19310,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				sales: release1MarkupSales,
 				actorId: release1ActorId,
 				onMarkup
+			}) : null,
+			release1ProposalOn && onProposal ? /* @__PURE__ */ jsx(ProposalPanel, {
+				proposal,
+				sales: release1ProposalSales,
+				actorId: release1ActorId,
+				liveRev: String(state.projectInfo?.revNo || ""),
+				onProposal
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
 				style: { position: "relative" },
@@ -27833,6 +27864,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1WithdrawRequestOn = adminConfig.features?.release1WithdrawRequest === true;
 	release1MarkupOn = adminConfig.features?.release1Markup === true;
 	release1MarkupSales = release1MarkupOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1ProposalOn = adminConfig.features?.release1Proposal === true;
+	release1ProposalSales = release1ProposalOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
 	reopenCalcLine = (calc) => {
@@ -27857,6 +27890,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	});
 	const [scopeEditId, setScopeEditId] = useState(null);
 	const [notifications, setNotifications] = useState(() => Array.isArray(extras.notifications) ? extras.notifications : []);
+	const [proposals, setProposals] = useState(() => Array.isArray(extras.proposals) ? extras.proposals : []);
 	const [dbWipeRequests, setDbWipeRequests] = useState(() => Array.isArray(extras.dbWipeRequests) ? extras.dbWipeRequests : []);
 	const [dbFocusSheet, setDbFocusSheet] = useState(null);
 	const [wizardRce, setWizardRce] = useState(null);
@@ -27897,7 +27931,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					taskTemplates,
 					scopeTemplates,
 					notifications,
-					dbWipeRequests
+					dbWipeRequests,
+					proposals
 				}
 			}
 		};
@@ -27919,6 +27954,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		scopeTemplates,
 		notifications,
 		dbWipeRequests,
+		proposals,
 		persistTick
 	]);
 	const [selectedRCE, setSelectedRCE] = useState(null);
@@ -29959,6 +29995,83 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			view: "editor"
 		});
 	};
+	const handleProposal = async (action, payload) => {
+		if (!release1ProposalOn || !activeCE?.id) return;
+		const ceId = activeCE.id;
+		const current = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled") || null;
+		const others = proposals || [];
+		let result = { ok: false, message: "Proposal was not saved." };
+		if (action === "create") {
+			if (current || activeCE.markup?.status !== "Approved") return;
+			let controlNo = "";
+			try {
+				controlNo = await allocateProposalControl() || "";
+			} catch (err) {
+				window.alert(err?.message || "Could not take a proposal number.");
+				return;
+			}
+			if (!controlNo) {
+				window.alert("Proposal numbers are not on this database yet.");
+				return;
+			}
+			result = createProposal({
+				controlNo,
+				byUserId: release1ActorId,
+				ceId,
+				parts: activeCE.markup.parts,
+				clauses: adminConfig.proposalClauses,
+				header: "Proposal",
+				prDate: todayLocal(),
+				...payload || {}
+			});
+		} else if (action === "patch") {
+			if (payload?.prNo != null && current) {
+				const claimed = await claimProposalPr(current.controlNo, payload.prNo, ceId);
+				if (!claimed.ok) {
+					window.alert(claimed.message || "That PR number is already used.");
+					return;
+				}
+			}
+			result = patchProposal(current, payload, others);
+		} else if (action === "submit") {
+			const withPr = payload?.prNo != null ? patchProposal(current, { prNo: payload.prNo }, others) : { ok: true, proposal: current };
+			if (!withPr.ok || !withPr.proposal) {
+				window.alert(withPr.message || "Proposal was not saved.");
+				return;
+			}
+			const claimed = await claimProposalPr(withPr.proposal.controlNo, withPr.proposal.prNo, ceId);
+			if (!claimed.ok) {
+				window.alert(claimed.message || "That PR number is already used.");
+				return;
+			}
+			result = submitProposal(withPr.proposal, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, others });
+		} else if (action === "approve" || action === "return") result = decideProposal(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks });
+		else if (action === "sent") result = markProposalSent(current, { byUserId: release1ActorId });
+		else if (action === "lost") result = markProposalLost(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "expired") result = markProposalExpired(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "revise") result = reviseProposal(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "no-revision") result = noRevisionNeeded(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "cancel") result = cancelProposal(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		if (!result?.ok || !result.proposal) {
+			window.alert(result?.message || "Proposal was not saved.");
+			return;
+		}
+		const proposal = result.proposal;
+		setProposals((prev) => {
+			const list = Array.isArray(prev) ? prev : [];
+			const index = list.findIndex((row) => row.controlNo === proposal.controlNo);
+			if (index < 0) return [proposal, ...list];
+			return list.map((row, i) => i === index ? proposal : row);
+		});
+		if (result.toUserId) notice({
+			type: "Needs your approval",
+			title: "Proposal approval",
+			body: `${ceId} proposal is waiting`,
+			ceId,
+			toUserId: result.toUserId,
+			view: "editor"
+		});
+	};
 	const openArchived = (ceId) => {
 		const archived = ceList.find((ce) => ce.id === ceId);
 		if (archived) setActiveCE(archived);
@@ -30414,7 +30527,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						combinedLabel: adminConfig.features?.docSuffixes === true ? combinedLabelFor(activeCE?.id, ceList, documents) : "",
 						onSalesCeRequest: handleSalesCeRequest,
 						onAcceptSalesCeRequest: handleAcceptSalesCeRequest,
-						onMarkup: handleMarkup
+						onMarkup: handleMarkup,
+						proposal: (proposals || []).find((row) => row.ceId === activeCE?.id && row.status !== "Cancelled") || null,
+						onProposal: handleProposal
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);

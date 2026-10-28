@@ -584,6 +584,19 @@ function overlayUnmigrated(
   if ((next as { adminConfig?: Json }).adminConfig) {
     app.adminConfig = (next as { adminConfig?: Json }).adminConfig as Json;
   }
+  const blobProposals = Array.isArray(blobApp.proposals) ? (blobApp.proposals as Json[]) : [];
+  const currentProposals = Array.isArray(app.proposals) ? (app.proposals as Json[]) : [];
+  if (blobProposals.length) {
+    const ids = new Set(currentProposals.map((item) => String(asRecord(item).id || asRecord(item).controlNo || "")));
+    const merged = currentProposals.slice();
+    for (const item of blobProposals) {
+      const id = String(asRecord(item).id || asRecord(item).controlNo || "");
+      if (!id || ids.has(id) || gone("proposal", id)) continue;
+      merged.push(item);
+      ids.add(id);
+    }
+    app.proposals = merged;
+  }
   next.schemaConfig = { ...asRecord(next.schemaConfig), __app: app } as WorkspacePayload["schemaConfig"];
   return next;
 }
@@ -1053,6 +1066,40 @@ function remember(
   deleted = false,
 ) {
   revisions[docKey(kind, id)] = { version, hash: deleted ? "" : hash, synced, deleted };
+}
+
+/** Server proposal control number. Null means next_proposal_control_no is not applied yet. */
+export async function allocateProposalControl(): Promise<string | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_proposal_control_no");
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /next_proposal_control_no/i.test(message)) return null;
+    throw error;
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, controlNo?: string, reason?: string }) : {};
+  if (body.ok === false) throw new Error(body.reason || "Could not take a proposal number.");
+  return typeof body.controlNo === "string" && body.controlNo ? body.controlNo : null;
+}
+
+/** Register the client's PR number. Skipped when claim_proposal_pr is not applied yet. */
+export async function claimProposalPr(controlNo: string, prNo: string, ceId: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("claim_proposal_pr", {
+    p_control: controlNo,
+    p_pr: prNo,
+    p_ce: ceId || "",
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /claim_proposal_pr/i.test(message)) return { ok: true, skipped: true };
+    return { ok: false, message: message || "Could not save that PR number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "That PR number is already used." };
+  return { ok: true };
 }
 
 /** Server counter. Null means the SQL function is not applied yet and the caller uses the local format. */
