@@ -36,7 +36,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
 | 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
 | 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
-| 31 | Job order and Awarded | done | `grok/phase-31` | |
+| 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
 
 ## Step 1 done
 
@@ -61,7 +61,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 31 done
 
-Stacked on `grok/phase-30` (https://github.com/ken2025mendoza11/Estimator-System/pull/29 is still open). Draft PR: pending. Do not merge to `main`.
+Stacked on `grok/phase-30` (https://github.com/ken2025mendoza11/Estimator-System/pull/29 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/30. Do not merge to `main`.
 
 - Flag `release1JobOrder` is off in the app. The TEST seed turns it on.
 - While it is on, Sales can generate a job order from an approved or sent proposal. The number is `JO-<3 digits>-<SW|F|T|O>-<client code>-<YY>-<proposal control>`. The first issue has no REV. The first revision is `REV001`. The 3-digit sequence comes from `next_job_order_seq`. If that function is missing, the button explains that and does not write a job order.
