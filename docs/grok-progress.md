@@ -39,7 +39,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 31 | Job order and Awarded | done | `grok/phase-31` | https://github.com/ken2025mendoza11/Estimator-System/pull/30 |
 | 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
 | 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
-| 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | |
+| 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
 
 ## Step 1 done
 
@@ -64,7 +64,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 34 done
 
-Stacked on `grok/phase-33` (https://github.com/ken2025mendoza11/Estimator-System/pull/32 is still open). Draft PR into `grok/phase-33`. Do not merge to `main`.
+Stacked on `grok/phase-33` (https://github.com/ken2025mendoza11/Estimator-System/pull/32 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/33. Do not merge to `main`.
 
 - Markup is its own document (`kind` `markup`). It is not written onto the locked estimate. Award and cancel may change the estimate status and add one timeline entry (`who` is the account id, `at` is ISO time). Award status and the job order link stay on the job order. Every other change to an approved estimate is still refused.
 - A proposal uses the approved markup's direct cost, which is the total already on screen. The selling price is the proposal total.
