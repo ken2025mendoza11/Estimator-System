@@ -35,7 +35,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 27 | CE lock-down, Sales view-only, approval notice | done | `grok/phase-27` | https://github.com/ken2025mendoza11/Estimator-System/pull/26 |
 | 28 | RCE withdraw and Sales CE request | done | `grok/phase-28` | https://github.com/ken2025mendoza11/Estimator-System/pull/27 |
 | 29 | Markup on an approved estimate | done | `grok/phase-29` | https://github.com/ken2025mendoza11/Estimator-System/pull/28 |
-| 30 | Proposal with Word and PDF | done | `grok/phase-30` | |
+| 30 | Proposal with Word and PDF | done | `grok/phase-30` | https://github.com/ken2025mendoza11/Estimator-System/pull/29 |
 
 ## Step 1 done
 
@@ -60,7 +60,7 @@ Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/pha
 
 ## Step 30 done
 
-Stacked on `grok/phase-29` (https://github.com/ken2025mendoza11/Estimator-System/pull/28 is still open). Draft PR: pending. Do not merge to `main`.
+Stacked on `grok/phase-29` (https://github.com/ken2025mendoza11/Estimator-System/pull/28 is still open). Draft PR: https://github.com/ken2025mendoza11/Estimator-System/pull/29. Do not merge to `main`.
 
 - Flag `release1Proposal` is off in the app. The TEST seed turns it on. While it is off, there is no Generate Proposal button.
 - While it is on, Sales can generate a proposal from an approved markup. The price breakdown marks up each cost group already on the estimate. It does not recompute cost-estimate lines. A 1,000,000 direct cost at 100% sells at 2,000,000.
