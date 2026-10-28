@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireUserId } from "@/lib/auth/verify.server";
 import { mailForRoster, release1RequestAllowed, sendRelease1Mail } from "@/lib/estimator/release1Mail.server";
-import { loadRelease1Store, storedDocumentLabel } from "@/lib/estimator/release1Store.server";
+import { loadRelease1Store, loadStoredCe, storedDocumentLabel } from "@/lib/estimator/release1Store.server";
 
 /** Sign-in or the scheduler secret. The address must be on the stored roster. The wording is a fixed template. The label is read from the stored document. */
 export const Route = createFileRoute("/api/release1-mail")({
@@ -20,10 +20,14 @@ export const Route = createFileRoute("/api/release1-mail")({
 					userId,
 				});
 				if (!allowed.ok) return Response.json(allowed, { status: 401 });
-				const body = (await request.json().catch(() => ({}))) as { toUserId?: unknown, template?: unknown, docId?: unknown };
+				const body = (await request.json().catch(() => ({}))) as { toUserId?: unknown, template?: unknown, docId?: unknown, kind?: unknown };
 				const loaded = await loadRelease1Store();
 				if (!loaded.ok || !loaded.documents) return Response.json({ ok: false, message: loaded.message || "The document store is not configured." }, { status: 503 });
-				const label = storedDocumentLabel(loaded.documents, body?.docId);
+				const template = String(body?.template || "");
+				const kind = template === "ce-approved" ? "ce" : String(body?.kind || "");
+				let documents = loaded.documents;
+				if (kind === "ce") documents = { ...documents, ces: await loadStoredCe(process.env, fetch, body?.docId) };
+				const label = storedDocumentLabel(documents, body?.docId, kind);
 				if (!label) return Response.json({ ok: false, message: "That document was not found." }, { status: 400 });
 				const letter = mailForRoster({
 					toUserId: body?.toUserId,

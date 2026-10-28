@@ -18,6 +18,8 @@ export function documentsFromRows(rows) {
 	let notifyMatrix = null;
 	/** @type {any[]} */
 	let roster = [];
+	/** @type {any[]} */
+	const ces = [];
 	for (const row of rows || []) {
 		if (!row || typeof row !== "object") continue;
 		const item = /** @type {{ kind?: string, payload?: any }} */ (row);
@@ -33,9 +35,13 @@ export function documentsFromRows(rows) {
 			notifyMatrix = item.payload?.notifyMatrix ?? null;
 		} else if (item.kind === "notifications") {
 			notifications = Array.isArray(item.payload) ? item.payload : [];
+		} else if (item.kind === "ce") {
+			const full = /** @type {{ doc_id?: string, payload?: any }} */ (row);
+			const payload = item.payload && typeof item.payload === "object" ? item.payload : {};
+			ces.push({ id: String(full.doc_id || ""), ...payload });
 		}
 	}
-	return { markups, proposals, jobOrders, schema, roster, notifications, notifyMatrix };
+	return { markups, proposals, jobOrders, schema, roster, notifications, notifyMatrix, ces };
 }
 
 /**
@@ -53,6 +59,25 @@ export async function loadRelease1Store(env = process.env, fetchImpl = fetch) {
 	const rows = await response.json();
 	const documents = documentsFromRows(Array.isArray(rows) ? rows : []);
 	return { ok: true, documents, rows: Array.isArray(rows) ? rows : [], url, key };
+}
+
+/**
+ * One stored cost estimate. The mail route uses this for the CE-approved template.
+ * @param {Record<string, string | undefined>} [env]
+ * @param {typeof fetch} [fetchImpl]
+ * @param {unknown} [docId]
+ */
+export async function loadStoredCe(env = process.env, fetchImpl = fetch, docId) {
+	const url = String(env.VITE_SUPABASE_URL || env.SUPABASE_URL || "").trim().replace(/\/$/, "");
+	const key = String(env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+	const id = String(docId || "").trim();
+	if (!url || !key || !id) return [];
+	const response = await fetchImpl(`${url}/rest/v1/workspace_docs?kind=eq.ce&doc_id=eq.${encodeURIComponent(id)}&deleted_at=is.null&select=kind,doc_id,payload,version`, {
+		headers: { apikey: key, Authorization: `Bearer ${key}` },
+	});
+	if (!response.ok) return [];
+	const rows = await response.json();
+	return documentsFromRows(Array.isArray(rows) ? rows : []).ces;
 }
 
 /**
@@ -140,14 +165,29 @@ export async function saveRelease1Store(loaded, documents, fetchImpl = fetch) {
 }
 
 /**
- * The label is taken from the stored document. Free text from the client is not used.
- * @param {{ proposals?: any[], markups?: any[], jobOrders?: any[] } | null | undefined} documents
+ * The label is taken from the stored document of that kind. Free text from the client is not used.
+ * A markup is not labelled with a proposal or job order that shares the same estimate.
+ * @param {{ proposals?: any[], markups?: any[], jobOrders?: any[], ces?: any[] } | null | undefined} documents
  * @param {unknown} docId
+ * @param {unknown} [kind]
  * @returns {string}
  */
-export function storedDocumentLabel(documents, docId) {
+export function storedDocumentLabel(documents, docId, kind) {
 	const id = String(docId || "").trim();
 	if (!id) return "";
+	const wanted = String(kind || "").trim().toLowerCase();
+	if (wanted === "ce") {
+		const hit = (documents?.ces || []).find((/** @type {any} */ row) => ceMatches(row, id));
+		return hit ? ceNumber(hit) : "";
+	}
+	if (wanted === "markup" || wanted === "proposal" || wanted === "joborder" || wanted === "job-order") {
+		const list = wanted === "markup" ? documents?.markups : wanted === "proposal" ? documents?.proposals : documents?.jobOrders;
+		const hit = (list || []).find((/** @type {any} */ doc) => doc && [doc.id, doc.controlNo, doc.joNo, doc.ceId].some((/** @type {unknown} */ value) => String(value || "") === id));
+		if (!hit) return "";
+		if (wanted === "markup") return String(hit.ceId || hit.id || "");
+		if (wanted === "proposal") return String(hit.controlNo || hit.id || "");
+		return String(hit.joNo || hit.id || "");
+	}
 	const rows = [
 		...(documents?.jobOrders || []),
 		...(documents?.proposals || []),
@@ -156,4 +196,26 @@ export function storedDocumentLabel(documents, docId) {
 	const hit = rows.find((doc) => doc && [doc.id, doc.controlNo, doc.joNo, doc.ceId].some((/** @type {unknown} */ value) => String(value || "") === id));
 	if (!hit) return "";
 	return String(hit.joNo || hit.controlNo || hit.ceId || hit.id || "");
+}
+
+/**
+ * @param {any} row
+ * @param {string} id
+ */
+function ceMatches(row, id) {
+	const summary = row?.summary && typeof row.summary === "object" ? row.summary : {};
+	const document = row?.document && typeof row.document === "object" ? row.document : {};
+	return [row?.id, summary.id, document.id].some((/** @type {unknown} */ value) => String(value || "") === id);
+}
+
+/**
+ * The CE number shown on the estimate. The account id is not a number.
+ * @param {any} row
+ */
+function ceNumber(row) {
+	const summary = row?.summary && typeof row.summary === "object" ? row.summary : {};
+	const document = row?.document && typeof row.document === "object" ? row.document : {};
+	const info = document.projectInfo && typeof document.projectInfo === "object" ? document.projectInfo : {};
+	const number = String(info.docNo || document.docNo || document.ceNumber || summary.docNo || summary.ceNumber || summary.ceDisplay || "").trim();
+	return number || String(summary.id || row?.id || "").trim();
 }

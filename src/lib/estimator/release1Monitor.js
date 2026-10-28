@@ -61,6 +61,7 @@ export function salesWorklist(input) {
 	/** @type {{ kind: string, id: string, status: string, ageDays: number, holderId: string, holderName: string, ownerId: string, ownerName: string }[]} */
 	const rows = [];
 	(input?.proposals || []).forEach((row) => {
+		if (proposalRemoved(row)) return;
 		const holder = holderId(row) || String(row.ownerId || "");
 		rows.push({
 			kind: "proposal",
@@ -87,6 +88,13 @@ export function salesWorklist(input) {
 		});
 	});
 	return rows;
+}
+
+/** A deleted draft stays stored. It is not active work.
+ * @param {any} row
+ */
+function proposalRemoved(row) {
+	return !row || row.deleted === true || Boolean(row.deletedAt);
 }
 
 /**
@@ -130,7 +138,10 @@ export function monitorDashboard(input) {
 		return buckets[salesRepId];
 	};
 	ces.forEach((row) => bucket(row.salesRepId || row.salesOwnerId || row.ownerId).ces.push(row));
-	(input?.proposals || []).forEach((row) => bucket(row.salesRepId || row.ownerId).proposals.push(row));
+	(input?.proposals || []).forEach((row) => {
+		if (proposalRemoved(row)) return;
+		bucket(row.salesRepId || row.ownerId).proposals.push(row);
+	});
 	const bySalesRep = Object.values(buckets).map((group) => {
 		const aging = group.proposals.reduce((oldest, row) => Math.max(oldest, ageDays(row.prDate || row.timeline?.[0]?.at, input?.now)), 0);
 		const ceRows = group.ces.map((row) => ({
@@ -157,6 +168,7 @@ export function monitorDashboard(input) {
 	/** @type {Record<string, { salesRepId: string, salesRepName: string, count: number, oldestDays: number }>} */
 	const aging = {};
 	(input?.proposals || []).forEach((row) => {
+		if (proposalRemoved(row)) return;
 		const salesRepId = String(row.salesRepId || row.ownerId || "");
 		if (!aging[salesRepId]) aging[salesRepId] = { salesRepId, salesRepName: personName(salesRepId, users), count: 0, oldestDays: 0 };
 		aging[salesRepId].count += 1;
@@ -362,6 +374,36 @@ export function appendInAppNotices(existing, alerts, now, matrix) {
 		list = [notice, ...list].slice(0, 80);
 	}
 	return list;
+}
+
+/**
+ * Save the in-app notices. A version conflict re-reads the notifications record, adds the notices again, and retries. Three tries at most.
+ * @param {{ loaded: { documents?: { notifications?: any[], notifyMatrix?: unknown } }, alerts?: any[], now?: unknown, build?: (existing: unknown, alerts: any[], now: unknown, matrix: unknown) => any[], save: (loaded: any, notifications: any[]) => Promise<{ ok?: boolean, saved?: { kind: string, id: string }[], failed?: { kind?: string, id?: string, conflict?: boolean }[] }>, reload?: () => Promise<{ documents?: { notifications?: any[], notifyMatrix?: unknown } } | null | undefined> }} input
+ */
+export async function saveInAppNotices(input) {
+	const build = input.build || appendInAppNotices;
+	let loaded = input.loaded;
+	/** @type {{ ok: boolean, saved: { kind: string, id: string }[], failed: { kind?: string, id?: string, conflict?: boolean }[], attempts: number, conflict: boolean, notifications: any[] }} */
+	let last = { ok: false, saved: [], failed: [], attempts: 0, conflict: false, notifications: [] };
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		const notifications = build(loaded?.documents?.notifications, input.alerts || [], input.now, loaded?.documents?.notifyMatrix);
+		const saved = await input.save(loaded, notifications);
+		const failed = Array.isArray(saved?.failed) ? saved.failed : [];
+		const conflict = failed.some((row) => row?.kind === "notifications" && row?.conflict === true);
+		last = {
+			ok: saved?.ok !== false && !conflict,
+			saved: Array.isArray(saved?.saved) ? saved.saved : [],
+			failed,
+			attempts: attempt,
+			conflict,
+			notifications,
+		};
+		if (!conflict) return last;
+		if (attempt === 3 || typeof input.reload !== "function") return last;
+		const next = await input.reload();
+		if (next && next.documents) loaded = next;
+	}
+	return last;
 }
 
 /**
