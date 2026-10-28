@@ -132,7 +132,7 @@ export function proposalGroupsForMarkup(markup, groups) {
  * @returns {boolean}
  */
 export function proposalEditable(proposal) {
-	return !!proposal && EDITABLE.has(String(proposal.status || "")) && proposal.finalApproved !== true;
+	return !!proposal && proposal.deleted !== true && EDITABLE.has(String(proposal.status || "")) && proposal.finalApproved !== true;
 }
 
 /**
@@ -280,10 +280,18 @@ export function deleteDraftProposal(proposal, input) {
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId || byUserId !== String(proposal.ownerId || "")) return { ok: false, message: "Only the owner can delete this draft." };
 	const at = input?.now ? String(input.now) : new Date().toISOString();
+	const entry = { id: crypto.randomUUID(), at, who: byUserId, action: "Draft proposal deleted", remarks: "" };
 	return {
 		ok: true,
 		deletedId: String(proposal.id || proposal.controlNo || ""),
-		entry: { id: crypto.randomUUID(), at, who: byUserId, action: "Draft proposal deleted", remarks: "" },
+		entry,
+		proposal: {
+			...proposal,
+			deleted: true,
+			deletedAt: at,
+			prNo: "",
+			timeline: [...(proposal.timeline || []), entry],
+		},
 	};
 }
 

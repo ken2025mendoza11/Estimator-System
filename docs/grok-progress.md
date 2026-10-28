@@ -40,6 +40,7 @@ Baseline at `88f5e91` (before Step 1): `npm test` 208 + 73, 0 failures. `tsc` 0 
 | 32 | Sales monitor, escalation, and email | done | `grok/phase-32` | https://github.com/ken2025mendoza11/Estimator-System/pull/31 |
 | 33 | Release 1 seed and go-live checklist | done | `grok/phase-33` | https://github.com/ken2025mendoza11/Estimator-System/pull/32 |
 | 34 | Release 1 review of PRs 28–32 | done | `grok/phase-34` | https://github.com/ken2025mendoza11/Estimator-System/pull/33 |
+| 35 | Release 1 fix round 2 | done | `grok/phase-35` | |
 
 ## Step 1 done
 
@@ -61,6 +62,26 @@ Baseline before the first Step 2 edit (same tree as Step 1): `npm test` 210 + 84
 After Step 2: `npm test` 219 + 84, 0 failures. `tsc` 0. `eslint` 0 errors, 156 warnings. Build ok. No behaviour change. No `src/` code edited.
 
 Item in progress: none. Step 23 is done on `grok/phase-23`, stacked on `grok/phase-22`. Step 18 stays SKIPPED.
+
+## Step 35 done
+
+Stacked on `grok/phase-34` (https://github.com/ken2025mendoza11/Estimator-System/pull/33 is still open). Draft PR into `grok/phase-34`. Do not merge to `main`.
+
+- `release1_advance_sample_counters` is only for the service role. It sets the proposal sequence only when the new value is higher than the value already used. The job-order year counter still uses `greatest`, so it does not go backwards.
+- Escalation and an expiring proposal write the same in-app notice phase 33 showed (`Escalated` or `Proposal expiring`, `toUserId`, ISO time). The server saves that onto the notifications record. A matrix row set to false skips the notice. Mail is still sent only to a roster address.
+- The server save matches `version=eq.N` and reads the response. An empty update is a conflict. Mail is not sent for a document whose save failed.
+- `/api/release1-escalate` discards any clock in the request and uses the server time. `/api/release1-mail` takes `{ toUserId, template, docId }` and looks up the label on the stored document. Free text is refused.
+- Win rate per sales rep counts a proposal marked Won as awarded and Lost as a loss. The overall win rate stays on cost estimates only.
+- The job order PDF is the SY3 form: header block, labelled field grid, Prepared by, and Checked and approved by. A backup's line is `for <primary approver name>`. The quantities attachment is a PDF. Neither file contains prices. Screens still show names, not account ids.
+- Deleting a never-submitted draft keeps the proposal (`deleted`, `deletedAt`, timeline `who` and `at`). It does not remove the row. A PR number is released through the owner check (`release_proposal_pr` updates `pr_no` to empty). It does not call the older claim with an empty PR, so a missing p35 function cannot delete the row.
+- A locked estimate becomes Awarded only when an approved job order links it. Cancel is allowed only when that job order is cancelled. The app saves the schema document (the job orders) before the estimate so the database check can see the job order.
+- Go-live: p35 is SQL order 17, after p34. The p34 rollback deletes saved markups (`delete from workspace_docs where kind = 'markup'`). Back up before that rollback. The p35 rollback does not delete markups or proposals. Smoke checks cover the award gate, the kept draft, the Lost win rate, the in-app notice, and the mail body.
+
+SQL (not run): `supabase/p35-release1-2026-10-28.sql` and rollback. Apply after p34. Do not run it from the app.
+
+Tests: `src/lib/estimator/phase35.test.mjs` (`p35 sample counters are service role only and never move the proposal sequence backwards`, `escalation and expiring alerts also write an in-app notice`, `a version conflict is reported and that document is not mailed`, `the escalate route ignores a posted clock and mail looks up the stored label`, `a lost proposal counts as a loss in the sales rep win rate`, `the job order PDF is the SY3 form and the quantities file is a PDF with no prices`, `deleting a draft keeps the record and releases its PR through the owner check`, `award and cancel require the linked job order status`), plus `src/lib/estimator/ceLock.test.mjs` and `scripts/step33.test.mjs`. `npm ci` then `npm test` 427 + 99, 0 failures. `tsc` 0. `eslint` 0 errors, 217 warnings (no new warning). Build ok. Golden totals unchanged: 27,362.51 / 95,682.28 / 31,692.31 / 154,737.10.
+
+Open: SQL is not applied. The mail key is empty. Ken has not set the scheduler. Do not configure a cron from this repo. `checkerV2` and `docSuffixes` stay off until Ken turns them on with the other flags. A deleted draft stays in the saved proposal list and is hidden on the estimate screen. It can still appear on the sales worklist as Draft. Say if that list should hide it.
 
 ## Step 34 done
 

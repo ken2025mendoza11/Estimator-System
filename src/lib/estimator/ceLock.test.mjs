@@ -48,7 +48,9 @@ test("award and cancel may change a locked estimate, and every other change is r
 			timeline: [{ who: "acct-1", at: NOW, action: "Awarded" }],
 		},
 	};
-	const award = release1WriteAllowed({ kind: "ce", oldPayload: old, newPayload: awarded, sales: false });
+	const approvedOrder = [{ status: "Approved", ceIds: ["CE-1"] }];
+	const cancelledOrder = [{ status: "Cancelled", ceIds: ["CE-1"] }];
+	const award = release1WriteAllowed({ kind: "ce", oldPayload: old, newPayload: awarded, sales: false, jobOrders: approvedOrder });
 	assert.equal(award.ok, true);
 	assert.equal(award.reason, "award");
 	assert.equal(ceAwardOrCancel(old, awarded), "award");
@@ -65,7 +67,11 @@ test("award and cancel may change a locked estimate, and every other change is r
 			timeline: [{ who: "acct-1", at: NOW, action: "Awarded" }],
 		},
 	};
-	assert.equal(release1WriteAllowed({ kind: "ce", oldPayload: stray, newPayload: awardedStray }).reason, "award");
+	const missingOrder = release1WriteAllowed({ kind: "ce", oldPayload: old, newPayload: awarded, jobOrders: [] });
+	assert.equal(missingOrder.ok, false);
+	if (missingOrder.ok) throw new Error("award");
+	assert.match(missingOrder.message, /approved job order/);
+	assert.equal(release1WriteAllowed({ kind: "ce", oldPayload: stray, newPayload: awardedStray, jobOrders: approvedOrder }).reason, "award");
 	const missingWho = {
 		...awarded,
 		document: { ...awarded.document, timeline: [{ action: "Awarded", at: NOW }] },
@@ -80,9 +86,10 @@ test("award and cancel may change a locked estimate, and every other change is r
 			timeline: [...awarded.document.timeline, { who: "acct-1", at: NOW, action: "Award cancelled" }],
 		},
 	};
-	const cancel = release1WriteAllowed({ kind: "ce", oldPayload: awarded, newPayload: cancelled, sales: false });
+	const cancel = release1WriteAllowed({ kind: "ce", oldPayload: awarded, newPayload: cancelled, sales: false, jobOrders: cancelledOrder });
 	assert.equal(cancel.ok, true);
 	assert.equal(cancel.reason, "cancel");
+	assert.equal(release1WriteAllowed({ kind: "ce", oldPayload: awarded, newPayload: cancelled, jobOrders: approvedOrder }).ok, false);
 	const earlyDone = {
 		summary: { id: "CE-2", status: "Draft" },
 		document: { ceStatus: "Draft", status: "Draft", timeline: [] },

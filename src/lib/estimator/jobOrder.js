@@ -428,7 +428,8 @@ function cePayload(ces, documents, id) {
 
 /**
  * Award writes a timeline entry on each CE and the proposal. Award status stays off the CE.
- * @param {{ ces?: any[], documents?: Record<string, any>, proposal?: any, effect?: { ceIds?: string[], proposalControl?: string, joNo?: string }, byUserId?: unknown, now?: unknown }} input
+ * @param {{ ces?: any[], documents?: Record<string, any>, proposal?: any, jobOrders?: any[], effect?: { ceIds?: string[], proposalControl?: string, joNo?: string }, byUserId?: unknown, now?: unknown }} input
+ * @returns {{ ok: true, ces: any[], documents: Record<string, any>, proposal: any, award: any } | { ok: false, message: string, ces?: undefined, documents?: undefined, proposal?: undefined, award?: undefined }}
  */
 export function applyAward(input) {
 	const who = String(input?.byUserId || "").trim();
@@ -460,6 +461,7 @@ export function applyAward(input) {
 			oldPayload: cePayload(input?.ces, input?.documents, id),
 			newPayload: { summary, document },
 			sales: false,
+			jobOrders: input?.jobOrders,
 		});
 		if (!allowed.ok) return { ok: false, message: allowed.message || "Approved estimates cannot be changed." };
 		if (index >= 0) ces[index] = summary;
@@ -493,7 +495,8 @@ export function applyAward(input) {
 
 /**
  * Cancel restores the previous CE and proposal status and writes both timelines.
- * @param {{ ces?: any[], documents?: Record<string, any>, proposal?: any, award?: any, byUserId?: unknown, now?: unknown, remarks?: unknown }} input
+ * @param {{ ces?: any[], documents?: Record<string, any>, proposal?: any, award?: any, jobOrders?: any[], byUserId?: unknown, now?: unknown, remarks?: unknown }} input
+ * @returns {{ ok: true, ces: any[], documents: Record<string, any>, proposal: any } | { ok: false, message: string, ces?: undefined, documents?: undefined, proposal?: undefined }}
  */
 export function applyCancel(input) {
 	const who = String(input?.byUserId || "").trim();
@@ -524,6 +527,7 @@ export function applyCancel(input) {
 			oldPayload: cePayload(ces, documents, id),
 			newPayload: { summary, document },
 			sales: false,
+			jobOrders: input?.jobOrders,
 		});
 		if (!allowed.ok) return { ok: false, message: allowed.message || "Approved estimates cannot be changed." };
 		ces[index] = summary;

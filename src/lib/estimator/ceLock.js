@@ -159,7 +159,36 @@ export function ceAwardOrCancel(oldPayload, newPayload) {
 }
 
 /**
- * @param {{ kind?: unknown, oldPayload?: unknown, newPayload?: unknown, sales?: boolean }} input
+ * Award is allowed only when an approved job order links this estimate.
+ * Cancel is allowed only when that job order is cancelled.
+ * @param {unknown} move
+ * @param {unknown} ceId
+ * @param {unknown} jobOrders
+ * @returns {boolean}
+ */
+export function jobOrderAllowsAward(move, ceId, jobOrders) {
+	const id = String(ceId || "");
+	const wanted = move === "award" ? "approved" : move === "cancel" ? "cancelled" : "";
+	if (!id || !wanted) return false;
+	return (Array.isArray(jobOrders) ? jobOrders : []).some((/** @type {unknown} */ jo) => {
+		const row = rowOf(jo);
+		const ids = Array.isArray(row.ceIds) ? row.ceIds.map((/** @type {unknown} */ item) => String(item || "")) : [];
+		return ids.includes(id) && String(row.status || "").trim().toLowerCase() === wanted;
+	});
+}
+
+/**
+ * @param {unknown} payload
+ * @returns {string}
+ */
+function ceIdOf(payload) {
+	const summary = sideOf(payload, "summary");
+	const doc = sideOf(payload, "document");
+	return String(summary.id || doc.id || rowOf(payload).id || "");
+}
+
+/**
+ * @param {{ kind?: unknown, oldPayload?: unknown, newPayload?: unknown, sales?: boolean, jobOrders?: unknown }} input
  * @returns {{ ok: true, reason: string } | { ok: false, reason?: undefined, message: string }}
  */
 export function release1WriteAllowed(input) {
@@ -177,7 +206,18 @@ export function release1WriteAllowed(input) {
 	}
 	if (!cePayloadLocked(input?.oldPayload)) return { ok: true, reason: "open" };
 	const move = ceAwardOrCancel(input?.oldPayload, input?.newPayload);
-	if (move) return { ok: true, reason: move };
+	if (move) {
+		const ceId = ceIdOf(input?.oldPayload) || ceIdOf(input?.newPayload);
+		if (!jobOrderAllowsAward(move, ceId, input?.jobOrders)) {
+			return {
+				ok: false,
+				message: move === "award"
+					? "Award needs an approved job order for this estimate."
+					: "Cancel needs a cancelled job order for this estimate.",
+			};
+		}
+		return { ok: true, reason: move };
+	}
 	if (lockedCeChangeAllowed(input?.oldPayload, input?.newPayload, { sales: input?.sales === true })) return { ok: true, reason: "revision" };
 	return { ok: false, message: "Approved estimates cannot be changed." };
 }

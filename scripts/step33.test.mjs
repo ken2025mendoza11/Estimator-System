@@ -148,6 +148,7 @@ test("RCE to CE to markup to proposal to job order awards, and cancel restores b
 		effect: approvedJo.effect,
 		byUserId: sales,
 		now: NOW,
+		jobOrders: [approvedJo.jobOrder],
 	});
 	if (!awarded.ok) throw new Error(awarded.message || "award");
 	assert.equal(awarded.ces[0].status, "Awarded");
@@ -171,6 +172,7 @@ test("RCE to CE to markup to proposal to job order awards, and cancel restores b
 		byUserId: sales,
 		remarks: "Client stopped",
 		now: NOW,
+		jobOrders: [cancelled.jobOrder],
 	});
 	if (!restored.ok) throw new Error(restored.message || "restore");
 	assert.equal(restored.ces[0].status, "Done");
