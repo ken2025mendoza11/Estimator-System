@@ -16,6 +16,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import Papa from "papaparse";
 import CeOfficialSummary, { notesForTemplates, SheetNotesEditor, honorificName } from "./CeOfficialSummary";
 import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
+import { AddToCeDialog } from "./AddToCeDialog";
 import { SystemManual } from "./SystemManual";
 import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
 import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
@@ -23,11 +24,13 @@ import { phStamp, phYear } from "../lib/estimator/phTime";
 import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
 import { remapCloneIds } from "../lib/estimator/cloneIds";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
+import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { allocateDocNumber } from "../lib/estimator/supabase-workspace";
 import { declineUser, disableUser, grantUserRole, listUserAccess } from "../lib/supabase/account-role";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
-//#region src/components/CostEstimatorApp.jsx
+let reopenCalcLine = null;
+let calcConstantsNow = null;
 function interpolateDocTokens(template, vars) {
 	return String(template ?? "").replace(/\{(\w+)\}/g, (_, key) => {
 		const value = vars[key];
@@ -4545,6 +4548,7 @@ function defaultAdminConfig() {
 		templateFormula: { ...DEFAULT_TEMPLATE_FORMULA },
 		features: { directCostTotalsForNew: false },
 		directRates: directFormula({}),
+		calcConstants: defaultCalcConstants(),
 		boardColors: defaultBoardColors()
 	};
 }
@@ -4597,6 +4601,7 @@ function normalizeAdminConfig(raw) {
 			directCostTotalsForNew: src.features?.directCostTotalsForNew === true
 		},
 		directRates: directFormula(src.directRates),
+		calcConstants: normalizeCalcConstants(src.calcConstants),
 		boardColors: normalizeBoardColors(src.boardColors),
 		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : []
 	};
@@ -4817,6 +4822,61 @@ function BoardColorsPanel({ cfg, patch }) {
 		section("inspection", "Inspection status")
 	] });
 }
+function CalcConstantsPanel({ cfg, patch }) {
+	const current = normalizeCalcConstants(cfg.calcConstants);
+	const [error, setError] = useState("");
+	const rows = [
+		["steelDensity", "Carbon steel density (g/cm³)", current.steelDensity, 0.01, 30],
+		["pipeFactor", "Pipe weight factor", current.pipeFactor, 1e-6, 1],
+		["grooveAngleDeg", "Groove angle (°)", current.grooveAngleDeg, 1, 179],
+		["grooveGapMm", "Groove gap (mm)", current.grooveGapMm, 0, 50],
+		["grooveReinforcementPct", "Groove reinforcement (%)", current.grooveReinforcementPct, 0, 100],
+		["airRatePerKg", "Air cargo rate (₱/kg)", current.airRatePerKg, 0, 1e9],
+		["airValuationPct", "Valuation charge (%)", current.airValuationPct, 0, 100],
+		["airOtherPct", "Other charges (%)", current.airOtherPct, 0, 100],
+		["airVatPct", "VAT (%)", current.airVatPct, 0, 100],
+		["airBufferPct", "Payment buffer (%)", current.airBufferPct, 0, 100],
+		["airDivisor", "Volumetric divisor", current.airDivisor, 1, 1e9]
+	];
+	function commit(key, raw, min, max) {
+		const n = Number(raw);
+		if (!Number.isFinite(n) || n < min || n > max) {
+			setError("That value is out of range, so it was not saved.");
+			return;
+		}
+		const next = normalizeCalcConstants(current);
+		if (key.startsWith("dep:")) {
+			const process = key.slice(4);
+			if (next.deposition[process] === n) {
+				setError("");
+				return;
+			}
+			next.deposition = { ...next.deposition, [process]: n };
+		} else if (next[key] === n) {
+			setError("");
+			return;
+		} else next[key] = n;
+		next.version = current.version + 1;
+		setError("");
+		patch({ calcConstants: next });
+	}
+	const field = (key, label, value, min, max) => /* @__PURE__ */ jsxs("label", { className: "wiz-field", children: [
+		/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: label }),
+		/* @__PURE__ */ jsx("input", {
+			key: `${current.version}-${key}`,
+			className: "ce-input",
+			type: "number",
+			defaultValue: value,
+			onBlur: (e) => commit(key, e.target.value, min, max)
+		})
+	] }, key);
+	return /* @__PURE__ */ jsxs("div", { className: "wiz-grid", children: [
+		/* @__PURE__ */ jsx("p", { className: "wiz-sub", children: `Calculator constants, version ${current.version}. A line already added from the calculator shows “constants changed” when this number moves. If this copy is missing, the built-in rates are used.` }),
+		rows.map(([key, label, value, min, max]) => field(key, label, value, min, max)),
+		Object.keys(current.deposition).map((process) => field(`dep:${process}`, `${process} deposition efficiency (%)`, current.deposition[process], 0.01, 100)),
+		error ? /* @__PURE__ */ jsx("div", { className: "rce-field-error", children: error }) : null
+	] });
+}
 function AdminHub({ config, onChange }) {
 	const [tab, setTab] = useState("users");
 	const cfg = normalizeAdminConfig(config);
@@ -4850,6 +4910,7 @@ function AdminHub({ config, onChange }) {
 					["list", "Masterlist"],
 					["docs", "Document control"],
 					["formula", "Template formula"],
+					["calc", "Calculator"],
 					["colors", "Board colors"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
@@ -4877,6 +4938,10 @@ function AdminHub({ config, onChange }) {
 				patch
 			}),
 			tab === "formula" && /* @__PURE__ */ jsx(TemplateFormulaPanel, {
+				cfg,
+				patch
+			}),
+			tab === "calc" && /* @__PURE__ */ jsx(CalcConstantsPanel, {
 				cfg,
 				patch
 			}),
@@ -10129,7 +10194,9 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 											itemId: row.id,
 											patch
 										})
-									})] })] })] }),
+									}),
+									/* @__PURE__ */ jsx(CalcLineMark, { row })
+								] })] })] }),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("select", {
 										className: "ce-grid-select",
 										value: row.dayType,
@@ -10561,6 +10628,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 											patch
 										})
 									}),
+									/* @__PURE__ */ jsx(CalcLineMark, { row }),
 									!row.isDraft && /* @__PURE__ */ jsx(NeedsSourceMark, {
 										checked: !!row.needsQuote,
 										onChange: (next) => updateRow(row, "needsQuote", next)
@@ -10924,7 +10992,9 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										itemId: row.id,
 										patch
 									})
-								}), !row.isDraft && /* @__PURE__ */ jsx(NeedsSourceMark, {
+								}),
+								/* @__PURE__ */ jsx(CalcLineMark, { row }),
+								!row.isDraft && /* @__PURE__ */ jsx(NeedsSourceMark, {
 									checked: !!row.needsQuote,
 									onChange: (next) => updateRow(row, "needsQuote", next)
 								})] })] })] }),
@@ -11221,7 +11291,9 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										itemId: row.id,
 										patch
 									})
-								})] })] })] }),
+								}),
+								/* @__PURE__ */ jsx(CalcLineMark, { row })
+							] })] })] }),
 								/* @__PURE__ */ jsx("td", {
 									className: lineGapClass("PPE", row, "qty"),
 									"data-miss": lineGapNote("PPE", row, "qty"),
@@ -11934,7 +12006,9 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 												items: next.map((row) => priceFromException("MISC", row, exceptions))
 											});
 										}
-									})] })] })] }),
+									}),
+									/* @__PURE__ */ jsx(CalcLineMark, { row: r })
+									] })] })] }),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
@@ -12958,6 +13032,24 @@ function lineDbNotes(category, row, list, exceptions) {
 }
 function dbSheetKey(category) {
 	return { BOL: "manpower", BOTE: "equipment", BOCM: "consumables", PPE: "ppe", MISC: "misc" }[category] || "";
+}
+function CalcLineMark({ row }) {
+	const calc = row?.calc;
+	if (!calc || !calc.tool) return null;
+	const stale = constantsDiffer(calc.constantsVersion, calcConstantsNow);
+	return /* @__PURE__ */ jsxs(Fragment, { children: [
+		stale ? /* @__PURE__ */ jsx("span", { className: "ce-flag-override", children: "constants changed" }) : null,
+		/* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			title: "Re-open calculator",
+			onClick: (event) => {
+				event.stopPropagation();
+				if (typeof reopenCalcLine === "function") reopenCalcLine(calc);
+			},
+			children: "ⓘ"
+		})
+	] });
 }
 function LineDbMark({ category, row, list, onPatch }) {
 	const db = useMasterlist();
@@ -26520,6 +26612,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [documents, setDocuments] = useState(() => workspace.documents && typeof workspace.documents === "object" ? workspace.documents : {});
 	const [inspectionReports, setInspectionReports] = useState(() => Array.isArray(workspace.inspectionReports) ? workspace.inspectionReports : Array.isArray(extras.inspectionReports) ? extras.inspectionReports : []);
 	const [adminConfig, setAdminConfig] = useState(() => normalizeAdminConfig(workspace.adminConfig || extras.adminConfig));
+	const [elOffer, setElOffer] = useState(null);
+	const [elSeed, setElSeed] = useState(null);
+	calcConstantsNow = adminConfig.calcConstants;
+	reopenCalcLine = (calc) => {
+		setElSeed(calc);
+		setCurrentView("el-calculator");
+	};
 	applyTemplateFormula(adminConfig.templateFormula);
 	applyMasterlistRules(adminConfig.masterlistRules);
 	const [schemaConfig, setSchemaConfig] = useState(() => workspace.schemaConfig && typeof workspace.schemaConfig === "object" ? workspace.schemaConfig : {});
@@ -27606,53 +27705,24 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 	};
 	const handleElInsert = (payload) => {
-		const target = activeCE;
-		if (!target) {
-			window.alert("Open a cost estimate first, then insert from EL.");
+		const targets = ongoingTargets(ceList, documents);
+		if (!targets.length) {
+			window.alert("No Draft or Ongoing estimate can take this line.");
 			return;
 		}
-		setDocuments((prev) => {
-			const doc = prev[target.id];
-			if (!doc || !Array.isArray(doc.tasks) || !doc.tasks.length) {
-				window.alert("Open the CE and add a subtask first.");
-				return prev;
-			}
-			const tasks = doc.tasks.map((t, ti) => {
-				if (ti !== 0) return t;
-				const subs = (t.subtasks || []).map((s, si) => {
-					if (si !== 0) return s;
-					const items = s.items || emptyItems();
-					if ((items.BOCM || []).find((it) => String(it.notes || "").includes("from EL:") && num2(it.qty) > 0)) window.alert("Existing EL qty on this subtask was left unchanged. Added a note row instead.");
-					return {
-						...s,
-						items: {
-							...items,
-							BOCM: [...items.BOCM || [], bocmItem({
-								description: payload.notes,
-								qty: payload.qty,
-								unit: payload.unit || "kg",
-								unitCost: 0,
-								notes: payload.notes,
-								needsQuote: true
-							})]
-						}
-					};
-				});
-				return {
-					...t,
-					subtasks: subs
-				};
-			});
-			return {
-				...prev,
-				[target.id]: {
-					...doc,
-					tasks
-				}
-			};
-		});
-		openEditorForCE(target);
-		window.alert(`Inserted ${payload.qty} ${payload.unit} as a BOCM line with note.`);
+		setElOffer({ payload, targets });
+	};
+	const confirmElInsert = (choice) => {
+		const built = planCalcInsert(documents, choice, () => uid3("el"));
+		if (!built.ok) {
+			window.alert(built.reason);
+			return;
+		}
+		setDocuments(built.documents);
+		setElOffer(null);
+		const ce = ceList.find((row) => row.id === choice.ceId);
+		if (ce) openEditorForCE(ce);
+		window.alert(built.message);
 	};
 	const handleCeSubmitApproval = (ceId, remarks) => {
 		const flow = startApproval(adminConfig?.approvalFlows?.ce || [], editorName);
@@ -28310,7 +28380,17 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onBack: () => setCurrentView(inspectionReturn || "dashboard"),
 						onSave: handleSaveInspection
 					}),
-					currentView === "el-calculator" && /* @__PURE__ */ jsx(ElCalculatorView, { onInsert: handleElInsert }),
+					currentView === "el-calculator" && /* @__PURE__ */ jsx(ElCalculatorView, {
+						onInsert: handleElInsert,
+						constants: adminConfig.calcConstants,
+						seed: elSeed
+					}),
+					elOffer && /* @__PURE__ */ jsx(AddToCeDialog, {
+						offer: elOffer,
+						masterlist: masterlistRef.current,
+						onCancel: () => setElOffer(null),
+						onConfirm: confirmElInsert
+					}),
 					currentView === "manual" && /* @__PURE__ */ jsx(SystemManual, {
 						config: adminConfig,
 						levels: USER_LEVELS,

@@ -1,6 +1,7 @@
 // @ts-nocheck
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { todayLocal } from "../lib/estimator/workflow";
+import { airResult, normalizeCalcConstants, paintResult, rawResult, weldResult } from "../lib/estimator/elCalcs";
 import {
   Plus,
   Trash2,
@@ -1255,111 +1256,85 @@ const EL_STANDARDS = [
   { id: 's15', group: 'Air cargo', name: 'VAT', value: '12%', note: 'On weight, valuation, and other charges' },
   { id: 's16', group: 'Air cargo', name: 'Payment buffer', value: '25%', note: 'Add when requesting payment' },
   { id: 's17', group: 'Air cargo', name: 'Volumetric divisor', value: '6000', note: 'L × W × H (cm) ÷ 6000 = kg' },
+  { id: 's18', group: 'Welding', name: 'Groove angle', value: '60°', note: 'Included angle' },
+  { id: 's19', group: 'Welding', name: 'Groove gap', value: '2 mm', note: 'Root gap' },
+  { id: 's20', group: 'Welding', name: 'Groove reinforcement', value: '10%', note: 'Added to the weld-metal area' },
 ];
 
-function num(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+function FieldErrors({ messages }) {
+  if (!messages || !messages.length) return null;
+  return (
+    <div>
+      {messages.map((message) => (
+        <div key={message} className="rce-field-error">{message}</div>
+      ))}
+    </div>
+  );
 }
 
-const DEPOSITION = { SMAW: 65, GMAW: 90, FCAW: 85, SAW: 98, GTAW: 100 };
-
-export function ElCalculatorView({ onInsert }) {
+export function ElCalculatorView({ onInsert, constants, seed }) {
+  const rates = useMemo(() => normalizeCalcConstants(constants), [constants]);
   const [tool, setTool] = useState('weld');
-  const [weld, setWeld] = useState({
+  const [weld, setWeld] = useState(() => ({
     process: 'SMAW',
     jointType: 'fillet',
     lengthM: '',
     sizeMm: '',
-    efficiency: DEPOSITION.SMAW,
-    wastage: '',
-    density: 7.85,
-  });
+    efficiency: normalizeCalcConstants(constants).deposition.SMAW,
+    wastage: 0,
+    density: normalizeCalcConstants(constants).steelDensity,
+    angle: normalizeCalcConstants(constants).grooveAngleDeg,
+    gapMm: normalizeCalcConstants(constants).grooveGapMm,
+    reinforcement: normalizeCalcConstants(constants).grooveReinforcementPct,
+  }));
   const [paint, setPaint] = useState({
     area: '',
     coats: '',
     dft: '',
     solids: '',
-    wastage: '',
+    wastage: 0,
   });
-  const [raw, setRaw] = useState({
+  const [raw, setRaw] = useState(() => ({
     kind: 'plate',
     length: '',
     width: '',
     thick: '',
     od: '',
     wt: '',
-    density: 7.85,
-  });
-  const [air, setAir] = useState({
-    grossKg: '',
-    lengthCm: '',
-    widthCm: '',
-    heightCm: '',
-    declaredValue: '',
-    ratePerKg: 65,
-    valuationPct: 1,
-    otherPct: 10,
-    vatPct: 12,
-    bufferPct: 25,
-    divisor: 6000,
+    density: normalizeCalcConstants(constants).steelDensity,
+    waste: 0,
+  }));
+  const [air, setAir] = useState(() => {
+    const rates = normalizeCalcConstants(constants);
+    return {
+      grossKg: '',
+      lengthCm: '',
+      widthCm: '',
+      heightCm: '',
+      declaredValue: '',
+      ratePerKg: rates.airRatePerKg,
+      valuationPct: rates.airValuationPct,
+      otherPct: rates.airOtherPct,
+      vatPct: rates.airVatPct,
+      bufferPct: rates.airBufferPct,
+      divisor: rates.airDivisor,
+    };
   });
   const [stdQuery, setStdQuery] = useState('');
+  useEffect(() => {
+    if (!seed || !seed.inputs) return;
+    const name = seed.tool === 'plate' || seed.tool === 'pipe' ? 'raw' : seed.tool;
+    if (name) setTool(name);
+    if (seed.tool === 'weld') setWeld((prev) => ({ ...prev, ...seed.inputs }));
+    else if (seed.tool === 'paint') setPaint((prev) => ({ ...prev, ...seed.inputs }));
+    else if (seed.tool === 'raw' || seed.tool === 'plate' || seed.tool === 'pipe') setRaw((prev) => ({ ...prev, ...seed.inputs }));
+    else if (seed.tool === 'air') setAir((prev) => ({ ...prev, ...seed.inputs }));
+  }, [seed]);
 
-  const weldReady = weld.lengthM !== '' && weld.sizeMm !== '';
-  const weldKg = useMemo(() => {
-    if (!weldReady) return null;
-    const lengthMm = num(weld.lengthM) * 1000;
-    const z = num(weld.sizeMm);
-    const areaMm2 = weld.jointType === 'fillet' ? (z * z) / 2 : z * z * 0.7;
-    const volumeCm3 = (areaMm2 * lengthMm) / 1000;
-    const theoreticalKg = (volumeCm3 * num(weld.density)) / 1000;
-    const deposited = theoreticalKg / Math.max(num(weld.efficiency) / 100, 0.01);
-    return deposited * (1 + num(weld.wastage) / 100);
-  }, [weld, weldReady]);
-
-  const paintReady = paint.area !== '' && paint.coats !== '' && paint.dft !== '' && paint.solids !== '';
-  const paintL = useMemo(() => {
-    if (!paintReady) return null;
-    const coverage = (num(paint.solids) / 100) * (10 / Math.max(num(paint.dft), 1));
-    const liters = (num(paint.area) * num(paint.coats)) / Math.max(coverage, 0.0001);
-    return liters * (1 + num(paint.wastage) / 100);
-  }, [paint, paintReady]);
-
-  const rawReady = raw.kind === 'pipe' ? raw.od !== '' && raw.wt !== '' && raw.length !== '' : raw.length !== '' && raw.width !== '' && raw.thick !== '';
-  const rawKg = useMemo(() => {
-    if (!rawReady) return null;
-    if (raw.kind === 'pipe') {
-      return (num(raw.od) - num(raw.wt)) * num(raw.wt) * 0.02466 * num(raw.length);
-    }
-    return num(raw.length) * num(raw.width) * num(raw.thick) * num(raw.density);
-  }, [raw, rawReady]);
-
-  const airFreight = useMemo(() => {
-    const hasDims = air.lengthCm !== '' && air.widthCm !== '' && air.heightCm !== '';
-    const volumetric = hasDims
-      ? (num(air.lengthCm) * num(air.widthCm) * num(air.heightCm)) / Math.max(num(air.divisor), 1)
-      : null;
-    const gross = air.grossKg === '' ? null : num(air.grossKg);
-    const chargeable =
-      gross == null && volumetric == null ? null : Math.max(gross || 0, volumetric || 0);
-    const weightCharge = chargeable == null ? null : chargeable * num(air.ratePerKg);
-    const valuation = air.declaredValue === '' ? null : num(air.declaredValue) * (num(air.valuationPct) / 100);
-    const other =
-      weightCharge == null || valuation == null
-        ? null
-        : (weightCharge + valuation) * (num(air.otherPct) / 100);
-    const vat =
-      weightCharge == null || valuation == null || other == null
-        ? null
-        : (weightCharge + valuation + other) * (num(air.vatPct) / 100);
-    const total =
-      weightCharge == null || valuation == null || other == null || vat == null
-        ? null
-        : weightCharge + valuation + other + vat;
-    const request = total == null ? null : total * (1 + num(air.bufferPct) / 100);
-    return { volumetric, chargeable, weightCharge, valuation, other, vat, total, request };
-  }, [air]);
+  const weldCalc = useMemo(() => weldResult(weld, rates), [weld, rates]);
+  const paintCalc = useMemo(() => paintResult(paint), [paint]);
+  const rawCalc = useMemo(() => rawResult(raw, rates), [raw, rates]);
+  const airFreight = useMemo(() => airResult(air, rates), [air, rates]);
 
   const standards = EL_STANDARDS.filter(
     (s) => !stdQuery || `${s.group} ${s.name} ${s.note}`.toLowerCase().includes(stdQuery.toLowerCase())
@@ -1402,7 +1377,7 @@ export function ElCalculatorView({ onInsert }) {
                 value={weld.process}
                 onChange={(e) => {
                   const process = e.target.value;
-                  setWeld({ ...weld, process, efficiency: DEPOSITION[process] });
+                  setWeld({ ...weld, process, efficiency: rates.deposition[process] });
                 }}
               >
                 <option>SMAW</option>
@@ -1428,9 +1403,25 @@ export function ElCalculatorView({ onInsert }) {
               <input className="ce-input" type="number" value={weld.lengthM} placeholder="" onChange={(e) => setWeld({ ...weld, lengthM: e.target.value })} />
             </label>
             <label className="wiz-field">
-              <span className="ce-field-label">Size / leg (mm)</span>
+              <span className="ce-field-label">{weld.jointType === 'fillet' ? 'Leg (mm)' : 'Thickness (mm)'}</span>
               <input className="ce-input" type="number" value={weld.sizeMm} onChange={(e) => setWeld({ ...weld, sizeMm: e.target.value })} />
             </label>
+            {weld.jointType === 'groove' ? (
+              <>
+                <label className="wiz-field">
+                  <span className="ce-field-label">Included angle (°) — standard</span>
+                  <input className="ce-input el-air-input" type="number" value={weld.angle} onChange={(e) => setWeld({ ...weld, angle: e.target.value })} />
+                </label>
+                <label className="wiz-field">
+                  <span className="ce-field-label">Root gap (mm) — standard</span>
+                  <input className="ce-input el-air-input" type="number" value={weld.gapMm} onChange={(e) => setWeld({ ...weld, gapMm: e.target.value })} />
+                </label>
+                <label className="wiz-field">
+                  <span className="ce-field-label">Reinforcement (%) — standard</span>
+                  <input className="ce-input el-air-input" type="number" value={weld.reinforcement} onChange={(e) => setWeld({ ...weld, reinforcement: e.target.value })} />
+                </label>
+              </>
+            ) : null}
             <label className="wiz-field">
               <span className="ce-field-label">Deposition efficiency (%) — standard</span>
               <input className="ce-input el-air-input" type="number" value={weld.efficiency} onChange={(e) => setWeld({ ...weld, efficiency: e.target.value })} />
@@ -1444,22 +1435,30 @@ export function ElCalculatorView({ onInsert }) {
               <input className="ce-input" type="number" value={weld.wastage} onChange={(e) => setWeld({ ...weld, wastage: e.target.value })} />
             </label>
           </div>
+          <FieldErrors messages={weldCalc.messages} />
           <div className="el-result">
-            Required consumable <b>{weldKg == null ? '—' : `${weldKg.toFixed(2)} kg`}</b>
-            {onInsert && weldKg != null ? (
+            {weld.jointType === 'groove' ? (
+              <div>Weld metal <b>{weldCalc.kgPerM == null ? '—' : `${weldCalc.kgPerM.toFixed(3)} kg/m`}</b></div>
+            ) : null}
+            Required consumable <b>{weldCalc.kg == null ? '—' : `${weldCalc.kg.toFixed(3)} kg`}</b>
+            {onInsert && weldCalc.ok && weldCalc.kg != null ? (
               <button
                 type="button"
                 className="ce-btn-primary ce-btn-sm"
                 style={{ marginLeft: '0.75rem' }}
                 onClick={() =>
                   onInsert({
-                    qty: Number(weldKg.toFixed(2)),
+                    category: 'BOCM',
+                    description: `Welding consumable ${weld.process} ${weld.jointType}`,
+                    qty: Number(weldCalc.kg.toFixed(3)),
                     unit: 'kg',
-                    notes: `from EL: weld ${weld.process} ${weld.jointType} ${weld.sizeMm}mm × ${weld.lengthM}m`,
+                    unitCost: 0,
+                    notes: `from EL: weld ${weld.process} ${weld.jointType} ${weld.jointType === 'fillet' ? 'leg' : 'thickness'} ${weld.sizeMm}mm × ${weld.lengthM}m`,
+                    calc: { tool: 'weld', inputs: weld, constantsVersion: rates.version, result: { kg: weldCalc.kg, kgPerM: weldCalc.kgPerM } },
                   })
                 }
               >
-                Insert as BOCM qty
+                Add to cost estimate
               </button>
             ) : null}
           </div>
@@ -1491,22 +1490,27 @@ export function ElCalculatorView({ onInsert }) {
               <input className="ce-input" type="number" value={paint.wastage} onChange={(e) => setPaint({ ...paint, wastage: e.target.value })} />
             </label>
           </div>
+          <FieldErrors messages={paintCalc.messages} />
           <div className="el-result">
-            Paint required <b>{paintL == null ? '—' : `${paintL.toFixed(2)} L`}</b>
-            {onInsert && paintL != null ? (
+            Paint required <b>{paintCalc.litres == null ? '—' : `${paintCalc.litres.toFixed(2)} L`}</b>
+            {onInsert && paintCalc.ok && paintCalc.litres != null ? (
               <button
                 type="button"
                 className="ce-btn-primary ce-btn-sm"
                 style={{ marginLeft: '0.75rem' }}
                 onClick={() =>
                   onInsert({
-                    qty: Number(paintL.toFixed(2)),
+                    category: 'BOCM',
+                    description: 'Paint',
+                    qty: Number(paintCalc.litres.toFixed(2)),
                     unit: 'L',
+                    unitCost: 0,
                     notes: `from EL: paint ${paint.area} m² × ${paint.coats} coats DFT ${paint.dft}µm`,
+                    calc: { tool: 'paint', inputs: paint, constantsVersion: rates.version, result: { litres: paintCalc.litres } },
                   })
                 }
               >
-                Insert as BOCM qty
+                Add to cost estimate
               </button>
             ) : null}
           </div>
@@ -1534,23 +1538,36 @@ export function ElCalculatorView({ onInsert }) {
               <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
             </div>
           )}
-          <p className="wiz-hint">Pipe weight uses the standard factor 0.02466: (OD − wall) × wall × 0.02466 × length.</p>
+          <p className="wiz-hint">
+            {raw.kind === 'plate'
+              ? 'Length and width are in metres. Thickness is in millimetres. Weight = L × W × thickness × density, then cutting waste.'
+              : `Pipe weight uses the factor ${rates.pipeFactor}: (OD − wall) × wall × ${rates.pipeFactor} × length, then cutting waste.`}
+          </p>
+          <label className="wiz-field">
+            <span className="ce-field-label">Cutting waste (%)</span>
+            <input className="ce-input" type="number" value={raw.waste} onChange={(e) => setRaw({ ...raw, waste: e.target.value })} />
+          </label>
+          <FieldErrors messages={rawCalc.messages} />
           <div className="el-result">
-            Estimated weight <b>{rawKg == null ? '—' : `${rawKg.toFixed(2)} kg`}</b>
-            {onInsert && rawKg != null ? (
+            Estimated weight <b>{rawCalc.kg == null ? '—' : `${rawCalc.kg.toFixed(2)} kg`}</b>
+            {onInsert && rawCalc.ok && rawCalc.kg != null ? (
               <button
                 type="button"
                 className="ce-btn-primary ce-btn-sm"
                 style={{ marginLeft: '0.75rem' }}
                 onClick={() =>
                   onInsert({
-                    qty: Number(rawKg.toFixed(2)),
+                    category: 'BOCM',
+                    description: raw.kind === 'pipe' ? 'Steel pipe' : 'Steel plate',
+                    qty: Number(rawCalc.kg.toFixed(2)),
                     unit: 'kg',
-                    notes: `from EL: ${raw.kind} ${raw.kind === 'pipe' ? `OD ${raw.od} × ${raw.length}m` : `${raw.length}×${raw.width}×${raw.thick}mm`}`,
+                    unitCost: 0,
+                    notes: `from EL: ${raw.kind} ${raw.kind === 'pipe' ? `OD ${raw.od} × ${raw.length}m` : `${raw.length} m × ${raw.width} m × ${raw.thick} mm`}`,
+                    calc: { tool: 'raw', inputs: raw, constantsVersion: rates.version, result: { kg: rawCalc.kg } },
                   })
                 }
               >
-                Insert as BOCM qty
+                Add to cost estimate
               </button>
             ) : null}
           </div>
@@ -1560,7 +1577,7 @@ export function ElCalculatorView({ onInsert }) {
       {tool === 'air' && (
         <div className="ce-card wiz-card">
           <h3 className="ce-serif">Cebu Air Cargo — freight calculator</h3>
-          <p className="wiz-hint">Weight and size are the packaging, not the item. Yellow fields are the standard rate or part of the formula. Chargeable weight is the higher of gross weight and volumetric weight.</p>
+          <p className="wiz-hint">Weight and size are the packaging, not the item. Yellow fields are the standard rate or part of the formula. Chargeable weight is the higher of gross weight and volumetric weight, rounded up to the next 0.5 kg. A blank declared value is a zero valuation charge.</p>
           <div className="wiz-grid">
             {[
               ['grossKg', 'Gross weight (kg)', false],
@@ -1599,19 +1616,26 @@ export function ElCalculatorView({ onInsert }) {
             </tbody>
           </table>
           <p className="wiz-hint">Other charges are set by the Ceb Pac checker. The formula uses the standard percent until they confirm the actual amount. Actual weight is taken at the receiving warehouse. Add the payment buffer when requesting payment so the budget is not short.</p>
-          {onInsert && airFreight.total != null ? (
+          <FieldErrors messages={airFreight.messages} />
+          {onInsert && airFreight.ok && airFreight.total != null ? (
             <button
               type="button"
               className="ce-btn-primary ce-btn-sm"
               onClick={() =>
                 onInsert({
-                  qty: Number(airFreight.total.toFixed(2)),
-                  unit: 'php',
+                  category: 'MISC',
+                  section: 'B',
+                  description: 'Cebu Air Cargo',
+                  qty: 1,
+                  days: 1,
+                  unit: 'lot',
+                  unitCost: Number(airFreight.total.toFixed(2)),
                   notes: `from EL: Cebu Air Cargo ${airFreight.chargeable.toFixed(2)} kg chargeable, est. ₱${airFreight.total.toFixed(2)}`,
+                  calc: { tool: 'air', inputs: air, constantsVersion: rates.version, result: { total: airFreight.total, chargeable: airFreight.chargeable } },
                 })
               }
             >
-              Insert estimated total as BOCM qty
+              Add to cost estimate
             </button>
           ) : null}
         </div>
