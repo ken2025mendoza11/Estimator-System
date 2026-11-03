@@ -12,7 +12,7 @@ Do this on `estimator-test` first. Take a backup before the first script. Repeat
 
 ## SQL, in order
 
-These are the scripts through Step 35. Step 32 and Step 33 add no SQL. Skip a file only if that exact version is already applied.
+These are the scripts through Step 40. Step 32 and Step 33 add no SQL. Skip a file only if that exact version is already applied.
 
 | Order | Script | Undo |
 | --- | --- | --- |
@@ -33,10 +33,12 @@ These are the scripts through Step 35. Step 32 and Step 33 add no SQL. Skip a fi
 | 15 | `supabase/p31-job-order-2026-10-28.sql` | `supabase/p31-job-order-2026-10-28-rollback.sql` |
 | 16 | `supabase/p34-release1-2026-10-28.sql` | `supabase/p34-release1-2026-10-28-rollback.sql` |
 | 17 | `supabase/p35-release1-2026-10-28.sql` | `supabase/p35-release1-2026-10-28-rollback.sql` |
+| 18 | `supabase/p40-numbering-2026-11-03.sql` | `supabase/p40-numbering-2026-11-03-rollback.sql` |
+| 19 | `supabase/p40b-unique-doc-numbers-2026-11-03.sql` | `supabase/p40b-unique-doc-numbers-2026-11-03-rollback.sql` |
 
 `p30` must be applied before a proposal number can be taken. `p31` must be applied before a job order number can be taken. `p34` comes after both. It lets an award or a cancel change a locked estimate, stores markups as their own kind, refuses a job order number that is already taken, restarts the job order sequence each year, and stops an empty PR number from deleting another proposal. `p35` comes after `p34`. Only the seed (the service role) can advance the sample counters, and that function will not move the proposal sequence backwards. A locked estimate becomes Awarded only when an approved job order that links it is already stored. Cancel is allowed only when that job order is already cancelled. The app saves the schema document, which holds the job orders, before the estimate, so that check can see the job order. Releasing a draft's PR number clears that claim. It does not delete the proposal. The app still saves when those functions are missing; the new buttons explain that and do not write the document.
 
-The `p30` rollback deletes saved proposals (`delete from workspace_docs where kind = 'proposal'`). Back up first. The `p34` rollback does not delete proposals, but it does delete saved markups (`delete from workspace_docs where kind = 'markup'`). Back up before that rollback. It also restores the older claim functions, including the empty-PR delete, so do not roll `p34` back unless you mean to. The `p35` rollback does not delete markups or proposals. It restores the p34 counter function and the p34 estimate guard.
+The `p30` rollback deletes saved proposals (`delete from workspace_docs where kind = 'proposal'`). Back up first. The `p34` rollback does not delete proposals, but it does delete saved markups (`delete from workspace_docs where kind = 'markup'`). Back up before that rollback. It also restores the older claim functions, including the empty-PR delete, so do not roll `p34` back unless you mean to. The `p35` rollback does not delete markups or proposals. It restores the p34 counter function and the p34 estimate guard. `p40` replaces the sample-counter and year job-order functions so a plpgsql variable is not named `year_key`, and a job-order claim does not update a number that is already stored. `p40b` adds the unique number indexes. Run its duplicate check first. If it reports duplicates, stop and do not delete them.
 
 ## Rollback order
 
