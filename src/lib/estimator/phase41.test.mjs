@@ -109,6 +109,18 @@ test("excel page totals match the summary, with no blank item rows", async () =>
   assert.equal(cell("L26"), filled.pageTotals.BOCM);
   assert.equal(cell("L27"), filled.pageTotals.PPE);
   assert.equal(cell("L36"), total);
+  assert.equal(summary.getRow(24).hidden, false);
+  const label = (row) => [summary.getCell(`B${row}`).value, summary.getCell(`C${row}`).value, summary.getCell(`D${row}`).value].map((value) => String(value || "")).join(" ");
+  assert.equal(label(15).includes("MOBILIZATION"), true);
+  assert.equal(label(16).includes("DEMOBILIZATION"), true);
+  assert.equal(label(17).includes("MANPOWER"), true);
+  assert.equal(label(24).includes("BENEFITS"), true);
+  let visible = 0;
+  for (let r = 15; r <= 34; r++) {
+    if (summary.getRow(r).hidden) continue;
+    visible += Number(cell(`L${r}`)) || 0;
+  }
+  assert.equal(Math.round(visible * 100) / 100, Math.round(Number(cell("L36")) * 100) / 100);
 });
 
 test("each CE page total equals its summary line", () => {

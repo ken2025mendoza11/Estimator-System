@@ -245,6 +245,8 @@ export async function fillCeTemplate(ExcelJS, templateBuffer, model) {
 	set(cs, "L34", insurance);
 	set(cs, "L24", roundMoney(model.benefits));
 	peso(cs, "L24");
+	// Row 24 is Benefits. The template hides it, so the visible lines would not add up to the total.
+	cs.getRow(24).hidden = false;
 	cs.getCell("L34").note = "Insurances (system MISC section I). The template's MISC. sheet has no insurance block.";
 	[41, 42, 43, 44].forEach((r, i) => set(cs, `B${r}`, model.notes[i] ? `${i + 1}. ${model.notes[i]}` : null));
 	const sg = model.signatures || {};
