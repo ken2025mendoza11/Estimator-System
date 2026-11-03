@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { calcBOCM, calcBOTE, calcPPE, categoryOnTask, buildOfficialBaseRows, dolePay, mobDemobPair, projectTotal } from "./ceTotals.js";
+import { calcBOCM, calcBOTE, calcPPE, dolePay, mobDemobPair, projectTotal } from "./ceTotals.js";
 import { createJobOrder, normalizeLeadtime, patchJobOrder } from "./jobOrder.js";
 import { buildCeExcelModel, fillCeTemplate } from "./ceExcelTemplate.js";
 
@@ -123,34 +123,40 @@ test("excel page totals match the summary, with no blank item rows", async () =>
   assert.equal(Math.round(visible * 100) / 100, Math.round(Number(cell("L36")) * 100) / 100);
 });
 
-test("each CE page total equals its summary line", () => {
-  const tasks = examples.onsite.tasks;
-  const sheets = {
-    mobilization: { lines: [{ qty: 2, days: 1, rate: 150 }] },
-    demobilization: { lines: [{ amount: 80 }] },
-  };
-  const official = buildOfficialBaseRows(tasks, direct, sheets);
-  /** @param {string} key */
-  const line = (key) => {
-    const row = official.rows.find((item) => item.key === key);
-    if (!row) throw new Error(key);
-    return row.computed;
-  };
-  /** @param {string} cat */
-  const sumCat = (cat) => tasks.reduce((/** @type {number} */ sum, /** @type {any} */ task) => sum + categoryOnTask(task, cat, direct), 0);
-  assert.equal(line("B"), sumCat("BOTE"));
-  assert.equal(line("C"), sumCat("BOCM"));
-  assert.equal(line("D"), sumCat("PPE"));
-  assert.equal(line("E"), sumCat("MISC"));
-  assert.equal(line("MOB"), 300);
-  assert.equal(line("DEMOB"), 80);
-  const manpower = official.rows.find((row) => row.key === "A");
-  if (!manpower) throw new Error("A");
-  assert.equal(line("A"), manpower.computed);
-  const pair = mobDemobPair(tasks, sheets);
-  assert.equal(projectTotal(tasks, direct, sheets), official.total);
-  assert.equal(pair.mobilization, line("MOB"));
-  assert.equal(pair.demobilization, line("DEMOB"));
+test("each CE page total equals its summary line", async () => {
+  const { createServer } = await import("vite");
+  const react = (await import("@vitejs/plugin-react")).default;
+  const { fileURLToPath } = await import("node:url");
+  if (!globalThis.document) {
+    const el = () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {}, click() {}, classList: { add() {}, remove() {} } });
+    globalThis.document = { createElement: el, body: el(), querySelector() { return null; }, documentElement: el() };
+  }
+  if (!globalThis.localStorage) {
+    const box = new Map();
+    globalThis.localStorage = { getItem: (key) => box.get(key) || null, setItem: (key, value) => box.set(key, String(value)), removeItem: (key) => box.delete(key) };
+  }
+  if (!globalThis.window) globalThis.window = globalThis;
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  const vite = await createServer({
+    configFile: false,
+    root,
+    server: { middlewareMode: true, hmr: false },
+    appType: "custom",
+    logLevel: "error",
+    plugins: [react()],
+    resolve: { alias: { "@": fileURLToPath(new URL("../../", import.meta.url)) } },
+  });
+  try {
+    const mod = await vite.ssrLoadModule("/scripts/pdf-page-totals.js");
+    const { summary, pages } = await mod.renderedPageChecks();
+    ["BOL", "BOTE", "BOCM", "PPE", "MISC", "MOB", "DEMOB"].forEach((key) => {
+      assert.notEqual(summary[key], null, `summary ${key}`);
+      if (pages[key] == null) assert.equal(summary[key], 0, key);
+      else assert.equal(pages[key], summary[key], key);
+    });
+  } finally {
+    await vite.close();
+  }
 });
 
 test("CE lists use the saved mob and demob sheet totals", () => {

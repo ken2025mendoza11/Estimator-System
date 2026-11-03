@@ -3655,11 +3655,11 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 	});
 	const bolSheet = buildBolExportSection(tasks, noteTexts(notes.BOL), src.pricing);
 	if (bolSheet) sections.push(bolSheet);
-	const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(notes.BOTE));
+	const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(notes.BOTE), src.pricing);
 	if (boteSheet) sections.push(boteSheet);
-	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM));
+	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM), src.pricing);
 	if (bocmSheet) sections.push(bocmSheet);
-	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(notes.PPE));
+	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(notes.PPE), src.pricing);
 	if (ppeSheet) sections.push(ppeSheet);
 	const miscSheet = buildMiscExportSection(tasks, src.pricing, noteTexts(notes.MISC));
 	if (miscSheet) sections.push(miscSheet);
@@ -17979,7 +17979,16 @@ function buildBolExportSection(tasks, notes, pricing) {
 		const model = buildBolGroups(tasksOfType(tasks, w.id), pricing);
 		if (!model.allBOL.length) return;
 		any = true;
-		grand = roundMoney(grand + model.grandTotal);
+		const perDiemBy = {};
+		if (isDirectPricing(pricing)) {
+			tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((sub) => (sub.items?.BOL || []).forEach((item) => {
+				const key = `${item.dayType || "Regular"}|${item.shift || "Day"}|${item.role || "Unnamed"}`;
+				perDiemBy[key] = roundMoney((perDiemBy[key] || 0) + calcBOL(item, pricing).perDiemAllow);
+			})));
+		}
+		const typeExtra = Object.values(perDiemBy).reduce((sum, n) => sum + n, 0);
+		const typeTotal = roundMoney(model.grandTotal + typeExtra);
+		grand = roundMoney(grand + typeTotal);
 		const banner = `${w.letter}. ${w.full}`;
 		blocks.push({
 			banner,
@@ -17990,15 +17999,18 @@ function buildBolExportSection(tasks, notes, pricing) {
 		BOL_PARTS.forEach((part) => {
 			const lines = summarySort(Object.values(model.groups[part.dt]?.[part.shift] || {}), "BOL", (r) => r.role);
 			if (!lines.length) return;
-			const partRows = lines.map((r, idx) => [
+			const partRows = lines.map((r, idx) => {
+				const extra = perDiemBy[`${part.dt}|${part.shift}|${r.role}`] || 0;
+				return [
 				idx + 1,
 				r.role,
 				r.qty,
 				r.days,
 				fmt(r.rate),
 				r.otHrs,
-				fmt(r.subtotal)
-			]);
+				fmt(roundMoney(r.subtotal + extra))
+			];
+			});
 			lastPart = {
 				banner: part.label,
 				bannerFill: BOL_LIGHT_BLUE,
@@ -18020,7 +18032,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 			"",
 			"",
 			"",
-			fmt(model.grandTotal)
+			fmt(typeTotal)
 		];
 		blocks.push({
 			columns,
@@ -18056,7 +18068,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 		notes
 	};
 }
-function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
+function buildCategoryExportSection(tasks, cat, exportTitle, notes, pricing) {
 	const bote = cat === "BOTE";
 	const columns = bote ? [
 		"Item No.",
@@ -18090,7 +18102,17 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		const auto = buildCategoryAutoRows(subset, cat, w.id);
 		if (!auto.length) return;
 		any = true;
-		const blockTotal = roundMoney(auto.reduce((s, r) => s + num2(r.subtotal), 0));
+		const lineAmount = (description) => {
+			let sum = 0;
+			subset.forEach((t) => flattenSubs(t).forEach((s) => (s.items[cat] || []).forEach((it) => {
+				const name = cat === "PPE" ? it.item || it.description : it.description;
+				if (String(name || "") !== String(description || "")) return;
+				sum += itemSubtotal(cat, it, w.id, pricing);
+			})));
+			return roundMoney(sum);
+		};
+		const amounts = auto.map((r) => lineAmount(r.description));
+		const blockTotal = roundMoney(amounts.reduce((s, n) => s + n, 0));
 		grand = roundMoney(grand + blockTotal);
 		const lineRows = [];
 		const lineMeta = [];
@@ -18117,14 +18139,14 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 					powered ? hoursPerDay || "—" : "—",
 					powered && kwhRate ? fmt(kwhRate) : "—",
 					powered ? fmt(r.electricity) : "—",
-					fmt(r.subtotal)
+					fmt(amounts[idx])
 				]);
 			} else lineRows.push([
 				idx + 1,
 				r.description,
 				r.totalQty,
 				fmt(r.rate),
-				fmt(r.subtotal)
+				fmt(amounts[idx])
 			]);
 			lineMeta.push({ kind: "line" });
 		});
@@ -18807,11 +18829,11 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		});
 		const bolSheet = buildBolExportSection(tasks, noteTexts(state.sheetNotes?.BOL), state.pricing);
 		if (bolSheet) sections.push(bolSheet);
-		const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(state.sheetNotes?.BOTE));
+		const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(state.sheetNotes?.BOTE), state.pricing);
 		if (boteSheet) sections.push(boteSheet);
-		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM));
+		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM), state.pricing);
 		if (bocmSheet) sections.push(bocmSheet);
-		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(state.sheetNotes?.PPE));
+		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(state.sheetNotes?.PPE), state.pricing);
 		if (ppeSheet) sections.push(ppeSheet);
 		const miscSheet = buildMiscExportSection(tasks, state.pricing, noteTexts(state.sheetNotes?.MISC));
 		if (miscSheet) sections.push(miscSheet);

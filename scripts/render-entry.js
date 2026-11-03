@@ -54,7 +54,7 @@ const filled = await fillCeTemplate(ExcelJS, template, buildCeExcelModel({
 }));
 if (filled.unresolved.length) throw new Error(`Excel unresolved: ${filled.unresolved.slice(0, 8).join(", ")}`);
 if (filled.total !== projectTotal(tasks, direct, sheets)) throw new Error(`Excel total ${filled.total} != ${projectTotal(tasks, direct, sheets)}`);
-for (const [page, summaryKey] of [["BOTE", "B"], ["BOCM", "C"], ["PPE", "D"], ["MOB", "MOB"], ["DEMOB", "DEMOB"]]) {
+for (const [page, summaryKey] of [["BOL", "A"], ["BOTE", "B"], ["BOCM", "C"], ["PPE", "D"], ["MISC", "E"], ["MOB", "MOB"], ["DEMOB", "DEMOB"]]) {
 	if (Number(filled.pageTotals[page]) !== Number(byKey[summaryKey])) {
 		throw new Error(`${page} ${filled.pageTotals[page]} != summary ${summaryKey} ${byKey[summaryKey]}`);
 	}
