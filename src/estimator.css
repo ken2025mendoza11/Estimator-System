@@ -1281,3 +1281,4 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 @media (max-width:390px){
 .ce-sticky-scroller{max-height:calc(100dvh - 6rem)}
 }
+.ce-sign-pending{margin-left:.4rem;font-size:.65rem;font-weight:700;letter-spacing:.04em;color:#a23a2e}

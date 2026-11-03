@@ -75,7 +75,7 @@ import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/e
 import { orderExportSections, refreshSchedule, scheduleExportSection } from "../lib/estimator/phase10";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
-import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
+import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
@@ -94,6 +94,7 @@ let release1JobOrderOn = false;
 let release1JobOrderSales = false;
 let release1MonitorOn = false;
 let ceTpl1On = false;
+let ceTpl2On = false;
 let release1MonitorSales = false;
 let release1CanReassign = false;
 let release1ActorId = "";
@@ -4869,7 +4870,8 @@ function defaultAdminConfig() {
 			release1JobOrder: false,
 			release1Monitor: false,
 			joScreenV2: false,
-			ceTpl1: false
+			ceTpl1: false,
+			ceTpl2: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4993,7 +4995,8 @@ function normalizeAdminConfig(raw) {
 			release1JobOrder: src.features?.release1JobOrder === true,
 			release1Monitor: src.features?.release1Monitor === true,
 			joScreenV2: src.features?.joScreenV2 === true,
-			ceTpl1: src.features?.ceTpl1 === true
+			ceTpl1: src.features?.ceTpl1 === true,
+			ceTpl2: src.features?.ceTpl2 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -19974,6 +19977,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									totalAmount: fmt(officialTotal),
 									project: resolvedProject,
 									users,
+									pendingTags: ceTpl2On,
 									onProject: (patch) => dispatch({
 										type: "PATCH_PROJECT_INFO",
 										patch
@@ -28568,6 +28572,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1JobOrderSales = release1JobOrderOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1MonitorOn = adminConfig.features?.release1Monitor === true;
 	ceTpl1On = adminConfig.features?.ceTpl1 === true;
+	ceTpl2On = adminConfig.features?.ceTpl2 === true;
 	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
@@ -29793,7 +29798,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						discountPct: 0,
 						validityDays: 30
 					},
-					projectInfo: {
+					projectInfo: applyRouteSignatories(ceTpl2On ? {
 						docNo: id,
 						revNo: "",
 						revDate: "",
@@ -29805,7 +29810,19 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						electrical: !!rce?.electrical,
 						mechanical: !!rce?.mechanical,
 						days: rce?.estDurationDays || ""
-					},
+					} : {
+						docNo: id,
+						revNo: "",
+						revDate: "",
+						description: payload.project || "",
+						client: payload.client || rce?.customer || rce?.client || "",
+						location: payload.location || rce?.address || "",
+						date: today,
+						preparedBy: editorName,
+						electrical: !!rce?.electrical,
+						mechanical: !!rce?.mechanical,
+						days: rce?.estDurationDays || ""
+					}, ceTpl2On ? adminConfig?.approvalFlows?.ce : [], adminConfig?.users),
 					timeline: [timelineEntry({
 						who: editorName,
 						action: "Generated",
