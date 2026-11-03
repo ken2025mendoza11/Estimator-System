@@ -1,4 +1,3 @@
-// @ts-nocheck
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -10,7 +9,6 @@ const examples = JSON.parse(readFileSync(new URL("./__fixtures__/ce-examples.jso
 const direct = { model: "direct-v1", formula: {} };
 
 test("DOLE multipliers cover each day type and shift", () => {
-  const blank = {};
   const rows = [
     ["Regular", "Day", 700, 125, 1],
     ["Regular", "Night", 700, 137.5, 1.1],
@@ -23,10 +21,15 @@ test("DOLE multipliers cover each day type and shift", () => {
     ["Holiday on rest", "Day", 500, 338, 2.6],
     ["Holiday on rest", "Night", 500, 371.8, 2.86],
   ];
-  rows.forEach(([day, shift, rate, otPct, dayMult]) => {
-    const pay = dolePay(rate, day, shift, blank);
+  rows.forEach((row) => {
+    const day = String(row[0]);
+    const shift = String(row[1]);
+    const rate = Number(row[2]);
+    const otPct = Number(row[3]);
+    const dayMult = Number(row[4]);
+    const pay = dolePay(rate, day, shift);
     const hourly = rate / 8;
-    assert.equal(resolveDoleDay(day) === "regular" ? pay.otFactor : pay.otFactor, day === "Regular" ? 1.25 : 1.3);
+    assert.equal(pay.otFactor, day === "Regular" ? 1.25 : 1.3);
     assert.ok(Math.abs(pay.otRate - hourly * (otPct / 100)) < 0.02, `${day} ${shift} ot`);
     assert.ok(Math.abs(pay.dayRate - rate * dayMult) < 0.02, `${day} ${shift} day`);
   });
@@ -78,16 +81,18 @@ test("excel template has no unresolved names, no blank item rows, and the same t
   assert.deepEqual(filled.unresolved, []);
   assert.equal(filled.total, total);
   assert.equal(filled.pageTotals.BOTE, boteAmount);
-  assert.equal(filled.pageTotals.BOCM, 50);
-  assert.equal(filled.pageTotals.PPE, 30);
+  assert.equal(filled.pageTotals["BOCM"], 50);
+  assert.equal(filled.pageTotals["PPE"], 30);
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(filled.buffer);
+  await wb.xlsx.load(/** @type {any} */ (filled.buffer));
   const bote = wb.getWorksheet("BOTE");
+  const summary = wb.getWorksheet("Summary");
+  if (!bote || !summary) throw new Error("missing sheet");
   assert.equal(bote.getRow(3).getCell(7).value, boteAmount);
   assert.equal(bote.getRow(4).hidden, true);
   assert.equal(bote.getRow(3).hidden, false);
-  const summary = wb.getWorksheet("Summary");
   const totalCell = summary.getRow(14).getCell(3).value;
+  if (!totalCell || typeof totalCell !== "object" || !("result" in totalCell)) throw new Error("missing total");
   assert.equal(totalCell.result, total);
   assert.equal(typeof totalCell.result, "number");
 });

@@ -17,26 +17,13 @@ let readFormula = () => ({
   phicPct: 3,
 });
 
-/** @type {(dayType: string) => number} */
-let readDayType = (dayType) => {
-  const formula = readFormula();
-  if (dayType === "Holiday") return Number(formula.holidayMultiplier) || 2;
-  if (dayType === "Sun/Special") return Number(formula.sundayMultiplier) || 1.3;
-  return 1;
-};
-
 /** The editor injects its live formula. Missing model stays on today's maths. */
 export function setFormulaFns(fns) {
   if (fns && typeof fns.formulaNow === "function") readFormula = fns.formulaNow;
-  if (fns && typeof fns.dayTypeMultiplier === "function") readDayType = fns.dayTypeMultiplier;
 }
 
 function formulaNow() {
   return readFormula();
-}
-
-function dayTypeMultiplier(dayType) {
-  return readDayType(dayType);
 }
 
 function num2(v) {
@@ -168,7 +155,7 @@ function resolveDoleDay(dayType) {
  * @param {number} rate
  * @param {string} dayType
  * @param {string} shift
- * @param {Record<string, number>} formula
+ * @param {Record<string, number>=} formula
  */
 function dolePay(rate, dayType, shift, formula) {
   const f = directFormula(formula);

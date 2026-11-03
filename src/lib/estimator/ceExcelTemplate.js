@@ -1,4 +1,3 @@
-// @ts-nocheck
 /** Fill the official CE workbook. Numbers stay numbers. Blank item rows are hidden. */
 
 import { readFileSync } from "node:fs";
@@ -40,7 +39,7 @@ export function createCeTemplateWorkbook() {
     const first = 3;
     const last = 2 + PLACEHOLDERS;
     const col = String.fromCharCode(64 + amountCol);
-    const totalRow = headers.map(() => null);
+    const totalRow = /** @type {any[]} */ (headers.map(() => null));
     totalRow[0] = "TOTAL";
     totalRow[amountCol - 1] = { formula: `SUM(${col}${first}:${col}${last})`, result: 0 };
     sheet.addRow(totalRow);
@@ -52,14 +51,19 @@ export function createCeTemplateWorkbook() {
   return wb;
 }
 
+/** @param {unknown} value */
 function num(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * @param {import("exceljs").Worksheet} sheet
+ * @param {any[]} items
+ * @param {(item: any, index: number) => any[]} mapRow
+ */
 function writeItems(sheet, items, mapRow) {
-  const header = sheet.getRow(2).values.slice(1);
-  const amountCol = header.length;
+  const amountCol = mapRow({ }, 0).length;
   let total = 0;
   items.forEach((item, index) => {
     const row = sheet.getRow(3 + index);
@@ -75,14 +79,14 @@ function writeItems(sheet, items, mapRow) {
   for (let i = items.length; i < PLACEHOLDERS; i++) {
     const row = sheet.getRow(3 + i);
     row.hidden = true;
-    header.forEach((_, col) => {
-      row.getCell(col + 1).value = null;
-    });
+    for (let col = 1; col <= amountCol; col++) row.getCell(col).value = null;
   }
+  const rounded = Math.round(total * 100) / 100;
+  const letter = String.fromCharCode(64 + amountCol);
   const totalCell = sheet.getRow(3 + PLACEHOLDERS).getCell(amountCol);
-  totalCell.value = { formula: totalCell.value?.formula || totalCell.formula || `SUM(${String.fromCharCode(64 + amountCol)}3:${String.fromCharCode(64 + amountCol)}${2 + PLACEHOLDERS})`, result: Math.round(total * 100) / 100 };
+  totalCell.value = { formula: `SUM(${letter}3:${letter}${2 + PLACEHOLDERS})`, result: rounded };
   totalCell.numFmt = PESO;
-  return Math.round(total * 100) / 100;
+  return rounded;
 }
 
 /**
@@ -91,8 +95,8 @@ function writeItems(sheet, items, mapRow) {
 export async function fillCeTemplate(payload) {
   const src = payload || {};
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(readFileSync(templatePath()));
-  const unresolved = [];
+  await wb.xlsx.load(/** @type {any} */ (readFileSync(templatePath())));
+  const unresolved = /** @type {string[]} */ ([]);
   CE_TEMPLATE_SHEETS.forEach((name) => {
     if (!wb.getWorksheet(name)) unresolved.push(name);
   });
@@ -114,14 +118,17 @@ export async function fillCeTemplate(payload) {
     cell.numFmt = PESO;
   }
   const pages = src.pages || {};
+  /** @type {Record<string, number>} */
   const pageTotals = {};
-  if (wb.getWorksheet("BOL")) {
-    pageTotals.BOL = writeItems(wb.getWorksheet("BOL"), pages.BOL || [], (item, index) => [
+  const bol = wb.getWorksheet("BOL");
+  if (bol) {
+    pageTotals.BOL = writeItems(bol, pages.BOL || [], (item, index) => [
       index + 1, item.designation || "", num(item.qty), num(item.days), num(item.unitPrice), num(item.amount),
     ]);
   }
-  if (wb.getWorksheet("BOTE")) {
-    pageTotals.BOTE = writeItems(wb.getWorksheet("BOTE"), pages.BOTE || [], (item, index) => [
+  const bote = wb.getWorksheet("BOTE");
+  if (bote) {
+    pageTotals.BOTE = writeItems(bote, pages.BOTE || [], (item, index) => [
       index + 1, item.description || "", num(item.qty), num(item.days), num(item.unitPrice), num(item.electricity), num(item.amount),
     ]);
   }
@@ -132,11 +139,12 @@ export async function fillCeTemplate(payload) {
       index + 1, item.description || "", num(item.qty), num(item.unitPrice), num(item.amount),
     ]);
   });
-  if (wb.getWorksheet("MISC")) {
-    pageTotals.MISC = writeItems(wb.getWorksheet("MISC"), pages.MISC || [], (item, index) => [
+  const misc = wb.getWorksheet("MISC");
+  if (misc) {
+    pageTotals.MISC = writeItems(misc, pages.MISC || [], (item, index) => [
       index + 1, item.description || "", num(item.qty), num(item.days), num(item.unitPrice), num(item.amount),
     ]);
   }
-  const buffer = Buffer.from(await wb.xlsx.writeBuffer());
-  return { unresolved, total: num(src.total), pageTotals, buffer };
+  const raw = await wb.xlsx.writeBuffer();
+  return { unresolved, total: num(src.total), pageTotals, buffer: raw };
 }
