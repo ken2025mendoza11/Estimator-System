@@ -203,3 +203,29 @@ test("job order keeps lead time, mobilization, and annex A", () => {
   assert.equal(patched.jobOrder.mobilizationNote, "Hold");
   assert.equal(patched.jobOrder.joNo, created.jobOrder.joNo);
 });
+
+test("inspection screen follows the inspection PDF section order", () => {
+  const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+  const staff = readFileSync(new URL("../../components/staffModules.jsx", import.meta.url), "utf8");
+  const screen = app.slice(app.indexOf('className: "oif-sheet"'), app.indexOf("function ElCalculatorView"));
+  const order = ["A. JOB TYPE", "B. WORK PIECE MEASUREMENT", "C. SCOPE OF WORK", "D. MATERIALS", "G. ACTIVITY DURATION WITH MANPOWER", "H. PHOTOS", "I. REMARKS AND NOTES"];
+  let at = 0;
+  order.forEach((label) => {
+    const next = screen.indexOf(label, at);
+    assert.equal(next > at, true, label);
+    at = next;
+  });
+  assert.equal(screen.indexOf("H. PHOTOS") > screen.indexOf("A. JOB TYPE"), true);
+  const form = staff.slice(staff.indexOf("export function InspectionFormView"), staff.indexOf("const EL_STANDARDS"));
+  assert.equal(form.includes("RFQ NO."), false);
+  assert.equal(form.includes("ONSITE INSPECTOR"), false);
+  assert.equal(form.includes("RCE NO."), true);
+  assert.equal(form.includes("DATE INSPECTED"), true);
+  assert.equal(form.includes("CLIENT ADDRESS"), true);
+  at = 0;
+  ["A. JOB TYPE", "B. WORK PIECE MEASUREMENT", "C. SCOPE OF WORK", "D. MATERIALS", "G. ACTIVITY DURATION WITH MANPOWER", "H. PHOTOS"].forEach((label) => {
+    const next = form.indexOf(label, at);
+    assert.equal(next > at, true, label);
+    at = next;
+  });
+});

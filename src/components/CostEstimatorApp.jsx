@@ -2806,61 +2806,6 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						})] })
 					]
 				}),
-				/* @__PURE__ */ jsx("div", {
-					className: "oif-banner",
-					children: "H. PHOTOS"
-				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "oif-photos",
-					children: [
-						/* @__PURE__ */ jsx("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: () => photoRef.current?.click(),
-							children: "Upload photos"
-						}),
-						/* @__PURE__ */ jsx("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: () => cameraRef.current?.click(),
-							children: "Take photo"
-						}),
-						/* @__PURE__ */ jsx("input", {
-							ref: photoRef,
-							type: "file",
-							accept: "image/*",
-							multiple: true,
-							hidden: true,
-							onChange: addPhotos
-						}),
-						/* @__PURE__ */ jsx("input", {
-							ref: cameraRef,
-							type: "file",
-							accept: "image/*",
-							capture: "environment",
-							hidden: true,
-							onChange: addPhotos
-						}),
-						/* @__PURE__ */ jsx("div", {
-							className: "oif-photo-grid",
-							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
-								className: "oif-photo",
-								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
-									src: p.dataUrl,
-									alt: p.caption || p.name
-								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
-									className: "ce-input oif-caption",
-									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
-									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
-								}), /* @__PURE__ */ jsx("button", {
-									type: "button",
-									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
-									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
-								})]
-							}, p.id))
-						})
-					]
-				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
 					children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("div", {
@@ -3053,83 +2998,6 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 				}),
 				/* @__PURE__ */ jsx("div", {
 					className: "oif-banner",
-					children: "G. ACTIVITY DURATION WITH MANPOWER"
-				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "oif-block",
-					children: [
-						/* @__PURE__ */ jsxs("label", { children: ["A. Estimated project duration", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
-							value: form.duration,
-							onChange: (e) => patch({ duration: e.target.value }),
-							placeholder: "e.g. 12 days"
-						})] }),
-						/* @__PURE__ */ jsxs("table", {
-							className: "ce-table",
-							style: { marginTop: "0.6rem" },
-							children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
-								/* @__PURE__ */ jsx("th", { children: "Designation" }),
-								/* @__PURE__ */ jsx("th", { children: "No. of Persons" }),
-								/* @__PURE__ */ jsx("th", { children: "Designation" }),
-								/* @__PURE__ */ jsx("th", { children: "No. of Persons" })
-							] }) }), /* @__PURE__ */ jsx("tbody", { children: Array.from({ length: Math.ceil(form.manpower.length / 2) }).map((_, i) => {
-								const a = form.manpower[i * 2];
-								const b = form.manpower[i * 2 + 1];
-								return /* @__PURE__ */ jsxs("tr", { children: [
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
-										category: "BOL",
-										list: roles,
-										value: a.designation,
-										placeholder: "Role or free text",
-										inputClass: "ce-input",
-										onChange: (value) => updateManpower(a.id, "designation", value)
-									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										inputMode: "decimal",
-										placeholder: "Persons",
-										value: a.pax,
-										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
-									}), /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										placeholder: "Days / hours",
-										value: a.days || "",
-										onChange: (e) => updateManpower(a.id, "days", e.target.value)
-									})] }) }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
-										category: "BOL",
-										list: roles,
-										value: b.designation,
-										placeholder: "Role or free text",
-										inputClass: "ce-input",
-										onChange: (value) => updateManpower(b.id, "designation", value)
-									}) : null }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										inputMode: "decimal",
-										placeholder: "Persons",
-										value: b.pax,
-										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
-									}), /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										placeholder: "Days / hours",
-										value: b.days || "",
-										onChange: (e) => updateManpower(b.id, "days", e.target.value)
-									})] }) : null })
-								] }, a.id);
-							}) })]
-						}),
-						/* @__PURE__ */ jsxs("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: addManpower,
-							style: { marginTop: "0.5rem" },
-							children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manpower row"]
-						})
-					]
-				}),
-				/* @__PURE__ */ jsx("div", {
-					className: "oif-banner",
 					children: "C. SCOPE OF WORK"
 				}),
 				/* @__PURE__ */ jsxs("div", {
@@ -3254,6 +3122,142 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							onChange: (e) => patch({ checklist: form.checklist.map((item) => item.id === row.id ? { ...item, remark: e.target.value } : item) })
 						})]
 					}, row.id))]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "G. ACTIVITY DURATION WITH MANPOWER"
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [
+						/* @__PURE__ */ jsxs("label", { children: ["A. Estimated project duration", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							value: form.duration,
+							onChange: (e) => patch({ duration: e.target.value }),
+							placeholder: "e.g. 12 days"
+						})] }),
+						/* @__PURE__ */ jsxs("table", {
+							className: "ce-table",
+							style: { marginTop: "0.6rem" },
+							children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+								/* @__PURE__ */ jsx("th", { children: "Designation" }),
+								/* @__PURE__ */ jsx("th", { children: "No. of Persons" }),
+								/* @__PURE__ */ jsx("th", { children: "Designation" }),
+								/* @__PURE__ */ jsx("th", { children: "No. of Persons" })
+							] }) }), /* @__PURE__ */ jsx("tbody", { children: Array.from({ length: Math.ceil(form.manpower.length / 2) }).map((_, i) => {
+								const a = form.manpower[i * 2];
+								const b = form.manpower[i * 2 + 1];
+								return /* @__PURE__ */ jsxs("tr", { children: [
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
+										value: a.designation,
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(a.id, "designation", value)
+									}) }),
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										inputMode: "decimal",
+										placeholder: "Persons",
+										value: a.pax,
+										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										placeholder: "Days / hours",
+										value: a.days || "",
+										onChange: (e) => updateManpower(a.id, "days", e.target.value)
+									})] }) }),
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
+										value: b.designation,
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(b.id, "designation", value)
+									}) : null }),
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										inputMode: "decimal",
+										placeholder: "Persons",
+										value: b.pax,
+										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										placeholder: "Days / hours",
+										value: b.days || "",
+										onChange: (e) => updateManpower(b.id, "days", e.target.value)
+									})] }) : null })
+								] }, a.id);
+							}) })]
+						}),
+						/* @__PURE__ */ jsxs("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: addManpower,
+							style: { marginTop: "0.5rem" },
+							children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manpower row"]
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "H. PHOTOS"
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-photos",
+					children: [
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => photoRef.current?.click(),
+							children: "Upload photos"
+						}),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => cameraRef.current?.click(),
+							children: "Take photo"
+						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: photoRef,
+							type: "file",
+							accept: "image/*",
+							multiple: true,
+							hidden: true,
+							onChange: addPhotos
+						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: cameraRef,
+							type: "file",
+							accept: "image/*",
+							capture: "environment",
+							hidden: true,
+							onChange: addPhotos
+						}),
+						/* @__PURE__ */ jsx("div", {
+							className: "oif-photo-grid",
+							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
+								className: "oif-photo",
+								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
+									src: p.dataUrl,
+									alt: p.caption || p.name
+								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input oif-caption",
+									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
+									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
+								}), /* @__PURE__ */ jsx("button", {
+									type: "button",
+									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
+									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
+								})]
+							}, p.id))
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "I. REMARKS AND NOTES"
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-block",

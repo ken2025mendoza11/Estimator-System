@@ -741,7 +741,7 @@ export function InspectionReportsView({
               <th>Customer</th>
               <th>Project</th>
               <th>Inspector</th>
-              <th>RFQ No.</th>
+              <th>RCE No.</th>
             </tr>
           </thead>
           <tbody>
@@ -756,7 +756,7 @@ export function InspectionReportsView({
                 <td>{r.customerName || '—'}</td>
                 <td>{r.projectDescription || '—'}</td>
                 <td>{r.onsiteInspector || '—'}</td>
-                <td>{r.rfqNo || '—'}</td>
+                <td>{r.rceNo || r.rfqNo || '—'}</td>
               </tr>
             ))}
             {reports.length === 0 && (
@@ -842,12 +842,12 @@ export function InspectionFormView({ initial, onBack, onSave }) {
         <div className="oif-title">ONSITE INSPECTION FORM</div>
         <div className="oif-headgrid">
           <label>
-            DATE
+            DATE INSPECTED
             <input
               className="ce-input"
               type="date"
-              value={form.date}
-              onChange={(e) => patch({ date: e.target.value })}
+              value={form.dateInspected || form.date}
+              onChange={(e) => patch({ date: e.target.value, dateInspected: e.target.value })}
             />
           </label>
           <label>
@@ -867,11 +867,11 @@ export function InspectionFormView({ initial, onBack, onSave }) {
             />
           </label>
           <label>
-            RFQ NO.
+            RCE NO.
             <input
               className="ce-input"
-              value={form.rfqNo}
-              onChange={(e) => patch({ rfqNo: e.target.value })}
+              value={form.rceNo || form.rfqNo || ''}
+              onChange={(e) => patch({ rceNo: e.target.value, rfqNo: e.target.value })}
             />
           </label>
           <label>
@@ -883,19 +883,19 @@ export function InspectionFormView({ initial, onBack, onSave }) {
             />
           </label>
           <label>
+            CLIENT ADDRESS
+            <input
+              className="ce-input"
+              value={form.clientAddress || form.customerAddress || ''}
+              onChange={(e) => patch({ clientAddress: e.target.value, customerAddress: e.target.value })}
+            />
+          </label>
+          <label>
             CUSTOMER REPRESENTATIVE
             <input
               className="ce-input"
               value={form.customerRep}
               onChange={(e) => patch({ customerRep: e.target.value })}
-            />
-          </label>
-          <label>
-            ONSITE INSPECTOR
-            <input
-              className="ce-input"
-              value={form.onsiteInspector}
-              onChange={(e) => patch({ onsiteInspector: e.target.value })}
             />
           </label>
           <label>
@@ -908,49 +908,10 @@ export function InspectionFormView({ initial, onBack, onSave }) {
           </label>
         </div>
 
-        <div className="oif-banner">A. PHOTOS</div>
-        <div className="oif-photos">
-          <button
-            type="button"
-            className="ce-btn-ghost ce-btn-sm"
-            onClick={() => photoRef.current?.click()}
-          >
-            Upload photos
-          </button>
-          <input
-            ref={photoRef}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={addPhotos}
-          />
-          <div className="oif-photo-grid">
-            {(form.photos || []).map((p) => (
-              <div key={p.id} className="oif-photo">
-                {p.dataUrl ? (
-                  <img src={p.dataUrl} alt={p.name} />
-                ) : (
-                  <span>{p.name}</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    patch({
-                      photos: form.photos.filter((x) => x.id !== p.id),
-                    })
-                  }
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
 
         <div className="oif-split">
           <div>
-            <div className="oif-banner">B. SCOPE OF WORK</div>
+            <div className="oif-banner">A. JOB TYPE</div>
             <div className="oif-block">
               <span className="ce-field-label">Activity</span>
               <div className="oif-checks">
@@ -1022,7 +983,7 @@ export function InspectionFormView({ initial, onBack, onSave }) {
             </div>
           </div>
           <div>
-            <div className="oif-banner">C. WORKPIECE MEASUREMENTS</div>
+            <div className="oif-banner">B. WORK PIECE MEASUREMENT</div>
             <div className="oif-block oif-meas">
               <label>
                 A. Quantity
@@ -1119,7 +1080,48 @@ export function InspectionFormView({ initial, onBack, onSave }) {
           </div>
         </div>
 
-        <div className="oif-banner">D. ONSITE ACTIVITY</div>
+        <div className="oif-banner">C. SCOPE OF WORK</div>
+        <div className="oif-split">
+          <textarea
+            className="ce-input ce-notes-box"
+            rows={10}
+            value={form.scopeLeft}
+            onChange={(e) => patch({ scopeLeft: e.target.value })}
+          />
+          <textarea
+            className="ce-input ce-notes-box"
+            rows={10}
+            value={form.scopeRight}
+            onChange={(e) => patch({ scopeRight: e.target.value })}
+          />
+        </div>
+
+        <div className="oif-banner">D. MATERIALS · E. CONSUMABLES · F. TOOLS AND EQUIPMENT</div>
+        <div className="oif-split">
+          <textarea
+            className="ce-input ce-notes-box"
+            rows={8}
+            placeholder="D. Materials"
+            value={form.materialsLeft}
+            onChange={(e) => patch({ materialsLeft: e.target.value })}
+          />
+          <textarea
+            className="ce-input ce-notes-box"
+            rows={8}
+            placeholder="E. Consumables"
+            value={form.consumablesText || ''}
+            onChange={(e) => patch({ consumablesText: e.target.value })}
+          />
+          <textarea
+            className="ce-input ce-notes-box"
+            rows={8}
+            placeholder="F. Tools and equipment"
+            value={form.materialsRight}
+            onChange={(e) => patch({ materialsRight: e.target.value })}
+          />
+        </div>
+
+        <div className="oif-banner">G. ACTIVITY DURATION WITH MANPOWER</div>
         <div className="oif-block">
           <label>
             A. Estimated project duration
@@ -1202,38 +1204,44 @@ export function InspectionFormView({ initial, onBack, onSave }) {
           </button>
         </div>
 
-        <div className="oif-banner">E. SCOPE OF WORK</div>
-        <div className="oif-split">
-          <textarea
-            className="ce-input ce-notes-box"
-            rows={10}
-            value={form.scopeLeft}
-            onChange={(e) => patch({ scopeLeft: e.target.value })}
+        <div className="oif-banner">H. PHOTOS</div>
+        <div className="oif-photos">
+          <button
+            type="button"
+            className="ce-btn-ghost ce-btn-sm"
+            onClick={() => photoRef.current?.click()}
+          >
+            Upload photos
+          </button>
+          <input
+            ref={photoRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={addPhotos}
           />
-          <textarea
-            className="ce-input ce-notes-box"
-            rows={10}
-            value={form.scopeRight}
-            onChange={(e) => patch({ scopeRight: e.target.value })}
-          />
-        </div>
-
-        <div className="oif-banner">
-          F. ESTIMATED MATERIALS, CONSUMABLES, TOOLS AND EQUIPMENT
-        </div>
-        <div className="oif-split">
-          <textarea
-            className="ce-input ce-notes-box"
-            rows={10}
-            value={form.materialsLeft}
-            onChange={(e) => patch({ materialsLeft: e.target.value })}
-          />
-          <textarea
-            className="ce-input ce-notes-box"
-            rows={10}
-            value={form.materialsRight}
-            onChange={(e) => patch({ materialsRight: e.target.value })}
-          />
+          <div className="oif-photo-grid">
+            {(form.photos || []).map((p) => (
+              <div key={p.id} className="oif-photo">
+                {p.dataUrl ? (
+                  <img src={p.dataUrl} alt={p.name} />
+                ) : (
+                  <span>{p.name}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    patch({
+                      photos: form.photos.filter((x) => x.id !== p.id),
+                    })
+                  }
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
