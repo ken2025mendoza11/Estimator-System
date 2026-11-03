@@ -1282,3 +1282,7 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-sticky-scroller{max-height:calc(100dvh - 6rem)}
 }
 .ce-sign-pending{margin-left:.4rem;font-size:.65rem;font-weight:700;letter-spacing:.04em;color:#a23a2e}
+.ce-for-approval{color:#a23a2e;font-weight:800}
+.ce-submit-pulse{animation:ceSubmitPulse 1.2s ease}
+@keyframes ceSubmitPulse{0%{transform:scale(1)}40%{transform:scale(1.04)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.ce-submit-pulse{animation:none}}

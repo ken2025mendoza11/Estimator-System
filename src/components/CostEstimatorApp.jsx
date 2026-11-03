@@ -76,6 +76,7 @@ import { orderExportSections, refreshSchedule, scheduleExportSection } from "../
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
+import { ceWithdrawAllowed, planCeWithdraw } from "../lib/estimator/ceWithdraw";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
@@ -95,6 +96,7 @@ let release1JobOrderSales = false;
 let release1MonitorOn = false;
 let ceTpl1On = false;
 let ceTpl2On = false;
+let ceTpl3On = false;
 let release1MonitorSales = false;
 let release1CanReassign = false;
 let release1ActorId = "";
@@ -4871,7 +4873,8 @@ function defaultAdminConfig() {
 			release1Monitor: false,
 			joScreenV2: false,
 			ceTpl1: false,
-			ceTpl2: false
+			ceTpl2: false,
+			ceTpl3: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4996,7 +4999,8 @@ function normalizeAdminConfig(raw) {
 			release1Monitor: src.features?.release1Monitor === true,
 			joScreenV2: src.features?.joScreenV2 === true,
 			ceTpl1: src.features?.ceTpl1 === true,
-			ceTpl2: src.features?.ceTpl2 === true
+			ceTpl2: src.features?.ceTpl2 === true,
+			ceTpl3: src.features?.ceTpl3 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -17796,7 +17800,7 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 								}
 								setCeStatus(v);
 							},
-							className: "ce-status-select",
+							className: "ce-status-select" + (ceTpl3On && String(ceStatus).toLowerCase() === "for approval" ? " ce-for-approval" : ""),
 							title: "People may set Park, Wait for info, Sourcing, or No quote",
 							children: [!PEOPLE_SETTABLE.includes(ceStatus) && /* @__PURE__ */ jsx("option", {
 								value: ceStatus,
@@ -18560,7 +18564,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, markup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null, ceOptions = [], release1Message = "" }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, markup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null, ceOptions = [], release1Message = "", onCeWithdraw = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -18662,6 +18666,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const summaryEditsRef = useRef({});
 	const [sowText, setSowText] = useState(() => ceData?.sowText || "");
 	const [ceStatus, setCeStatus] = useState(() => ceData?.ceStatus || status || "Draft");
+	const [submitPulse, setSubmitPulse] = useState(false);
+	const pulseSubmit = () => {
+		if (ceTpl3On !== true) return;
+		if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		setSubmitPulse(true);
+		window.setTimeout(() => setSubmitPulse(false), 1200);
+	};
 	const estimateOpen = ceEditorOpen(ceStatus) && !readOnly && !isEditorLocked;
 	const [checkerOpen, setCheckerOpen] = useState(false);
 	const [ackWarnings, setAckWarnings] = useState(false);
@@ -19684,6 +19695,20 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								onClick: () => onNotify?.(ceData?.id),
 								children: "Notify"
 							}),
+							ceTpl3On && ceWithdrawAllowed({ status: ceStatus, approval: approvalNow, projectInfo: state.projectInfo }, true) && /* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost ce-btn-sm",
+								type: "button",
+								onClick: () => {
+									void askReason({ title: "Withdraw", label: "Withdraw reason", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										const ok = onCeWithdraw?.(ceData?.id, asked.text);
+										if (ok === false) return;
+										setCeStatus("Draft");
+										onStatusChange?.("Draft");
+									});
+								},
+								children: "Withdraw"
+							}),
 							ceStatus === "For approval" && !approvalV2 && canActOnStep(currentApprovalStep(approvalNow), actingLevel) && /* @__PURE__ */ jsxs("span", {
 								className: "ce-award-box",
 								children: [/* @__PURE__ */ jsx("button", {
@@ -20274,6 +20299,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 					if (!canSubmit(report, { checked: ackWarnings, reason: warnReason }).ok || readOnly) return;
 					setCeStatus("For approval");
 					onStatusChange?.("For approval");
+					pulseSubmit();
 					onSubmitApproval?.(ceData?.id, state.meta?.statusNote || "");
 					saveVersion(report);
 					setCheckerOpen(false);
@@ -20373,12 +20399,13 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									children: "Back to editor"
 								}), /* @__PURE__ */ jsx("button", {
 									type: "button",
-									className: "ce-btn-primary",
+									className: "ce-btn-primary" + (submitPulse ? " ce-submit-pulse" : ""),
 									disabled: !canPass,
 									onClick: () => {
 										if (readOnly) return;
 										setCeStatus("For approval");
 										onStatusChange?.("For approval");
+										pulseSubmit();
 										onSubmitApproval?.(ceData?.id, state.meta?.statusNote || "");
 										saveVersion();
 										setCheckerOpen(false);
@@ -28573,6 +28600,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1MonitorOn = adminConfig.features?.release1Monitor === true;
 	ceTpl1On = adminConfig.features?.ceTpl1 === true;
 	ceTpl2On = adminConfig.features?.ceTpl2 === true;
+	ceTpl3On = adminConfig.features?.ceTpl3 === true;
 	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
@@ -30331,6 +30359,45 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			view: "editor"
 		});
 	};
+	const handleCeWithdraw = (ceId, remarks) => {
+		if (adminConfig?.features?.ceTpl3 !== true) return false;
+		const ce = (ceList || []).find((row) => row.id === ceId) || {};
+		const doc = documents[ceId] || {};
+		const planned = planCeWithdraw({
+			...ce,
+			...doc,
+			status: ce.status || doc.ceStatus,
+			approval: doc.approval || ce.approval,
+			projectInfo: doc.projectInfo
+		}, { who: editorName, remarks });
+		if (!planned.ok) {
+			window.alert(planned.message || "Withdraw is closed.");
+			return false;
+		}
+		setCeList((prev) => prev.map((row) => row.id === ceId ? { ...row, status: "Draft", approval: planned.approval } : row));
+		setDocuments((prev) => {
+			const current = prev[ceId] || {};
+			return {
+				...prev,
+				[ceId]: {
+					...current,
+					ceStatus: "Draft",
+					approval: planned.approval,
+					projectInfo: planned.projectInfo,
+					timeline: appendTimeline(current.timeline, timelineEntry(planned.entry))
+				}
+			};
+		});
+		if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: "Draft" } : cur);
+		notice({
+			type: NOTICE_EVENTS.APPROVAL,
+			title: "CE withdrawn",
+			body: `${ceId}: ${remarks}`,
+			ceId,
+			view: "editor"
+		});
+		return true;
+	};
 	const approvalWho = () => release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName };
 	const salesOwnerForCe = (ceId, doc) => {
 		const ce = (ceList || []).find((row) => row.id === ceId);
@@ -31615,6 +31682,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						users: (adminConfig.users || []).filter((u) => u.status !== "inactive"),
 						actingLevel,
 						onSubmitApproval: handleCeSubmitApproval,
+						onCeWithdraw: handleCeWithdraw,
 						onApprovalDecision: handleCeApprovalDecision,
 						onDocumentChange: handleDocumentChange,
 						documentControl: adminConfig.documentControl,

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { freezeOffsets, freezePlan, stickyBarVisible } from "./stickyTable.js";
 import { applyRouteSignatories, routeSignatories, signatoryPending } from "./ceSignatories.js";
+import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw } from "./ceWithdraw.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -63,4 +64,35 @@ test("a new CE signatory block is filled from the approval route and stays unsig
 	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
 	assert.equal(app.includes("ceTpl2: false"), true);
 	assert.equal(seed.includes("ceTpl2: true"), true);
+});
+
+test("CE withdraw is open before the final signature and blocked after it", () => {
+	const open = {
+		status: "For approval",
+		approval: { status: "in-progress", steps: [{ decision: "" }, { decision: "", isFinal: true }] },
+		projectInfo: { preparedStamp: "Ada 2026-11-03 09:00" },
+	};
+	const middle = {
+		status: "For approval",
+		approval: { status: "in-progress", steps: [{ decision: "approve" }, { decision: "", isFinal: true }] },
+	};
+	const done = {
+		status: "Done",
+		approval: { status: "accepted", steps: [{ decision: "approve", isFinal: true }] },
+	};
+	assert.equal(ceWithdrawAllowed(open, true), true);
+	assert.equal(ceWithdrawAllowed(middle, true), true);
+	assert.equal(ceWithdrawAllowed(done, true), false);
+	assert.equal(ceWithdrawAllowed(open, false), false);
+	assert.equal(ceReviseOnly(open), false);
+	assert.equal(ceReviseOnly(done), true);
+	const planned = planCeWithdraw(open, { who: "ada", remarks: "Wrong client" });
+	assert.equal(planned.ok, true);
+	assert.equal(planned.status, "Draft");
+	assert.equal(planned.projectInfo.preparedStamp, "");
+	assert.equal(planned.approval.steps.every((/** @type {any} */ step) => step.decision === ""), true);
+	assert.equal(planned.entry.action, "Withdrawn");
+	assert.equal(planned.notify, true);
+	assert.equal(planCeWithdraw(done, { who: "ada", remarks: "Too late" }).ok, false);
+	assert.equal(planCeWithdraw(open, { who: "ada", remarks: "" }).ok, false);
 });
