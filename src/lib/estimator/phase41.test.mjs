@@ -110,6 +110,7 @@ test("excel page totals match the summary, with no blank item rows", async () =>
   assert.equal(cell("L27"), filled.pageTotals.PPE);
   assert.equal(cell("L36"), total);
   assert.equal(summary.getRow(24).hidden, false);
+  /** @param {number} row */
   const label = (row) => [summary.getCell(`B${row}`).value, summary.getCell(`C${row}`).value, summary.getCell(`D${row}`).value].map((value) => String(value || "")).join(" ");
   assert.equal(label(15).includes("MOBILIZATION"), true);
   assert.equal(label(16).includes("DEMOBILIZATION"), true);
@@ -127,15 +128,23 @@ test("each CE page total equals its summary line", async () => {
   const { createServer } = await import("vite");
   const react = (await import("@vitejs/plugin-react")).default;
   const { fileURLToPath } = await import("node:url");
-  if (!globalThis.document) {
+  const host = /** @type {any} */ (globalThis);
+  if (!host.document) {
     const el = () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {}, click() {}, classList: { add() {}, remove() {} } });
-    globalThis.document = { createElement: el, body: el(), querySelector() { return null; }, documentElement: el() };
+    host.document = { createElement: el, body: el(), querySelector() { return null; }, documentElement: el() };
   }
-  if (!globalThis.localStorage) {
+  if (!host.localStorage) {
     const box = new Map();
-    globalThis.localStorage = { getItem: (key) => box.get(key) || null, setItem: (key, value) => box.set(key, String(value)), removeItem: (key) => box.delete(key) };
+    host.localStorage = {
+      /** @param {string} key */
+      getItem(key) { return box.get(key) || null; },
+      /** @param {string} key @param {string} value */
+      setItem(key, value) { box.set(key, String(value)); },
+      /** @param {string} key */
+      removeItem(key) { box.delete(key); },
+    };
   }
-  if (!globalThis.window) globalThis.window = globalThis;
+  if (!host.window) host.window = host;
   const root = fileURLToPath(new URL("../../../", import.meta.url));
   const vite = await createServer({
     configFile: false,
@@ -228,4 +237,16 @@ test("inspection screen follows the inspection PDF section order", () => {
     assert.equal(next > at, true, label);
     at = next;
   });
+});
+
+test("the new job order screen stays behind joScreenV2", () => {
+  const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+  const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../components/JobOrderPanel.jsx", import.meta.url), "utf8");
+  assert.equal(app.includes("joScreenV2: false"), true);
+  assert.equal(app.includes("joScreenV2: src.features?.joScreenV2 === true"), true);
+  assert.equal(app.includes("joScreenV2: adminConfig?.features?.joScreenV2 === true"), true);
+  assert.equal(seed.includes("joScreenV2: true"), true);
+  assert.equal(panel.includes("props.joScreenV2 === true"), true);
+  assert.equal(panel.includes("function JobOrderPanelLegacy"), true);
 });

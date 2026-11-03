@@ -4865,7 +4865,8 @@ function defaultAdminConfig() {
 			release1Markup: false,
 			release1Proposal: false,
 			release1JobOrder: false,
-			release1Monitor: false
+			release1Monitor: false,
+			joScreenV2: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4987,7 +4988,8 @@ function normalizeAdminConfig(raw) {
 			release1Markup: src.features?.release1Markup === true,
 			release1Proposal: src.features?.release1Proposal === true,
 			release1JobOrder: src.features?.release1JobOrder === true,
-			release1Monitor: src.features?.release1Monitor === true
+			release1Monitor: src.features?.release1Monitor === true,
+			joScreenV2: src.features?.joScreenV2 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -19414,6 +19416,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 					salesperson: editingUser || ""
 				},
 				buildPackPdf: async (draft) => exportJobOrderPackPdf(draft, users, draft?.annexA === false ? null : prepareExportData(), { logo: documentControl?.logoDataUrl || "" }),
+				joScreenV2: adminConfig?.features?.joScreenV2 === true,
 				onJobOrder
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {

@@ -127,7 +127,12 @@ const joPdf = await exportJobOrderPackPdf({
 	ceIds: ["CE-SAMPLE"],
 	annexA: true,
 	status: "Draft",
-}, [{ userId: "sales-1", name: "Test Sales" }], data, {});
+	steps: [{ isFinal: true, byUserId: "mgr-1", forUserId: "backup-1", at: "2026-11-03T08:00:00.000Z" }],
+}, [
+	{ userId: "sales-1", name: "Test Sales" },
+	{ userId: "mgr-1", name: "Test Approver" },
+	{ userId: "backup-1", name: "Backup Approver" },
+], data, {});
 writeFileSync(new URL("jo-sample.pdf", outDir), Buffer.from(joPdf));
 const joRaw = Buffer.from(joPdf).toString("latin1");
 if (!joRaw.includes("JOB ORDER FORM") && !joRaw.includes("REF. CE")) {
@@ -135,6 +140,9 @@ if (!joRaw.includes("JOB ORDER FORM") && !joRaw.includes("REF. CE")) {
 }
 if (!joRaw.includes("FOR JO")) {
 	throw new Error("JO annex is missing the prices-hidden footer");
+}
+if (!joRaw.includes("for Backup Approver")) {
+	throw new Error("JO PDF is missing the backup approver for line");
 }
 
 console.log("rendered sample-outputs");
