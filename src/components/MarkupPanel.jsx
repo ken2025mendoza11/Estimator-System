@@ -39,6 +39,7 @@ export function MarkupPanel({ markup, sales, actorId, users, onMarkup }) {
 	return (
 		<div className="ce-card wiz-card">
 			<h3 className="ce-serif">Markup</h3>
+			<p className="ce-mono">Markup no. {markup.markupNo || ""}</p>
 			<p className="wiz-hint">Direct cost only. Selling = direct cost × (1 + profit + contingency + mark up).</p>
 			<p>Direct cost {money(markup.directCost)}</p>
 			<p>Selling {money(markup.selling)} · {markup.status}</p>

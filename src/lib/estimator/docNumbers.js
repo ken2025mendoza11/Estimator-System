@@ -1,6 +1,7 @@
 /** Document number format shared by the client fallback and next_doc_no. */
 
 export const DOC_NUMBER_OFFLINE = "Connect to the internet to get a document number";
+export const DOC_NUMBER_RETRY = "Couldn't get a number, try again";
 
 export const QTY_CAP = 1e6;
 export const MONEY_CAP = 1e9;
@@ -134,4 +135,67 @@ export function blockedNumberReason(field, raw) {
   if (qty && n > QTY_CAP) return "Cannot be more than 1,000,000.";
   if (money && n > MONEY_CAP) return "Cannot be more than 1,000,000,000.";
   return "";
+}
+
+/**
+ * A server allocator must return a number. A missing RPC or any other failure
+ * does not fall back to a browser number.
+ * @param {() => Promise<unknown>} allocate
+ * @returns {Promise<string>}
+ */
+export async function issueDocNo(allocate) {
+  try {
+    const issued = await allocate();
+    const number = String(issued || "").trim();
+    if (number) return number;
+  } catch {
+    /* The caller shows DOC_NUMBER_RETRY and does not save. */
+  }
+  throw new Error(DOC_NUMBER_RETRY);
+}
+
+/**
+ * The stored number for one workspace document. Blank when the kind has none.
+ * @param {string} kind
+ * @param {any} payload
+ * @param {unknown} [id]
+ * @returns {string}
+ */
+export function payloadDocNumber(kind, payload, id) {
+  const key = String(kind || "").toLowerCase() === "oif" ? "inspection" : String(kind || "").toLowerCase();
+  const body = payload && typeof payload === "object" ? payload : {};
+  const document = body.document && typeof body.document === "object" ? body.document : {};
+  const info = document.projectInfo && typeof document.projectInfo === "object" ? document.projectInfo : {};
+  const summary = body.summary && typeof body.summary === "object" ? body.summary : {};
+  if (key === "rce") return String(body.rceNo || id || "").trim();
+  if (key === "inspection") return String(body.oifNo || id || "").trim();
+  if (key === "markup") return String(body.markupNo || id || "").trim();
+  if (key === "ce") return String(info.docNo || document.docNo || body.ceNo || summary.docNo || id || "").trim();
+  return "";
+}
+
+/**
+ * Same number, different document. The existing row is not overwritten.
+ * @param {any[] | null | undefined} rows
+ * @param {{ kind?: unknown, id?: unknown, payload?: any }} incoming
+ * @returns {{ ok: false, message: string } | null}
+ */
+export function numberIdentityClash(rows, incoming) {
+  const kind = String(incoming?.kind || "").toLowerCase() === "oif" ? "inspection" : String(incoming?.kind || "").toLowerCase();
+  const id = String(incoming?.id || "").trim();
+  const number = payloadDocNumber(kind, incoming?.payload, id).toLowerCase();
+  if (!kind || !number) return null;
+  const hit = (Array.isArray(rows) ? rows : []).find((row) => {
+    if (!row || row.deleted === true || row.deleted_at) return false;
+    const rowKind = String(row.kind || kind).toLowerCase() === "oif" ? "inspection" : String(row.kind || kind).toLowerCase();
+    if (rowKind !== kind) return false;
+    const rowId = String(row.id || row.doc_id || "").trim();
+    if (rowId && rowId === id) return false;
+    const payload = row.payload && typeof row.payload === "object" ? row.payload : row;
+    const other = payloadDocNumber(kind, payload, rowId).toLowerCase();
+    const otherId = rowId.toLowerCase();
+    return other === number || otherId === number;
+  });
+  if (!hit) return null;
+  return { ok: false, message: "That number is already used." };
 }

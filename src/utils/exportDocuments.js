@@ -338,6 +338,7 @@ export function exportIssueExcel(data = {}) {
   const meta = XLSX.utils.aoa_to_sheet([
     ['CE #', ceNumber],
     ['RCE', rceLabel],
+    ['Markup #', cover.markupNo || ''],
     ['Exported by', cover.exportedBy || ''],
     ['Timestamp', stamp],
     ['Grand total checksum', checksum],

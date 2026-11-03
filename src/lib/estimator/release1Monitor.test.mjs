@@ -37,6 +37,13 @@ test("a sales list shows status, age, and the account that holds it", () => {
 			dateIssued: "2026-10-26",
 			ownerId: "sales-2",
 		}],
+		markups: [{
+			markupNo: "CE-C1-2026-014-MK",
+			ceNo: "CE-C1-2026-014",
+			status: "Draft",
+			ownerId: "sales-1",
+			timeline: [{ at: "2026-10-27T00:00:00.000Z" }],
+		}],
 	});
 	assert.equal(rows[0].kind, "proposal");
 	assert.equal(rows[0].status, "Submitted");
@@ -46,6 +53,8 @@ test("a sales list shows status, age, and the account that holds it", () => {
 	assert.equal(rows[1].id, "JO-007-SW-ABC-26-0012");
 	assert.equal(rows[1].ageDays, 2);
 	assert.equal(rows[1].holderId, "sales-2");
+	assert.equal(rows[2].kind, "markup");
+	assert.equal(rows[2].id, "CE-C1-2026-014-MK");
 	assert.equal(holderId({ currentIndex: 0, steps: [{ userId: "appr-1" }] }), "appr-1");
 });
 

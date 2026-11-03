@@ -31,7 +31,7 @@ import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatr
 import { cachedSignature, ceBlocksInspectionLines, loadSignatureImage, needsDraftWatermark, rememberSignature, shouldLoadExportSignatures, signaturePeople, storeSignatureImage } from "../lib/estimator/signatures";
 import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
 import { phStamp, phYear } from "../lib/estimator/phTime";
-import { DOC_NUMBER_OFFLINE, blockedNumberReason, missingDocNumberRpc } from "../lib/estimator/docNumbers";
+import { DOC_NUMBER_OFFLINE, DOC_NUMBER_RETRY, blockedNumberReason, issueDocNo, numberIdentityClash } from "../lib/estimator/docNumbers";
 import { remapCloneIds } from "../lib/estimator/cloneIds";
 import { brandingVars, cleanBranding } from "../lib/estimator/branding";
 import { combinedTotal, familyKey, isAwarded, missingSuffixRpc, parseCeNumber, planSuffix, stemOf, urgentPlan } from "../lib/estimator/docSuffixes";
@@ -39,7 +39,7 @@ import { foldFamilyRows } from "../lib/estimator/monitoringFamilies";
 import { cleanHolidayDate } from "../lib/estimator/phCalendar";
 import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/estimator/priceCheck";
 import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
-import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr, releaseProposalPr } from "../lib/estimator/supabase-workspace";
+import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr, claimUserDocNo, releaseProposalPr } from "../lib/estimator/supabase-workspace";
 import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
 import { Phase6Admin } from "./Phase6Admin";
 import { Phase6Reports } from "./Phase6Reports";
@@ -187,7 +187,7 @@ function drawSummaryInfo(doc, info, x, y, width) {
 	const c4 = Math.round(width * .2 * 10) / 10;
 	const c2 = Math.round((width - c1 - c3 - c4) * 10) / 10;
 	const ceCell = {
-		content: `COST ESTIMATE (CE) NUMBER\n${info.docNo || ""}`,
+		content: `COST ESTIMATE (CE) NUMBER\n${info.docNo || ""}${info.markupNo ? `\nMARKUP NO.\n${info.markupNo}` : ""}`,
 		colSpan: 2,
 		styles: {
 			fontStyle: "bold",
@@ -1207,6 +1207,7 @@ function exportIssueExcel(data = {}) {
 	const metaRows = [
 		["CE #", ceNumber],
 		["RCE", rceLabel2],
+		["Markup #", cover.markupNo || ""],
 		["Exported by", cover.exportedBy || ""],
 		["Timestamp", stamp],
 		["Grand total checksum", checksum]
@@ -3249,42 +3250,26 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 function ElCalculatorView(props) {
 	return React.createElement(ElCalculatorView$1, props);
 }
-function nextDocNo(prefix, list, field) {
-	const year = phYear();
-	const re = new RegExp(`(?:^|\\b)${prefix}-${year}-(\\d+)`, "i");
-	let max = 0;
-	const consider = (raw) => {
-		const m = String(raw || "").trim().match(re);
-		if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
+async function takeDocNo(kind, company) {
+	if (typeof navigator !== "undefined" && navigator.onLine === false) {
+		throw new Error(DOC_NUMBER_RETRY);
+	}
+	const claimKind = kind === "oif" ? "inspection" : kind;
+	const claimIssued = async (number) => {
+		try {
+			return await claimUserDocNo(claimKind, number, number);
+		} catch {
+			throw new Error(DOC_NUMBER_RETRY);
+		}
 	};
-	(list || []).forEach((item) => {
-		if (item == null) return;
-		if (typeof item === "string") {
-			consider(item);
-			return;
-		}
-		consider(field ? item?.[field] : "");
-		consider(item?.id);
-		consider(item?.rceNo);
-		consider(item?.oifNo);
-		consider(item?.ceNo);
-		consider(item?.ceNumber);
-		consider(item?.docNo);
-		consider(item?.projectInfo?.docNo);
-	});
-	return `${prefix}-${year}-${String(max + 1).padStart(3, "0")}`;
-}
-function ceNumberSources(list, documents) {
-	const extra = [];
-	const docs = documents && typeof documents === "object" ? documents : {};
-	Object.entries(docs).forEach(([key, doc]) => {
-		extra.push(key);
-		if (doc && typeof doc === "object") {
-			extra.push(doc.projectInfo?.docNo);
-			extra.push(doc.docNo);
-		}
-	});
-	return [...list || [], ...extra];
+	const issued = await issueDocNo(() => allocateDocNumber(kind, company || "", phYear()));
+	const claimed = await claimIssued(issued);
+	if (claimed.ok || claimed.skipped) return issued;
+	if (!/already used/i.test(claimed.message || "")) throw new Error(claimed.message || DOC_NUMBER_RETRY);
+	const again = await issueDocNo(() => allocateDocNumber(kind, company || "", phYear()));
+	const second = await claimIssued(again);
+	if (second.ok || second.skipped) return again;
+	throw new Error(second.message || DOC_NUMBER_RETRY);
 }
 function companyDesignationName(companyKey, documentControl) {
 	const dc = documentControl || {};
@@ -3309,45 +3294,6 @@ function composedCeNumber(raw, companyKey, documentControl) {
 	const plain = id.match(/^CE-(\d{4})-(\d+)$/i);
 	if (!plain) return id;
 	return `CE-${code}-${plain[1]}-${String(plain[2]).padStart(3, "0")}`;
-}
-function nextCeNoForCompany(companyKey, ceList, documents, rceList, documentControl) {
-	const code = companyCodeFromDesignation(companyKey, documentControl);
-	if (!code) return nextDocNo("CE", ceNumberSources(ceList, documents));
-	const year = phYear();
-	const reCoded = new RegExp(`^CE-${code}-${year}-(\\d+)$`, "i");
-	const rePlain = new RegExp(`^CE-${year}-(\\d+)$`, "i");
-	let max = 0;
-	const take = (raw, countPlain) => {
-		const s = String(raw || "").trim();
-		const coded = s.match(reCoded);
-		if (coded) max = Math.max(max, parseInt(coded[1], 10) || 0);
-		else if (countPlain) {
-			const plain = s.match(rePlain);
-			if (plain) max = Math.max(max, parseInt(plain[1], 10) || 0);
-		}
-	};
-	(ceList || []).forEach((ce) => {
-		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === (ce?.rceId || ce?.rceNo));
-		const mine = (rce?.company || "") === companyKey;
-		take(ce?.id, mine);
-		take(ce?.docNo, mine);
-		const doc = documents?.[ce?.id];
-		take(doc?.projectInfo?.docNo, mine);
-		take(doc?.docNo, mine);
-	});
-	return `CE-${code}-${year}-${String(max + 1).padStart(3, "0")}`;
-}
-async function takeDocNo(kind, company, fallback) {
-	if (typeof navigator !== "undefined" && navigator.onLine === false) {
-		throw new Error(DOC_NUMBER_OFFLINE);
-	}
-	try {
-		const issued = await allocateDocNumber(kind, company || "", phYear());
-		if (issued) return issued;
-	} catch (err) {
-		if (!missingDocNumberRpc(err)) throw err;
-	}
-	return fallback();
 }
 function ceIsSealed(status, doc) {
 	const values = [status, doc?.ceStatus, doc?.status, doc?.approval?.status];
@@ -3691,6 +3637,7 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 			quantity: String(info.quantity || ""),
 			endUser: info.endUser || "",
 			docNo: docNoOut,
+			markupNo: row?.markupNo || info.markupNo || "",
 			revNo: info.revNo || version?.rev || "",
 			revDate: info.revDate || ""
 		},
@@ -18891,6 +18838,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				quantity: String(info.quantity || ""),
 				endUser: info.endUser || "",
 				docNo: docNoOut,
+				markupNo: ceData?.markupNo || info.markupNo || "",
 				revNo: info.revNo || "",
 				revDate: info.revDate || ""
 			},
@@ -19049,6 +18997,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				client: state.meta.client,
 				location: state.meta.location,
 				ceNumber: ceData?.id,
+				markupNo: ceData?.markupNo || "",
 				rceLabel: linkedRce ? `${linkedRce.rceNo || linkedRce.id} Rev ${linkedRce.revNo || 0}` : "",
 				date: state.meta.date,
 				validityDays: state.commercial?.validityDays || 30,
@@ -24843,6 +24792,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 							quantity: String(info.quantity || ""),
 							endUser: info.endUser || "",
 							docNo: info.docNo || approvalCe.id,
+							markupNo: approvalCe.markupNo || info.markupNo || "",
 							revNo: info.revNo || "",
 							revDate: info.revDate || ""
 						},
@@ -26028,10 +25978,12 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	useEffect(() => {
 		if (initialData || readOnly) return;
 		let cancelled = false;
-		takeDocNo("rce", "", () => nextDocNo("RCE", rceListRef.current)).then((rceNo) => {
+		takeDocNo("rce", "").then((rceNo) => {
 			if (cancelled || !rceNo) return;
 			setForm((prev) => prev.rceNo ? prev : { ...prev, rceNo });
-		}).catch(() => {});
+		}).catch((err) => {
+			if (!cancelled) setFieldErrors([err?.message || DOC_NUMBER_RETRY]);
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -26216,7 +26168,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	const handleSubmit = async () => {
 		if (readOnly) return;
 		if (!String(form.rceNo || "").trim()) {
-			setFieldErrors([typeof navigator !== "undefined" && navigator.onLine === false ? DOC_NUMBER_OFFLINE : "Waiting for a document number."]);
+			setFieldErrors([DOC_NUMBER_RETRY]);
 			return;
 		}
 		const hard = rceHardBlocks(form, company);
@@ -28101,13 +28053,16 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		return legacy && typeof legacy === "object" ? legacy : null;
 	};
 	const rememberMarkup = (markup) => {
-		const row = { ...markup, kind: "markup", id: markup.id || `${markup.ceId || "markup"}-MK` };
+		const row = { ...markup, kind: "markup", id: markup.markupNo || markup.id || `${markup.ceNo || markup.ceId || "markup"}-MK` };
 		setMarkups((prev) => {
 			const list = Array.isArray(prev) ? prev : [];
 			const index = list.findIndex((item) => item && (item.id === row.id || row.ceId && item.ceId === row.ceId));
 			if (index < 0) return [row, ...list];
 			return list.map((item, i) => i === index ? row : item);
 		});
+		if (row.ceId && row.markupNo) {
+			setCeList((prev) => prev.map((ce) => ce && ce.id === row.ceId ? { ...ce, markupNo: row.markupNo } : ce));
+		}
 		return row;
 	};
 	const primaryApproverName = (doc) => personName(doc?.steps?.[Number(doc?.currentIndex) || 0]?.userId, adminConfig.users || []);
@@ -28935,9 +28890,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		let id;
 		try {
 			const code = companyCodeFromDesignation(rce?.company || "", adminConfig.documentControl);
-			id = await takeDocNo("ce", code, () => nextCeNoForCompany(rce?.company || "", ceList, documents, rceList, adminConfig.documentControl));
+			id = await takeDocNo("ce", code);
 		} catch (err) {
-			window.alert(err?.message || DOC_NUMBER_OFFLINE);
+			window.alert(err?.message || DOC_NUMBER_RETRY);
 			return;
 		}
 		const suffixesOnCreate = adminConfig?.features?.docSuffixes === true;
@@ -29218,9 +29173,27 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		let id = form.id;
 		if (!id) {
 			try {
-				id = await takeDocNo("oif", "", () => nextDocNo("OIF", inspectionReports));
+				id = await takeDocNo("oif", "");
 			} catch (err) {
-				window.alert(err?.message || DOC_NUMBER_OFFLINE);
+				window.alert(err?.message || DOC_NUMBER_RETRY);
+				return;
+			}
+		}
+		const number = String(form.oifNo || id).trim();
+		const clash = numberIdentityClash((inspectionReports || []).map((row) => ({ ...row, kind: "inspection" })), { kind: "inspection", id, payload: { oifNo: number } });
+		if (clash) {
+			window.alert(clash.message);
+			return;
+		}
+		if (number.toLowerCase() !== String(id).toLowerCase()) {
+			try {
+				const claimed = await claimUserDocNo("inspection", id, number);
+				if (!claimed.ok) {
+					window.alert(claimed.skipped ? DOC_NUMBER_RETRY : (claimed.message || "That number is already used."));
+					return;
+				}
+			} catch {
+				window.alert(DOC_NUMBER_RETRY);
 				return;
 			}
 		}
@@ -29308,9 +29281,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (opts.andNew) {
 			let oifNo = "";
 			try {
-				oifNo = await takeDocNo("oif", "", () => nextDocNo("OIF", [...inspectionReports, { id, oifNo: form.oifNo || id }]));
+				oifNo = await takeDocNo("oif", "");
 			} catch (err) {
-				window.alert(err?.message || DOC_NUMBER_OFFLINE);
+				window.alert(err?.message || DOC_NUMBER_RETRY);
 				return;
 			}
 			setActiveOif({
@@ -29385,9 +29358,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		}
 		let id;
 		try {
-			id = await takeDocNo("ce", "", () => nextDocNo("CE", ceNumberSources(ceList, documents)));
+			id = await takeDocNo("ce", "");
 		} catch (err) {
-			window.alert(err?.message || DOC_NUMBER_OFFLINE);
+			window.alert(err?.message || DOC_NUMBER_RETRY);
 			return;
 		}
 		const today = todayLocal();
@@ -30079,7 +30052,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		let result = { ok: false, message: "Markup was not saved." };
 		if (action === "create") {
 			if (current) return;
-			result = createMarkup({ ceId, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100" });
+			const doc = documents[ceId] || {};
+			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || ceId;
+			result = createMarkup({ ceId, ceNo, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100" });
 		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
 		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
 		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
@@ -30200,7 +30175,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				clauses: adminConfig.proposalClauses,
 				header: "Proposal",
 				prDate: todayLocal(),
-				...payload || {}
+				...payload || {},
+				markupNo: markup.markupNo || "",
+				ceNo: markup.ceNo || payload?.ceNo || ""
 			});
 		} else if (action === "patch") {
 			if (payload?.prNo != null && current) {
@@ -30309,9 +30286,38 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				...payload || {}
 			});
 			if (result.ok && result.jobOrder) {
-				const claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				let claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				if (!claimed.ok && /already used/i.test(claimed.message || "")) {
+					try {
+						seq = await allocateJobOrderSeq(payload?.year || phYear()) || 0;
+					} catch (err) {
+						release1Note(err?.message || "JO number already used");
+						return;
+					}
+					if (!seq) {
+						release1Note(claimed.message || "JO number already used");
+						return;
+					}
+					result = createJobOrder({
+						byUserId: release1ActorId,
+						seq,
+						dateIssued: todayLocal(),
+						year: payload?.year || phYear(),
+						controlNo: proposal?.controlNo || "",
+						prNo: proposal?.prNo || "",
+						client: activeCE.client || "",
+						project: activeCE.project || "",
+						ceIds: [ceId],
+						...payload || {}
+					});
+					if (!result.ok || !result.jobOrder) {
+						release1Note(result?.message || "JO number already used");
+						return;
+					}
+					claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				}
 				if (!claimed.ok) {
-					release1Note(claimed.message || "That job order number is already used.");
+					release1Note(claimed.message || "JO number already used");
 					return;
 				}
 			}
@@ -30323,7 +30329,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (result.ok && result.jobOrder) {
 				const claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
 				if (!claimed.ok) {
-					release1Note(claimed.message || "That job order number is already used.");
+					release1Note(claimed.message || "JO number already used");
 					return;
 				}
 			}
@@ -30569,11 +30575,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const release1Now = new Date().toISOString();
 	const release1Users = adminConfig.users || [];
 	const release1MonitorView = release1MonitorOn ? {
-		sales: salesWorklist({ proposals, jobOrders, users: release1Users, now: release1Now }),
+		sales: salesWorklist({ proposals, jobOrders, markups, users: release1Users, now: release1Now }),
 		pending: pendingApprovals([
 			...(proposals || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "proposal" })),
 			...(jobOrders || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "jobOrder" })),
-			...(markups || []).filter((row) => row && row.status === "For approval").map((row) => ({ ...row, kind: "markup", id: row.ceId || row.id }))
+			...(markups || []).filter((row) => row && row.status === "For approval").map((row) => ({ ...row, kind: "markup", id: row.markupNo || row.ceId || row.id }))
 		], release1Now, release1Users),
 		dashboard: monitorDashboard({
 			proposals,
@@ -30825,7 +30831,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onStartRevision: handleReviseArchivedCE,
 						onNewCE: () => {
 							if (!numbersOnline) {
-								window.alert(DOC_NUMBER_OFFLINE);
+								window.alert(DOC_NUMBER_RETRY);
 								return;
 							}
 							setWizardRce(null);
@@ -30833,14 +30839,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						onNewInspection: async () => {
 							if (!numbersOnline) {
-								window.alert(DOC_NUMBER_OFFLINE);
+								window.alert(DOC_NUMBER_RETRY);
 								return;
 							}
 							let oifNo = "";
 							try {
-								oifNo = await takeDocNo("oif", "", () => nextDocNo("OIF", inspectionReports));
+								oifNo = await takeDocNo("oif", "");
 							} catch (err) {
-								window.alert(err?.message || DOC_NUMBER_OFFLINE);
+								window.alert(err?.message || DOC_NUMBER_RETRY);
 								return;
 							}
 							setActiveOif({ oifNo });
@@ -30849,7 +30855,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						onNewRCE: () => {
 							if (!numbersOnline) {
-								window.alert(DOC_NUMBER_OFFLINE);
+								window.alert(DOC_NUMBER_RETRY);
 								return;
 							}
 							setSelectedRCE(null);
@@ -31112,7 +31118,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onViewRCE: handleViewRCE,
 						onNewRCE: () => {
 							if (!numbersOnline) {
-								window.alert(DOC_NUMBER_OFFLINE);
+								window.alert(DOC_NUMBER_RETRY);
 								return;
 							}
 							setSelectedRCE(null);

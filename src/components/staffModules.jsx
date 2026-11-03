@@ -1692,29 +1692,6 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
   );
 }
 
-
-export function nextDocNo(prefix, list, field) {
-  const year = new Date().getFullYear();
-  const re = new RegExp(`^${prefix}-${year}-(\\d+)`, 'i');
-  let max = 0;
-  (list || []).forEach((item) => {
-    const candidates = [
-      typeof item === 'string' ? item : '',
-      field ? item?.[field] : '',
-      item?.id,
-      item?.rceNo,
-      item?.oifNo,
-    ];
-    candidates.forEach((raw) => {
-      const m = String(raw || '')
-        .trim()
-        .match(re);
-      if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
-    });
-  });
-  return `${prefix}-${year}-${String(max + 1).padStart(3, '0')}`;
-}
-
 export const NAV_GROUPS = [
   {
     id: 'my-dashboard',
