@@ -61,6 +61,7 @@ import { canGenerateProposal, cancelProposal, claimProposalNumber, createProposa
 import { ProposalPanel } from "./ProposalPanel";
 import { applyAward, applyCancel, canCancelJobOrder, canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
 import { JobOrderPanel } from "./JobOrderPanel";
+import { StickyTable } from "./StickyTable";
 import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
 import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
@@ -92,6 +93,7 @@ let release1ProposalSales = false;
 let release1JobOrderOn = false;
 let release1JobOrderSales = false;
 let release1MonitorOn = false;
+let ceTpl1On = false;
 let release1MonitorSales = false;
 let release1CanReassign = false;
 let release1ActorId = "";
@@ -4866,7 +4868,8 @@ function defaultAdminConfig() {
 			release1Proposal: false,
 			release1JobOrder: false,
 			release1Monitor: false,
-			joScreenV2: false
+			joScreenV2: false,
+			ceTpl1: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4989,7 +4992,8 @@ function normalizeAdminConfig(raw) {
 			release1Proposal: src.features?.release1Proposal === true,
 			release1JobOrder: src.features?.release1JobOrder === true,
 			release1Monitor: src.features?.release1Monitor === true,
-			joScreenV2: src.features?.joScreenV2 === true
+			joScreenV2: src.features?.joScreenV2 === true,
+			ceTpl1: src.features?.ceTpl1 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -20707,8 +20711,9 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 					{ label: "Days since visit", value: visitDays }
 				] })
 			}),
-			/* @__PURE__ */ jsx("div", {
+			/* @__PURE__ */ jsx(StickyTable, {
 				className: "ce-gridwrap dash-user-gridwrap oif-mon-grid",
+				enabled: ceTpl1On,
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-table db-resizable-table oif-mon-table",
 					children: [
@@ -22947,8 +22952,9 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 					})]
 				})
 			}),
-			/* @__PURE__ */ jsx("div", {
+			/* @__PURE__ */ jsx(StickyTable, {
 				className: "mon-table-container",
+				enabled: ceTpl1On,
 				children: /* @__PURE__ */ jsxs("table", {
 					className: variant === "active" ? profile === "monitor" ? "mon-table mon-active-table mon-ce-board" : "mon-table mon-active-table" : "mon-table",
 					children: variant === "active" ? [
@@ -24760,8 +24766,9 @@ Import anyway? Cancel skips the whole file.`)) return;
 					children: isAdmin ? "Review approval" : "View request"
 				})]
 			}),
-			/* @__PURE__ */ jsx("div", {
+			/* @__PURE__ */ jsx(StickyTable, {
 				className: "db-table-card",
+				enabled: ceTpl1On,
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "db-table db-resizable-table",
 					style: {
@@ -27660,7 +27667,7 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 				{ label: "Accepted", value: acceptedPct }
 			] })
 		}),
-		/* @__PURE__ */ jsx("div", { className: "mon-table-container", children: /* @__PURE__ */ jsxs("table", {
+		/* @__PURE__ */ jsx(StickyTable, { className: "mon-table-container", enabled: ceTpl1On, children: /* @__PURE__ */ jsxs("table", {
 			className: "ce-table rce-table rce-mon-table",
 			children: [
 				/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
@@ -28560,6 +28567,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	release1JobOrderOn = adminConfig.features?.release1JobOrder === true;
 	release1JobOrderSales = release1JobOrderOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1MonitorOn = adminConfig.features?.release1Monitor === true;
+	ceTpl1On = adminConfig.features?.ceTpl1 === true;
 	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
