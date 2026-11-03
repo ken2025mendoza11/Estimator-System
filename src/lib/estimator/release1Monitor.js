@@ -5,6 +5,7 @@ import { escalationDue } from "./reminders.js";
 import { speedDays, winRate } from "./reports.js";
 import { matrixAllows } from "./notifyMatrix.js";
 import { accountId, personName } from "./departments.js";
+import { markupNumber } from "./markup.js";
 
 export const RELEASE1_MONITOR_FLAG = "release1Monitor";
 export const ESCALATE_HOURS = 12;
@@ -54,7 +55,7 @@ function waitingSince(row) {
 }
 
 /**
- * @param {{ proposals?: any[], jobOrders?: any[], now?: unknown, users?: unknown[] }} input
+ * @param {{ proposals?: any[], jobOrders?: any[], markups?: any[], now?: unknown, users?: unknown[] }} input
  */
 export function salesWorklist(input) {
 	const now = input?.now;
@@ -87,6 +88,21 @@ export function salesWorklist(input) {
 			ownerName: personName(row.ownerId, input?.users),
 		});
 	});
+	(input?.markups || []).forEach((row) => {
+		if (!row) return;
+		const holder = holderId(row) || String(row.ownerId || "");
+		const number = String(row.markupNo || markupNumber(row.ceNo || row.ceId, row.revision) || "");
+		rows.push({
+			kind: "markup",
+			id: number,
+			status: String(row.status || ""),
+			ageDays: ageDays(row.timeline?.[0]?.at, now),
+			holderId: holder,
+			holderName: personName(holder, input?.users),
+			ownerId: String(row.ownerId || ""),
+			ownerName: personName(row.ownerId, input?.users),
+		});
+	});
 	return rows;
 }
 
@@ -108,7 +124,7 @@ export function pendingApprovals(docs, now, users) {
 		const holder = holderId(row);
 		return {
 			kind: String(row.kind || ""),
-			id: String(row.controlNo || row.joNo || row.id || ""),
+			id: String(row.markupNo || row.controlNo || row.joNo || row.id || ""),
 			holderId: holder,
 			holderName: personName(holder, users),
 			hours: Math.round(hours * 10) / 10,

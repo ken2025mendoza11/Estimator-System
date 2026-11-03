@@ -168,7 +168,22 @@ function withParts(markup, parts) {
 }
 
 /**
- * @param {{ ceId?: unknown, byUserId?: unknown, directCost?: unknown, totals?: unknown, preset?: unknown, parts?: unknown, now?: unknown }} input
+ * Markup number is the CE number plus -MK. A revision is -MK-R1, -MK-R2.
+ * @param {unknown} ceNo
+ * @param {unknown} [revision]
+ * @returns {string}
+ */
+export function markupNumber(ceNo, revision) {
+	const base = String(ceNo || "").trim();
+	if (!base) return "";
+	const rev = Math.trunc(Number(revision) || 0);
+	if (rev < 0) return "";
+	if (!rev) return `${base}-MK`;
+	return `${base}-MK-R${rev}`;
+}
+
+/**
+ * @param {{ ceId?: unknown, ceNo?: unknown, revision?: unknown, byUserId?: unknown, directCost?: unknown, totals?: unknown, preset?: unknown, parts?: unknown, now?: unknown }} input
  * @returns {{ ok: true, markup: any } | { ok: false, message: string, markup?: undefined }}
  */
 export function createMarkup(input) {
@@ -179,8 +194,16 @@ export function createMarkup(input) {
 	const fromPreset = presetParts(input?.preset || "100");
 	const parts = input?.parts != null ? normalizeParts(input.parts) : fromPreset;
 	if (!parts) return { ok: false, message: "Each percent must be a number." };
+	const ceId = String(input?.ceId || "");
+	const ceNo = String(input?.ceNo || ceId).trim();
+	const revision = Math.max(0, Math.trunc(Number(input?.revision) || 0));
+	const markupNo = markupNumber(ceNo, revision);
 	const markup = {
-		ceId: String(input?.ceId || ""),
+		id: markupNo,
+		ceId,
+		ceNo,
+		revision,
+		markupNo,
 		directCost,
 		parts,
 		preset: matchingPreset(parts),

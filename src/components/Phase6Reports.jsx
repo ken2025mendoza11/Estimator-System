@@ -113,7 +113,7 @@ export function Phase6Reports({ ceList, documents, monitor = null, reportOn = tr
 								</form>
 							) : null}
 						</div>
-					)) : <p className="wiz-hint">No proposals or job orders.</p>}
+					)) : <p className="wiz-hint">No proposals, markups, or job orders.</p>}
 					<h3 className="ce-serif">Pending approvals</h3>
 					{pending.length ? pending.map((row) => (
 						<p key={`pending-${row.kind}-${row.id}`} style={row.overdue ? { color: "#b45309" } : undefined}>

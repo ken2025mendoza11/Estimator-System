@@ -8,6 +8,7 @@ import {
 	canGenerateMarkup,
 	createMarkup,
 	decideMarkup,
+	markupNumber,
 	readDirectCost,
 	sellingFromDirect,
 	setMarkupParts,
@@ -43,6 +44,10 @@ test("direct cost is read from totals and is not recomputed when percents change
 	const created = createMarkup({ ceId: "CE-1", byUserId: "sales-1", directCost: 1_000_000, preset: "100", now: "2026-10-28T00:00:00.000Z" });
 	if (!created.markup) throw new Error("missing markup");
 	assert.equal(created.markup.selling, 2_000_000);
+	assert.equal(created.markup.markupNo, "CE-1-MK");
+	assert.equal(markupNumber("CE-C1-2026-014", 0), "CE-C1-2026-014-MK");
+	assert.equal(markupNumber("CE-C1-2026-014", 1), "CE-C1-2026-014-MK-R1");
+	assert.equal(markupNumber("CE-C1-2026-014", 2), "CE-C1-2026-014-MK-R2");
 	assert.equal(created.markup.timeline[0].who, "sales-1");
 	assert.equal(created.markup.timeline[0].action, "Markup created");
 	const edited = setMarkupParts(created.markup, { profit: 40, contingency: 10, markup: 20 });

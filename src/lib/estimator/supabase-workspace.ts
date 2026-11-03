@@ -19,7 +19,7 @@ import {
   type RevisionMap,
   type StoredDoc,
 } from "./workspace-docs";
-import { missingDocNumberRpc } from "./docNumbers";
+import { missingDocNumberRpc, payloadDocNumber } from "./docNumbers";
 import { missingSuffixRpc } from "./docSuffixes";
 import {
   downloadDataUrl,
@@ -1152,6 +1152,26 @@ export async function claimProposalPr(controlNo: string, prNo: string, ceId: str
   return { ok: true };
 }
 
+/** Register a user-entered or issued document number. Skipped when claim_user_doc_no is not applied yet. Does not overwrite another document. */
+export async function claimUserDocNo(kind: string, docId: string, number: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("claim_user_doc_no", {
+    p_kind: kind,
+    p_doc_id: docId,
+    p_number: number || "",
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /claim_user_doc_no/i.test(message)) return { ok: true, skipped: true };
+    if (code === "23505" || /already used/i.test(message)) return { ok: false, message: "That number is already used." };
+    return { ok: false, message: message || "Could not save that document number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "That number is already used." };
+  return { ok: true };
+}
+
 /** Clear a proposal's PR claim. Does not delete the proposal. Skipped when release_proposal_pr is not applied yet. */
 export async function releaseProposalPr(controlNo: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
   await ensureSupabaseAccess();
@@ -1279,6 +1299,20 @@ export async function saveWorkspaceToSupabase(
       : write.kind === "ce"
         ? ceMirror(stored, rceIds)
         : null;
+    const numbered = write.kind === "rce" || write.kind === "ce" || write.kind === "inspection" || write.kind === "markup";
+    if (numbered && !write.touchOnly) {
+      const number = payloadDocNumber(write.kind, stored, write.id);
+      if (number) {
+        const claimed = await claimUserDocNo(write.kind, write.id, number);
+        if (!claimed.ok && !claimed.skipped) {
+          throw new WorkspaceSaveError(
+            claimed.message || "That number is already used.",
+            [...conflicts, { kind: write.kind, id: write.id, reason: "exists" }],
+            revisions,
+          );
+        }
+      }
+    }
     let result: RpcResult;
     try {
       result = await callSaveDoc(
