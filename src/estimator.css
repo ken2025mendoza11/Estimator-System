@@ -1286,3 +1286,7 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-submit-pulse{animation:ceSubmitPulse 1.2s ease}
 @keyframes ceSubmitPulse{0%{transform:scale(1)}40%{transform:scale(1.04)}100%{transform:scale(1)}}
 @media (prefers-reduced-motion:reduce){.ce-submit-pulse{animation:none}}
+.ce-header-drawer{width:min(420px,100%);max-width:420px}
+.ce-header-drawer .ce-field{margin-bottom:.75rem}
+.ce-header-drawer textarea.ce-input{min-height:4.5rem;resize:vertical}
+.ce-header-drawer .ce-drawer-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.4rem}

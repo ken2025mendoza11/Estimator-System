@@ -77,6 +77,7 @@ import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
 import { ceWithdrawAllowed, planCeWithdraw } from "../lib/estimator/ceWithdraw";
+import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
 import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
@@ -98,6 +99,7 @@ let release1MonitorOn = false;
 let ceTpl1On = false;
 let ceTpl2On = false;
 let ceTpl3On = false;
+let ceTpl4On = false;
 let release1MonitorSales = false;
 let release1CanReassign = false;
 let release1ActorId = "";
@@ -4875,7 +4877,8 @@ function defaultAdminConfig() {
 			joScreenV2: false,
 			ceTpl1: false,
 			ceTpl2: false,
-			ceTpl3: false
+			ceTpl3: false,
+			ceTpl4: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5001,7 +5004,8 @@ function normalizeAdminConfig(raw) {
 			joScreenV2: src.features?.joScreenV2 === true,
 			ceTpl1: src.features?.ceTpl1 === true,
 			ceTpl2: src.features?.ceTpl2 === true,
-			ceTpl3: src.features?.ceTpl3 === true
+			ceTpl3: src.features?.ceTpl3 === true,
+			ceTpl4: src.features?.ceTpl4 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -17668,10 +17672,12 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 		})]
 	});
 }
-function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setCeStatus, versionHistory, onSaveVersion, onRestoreVersion, onBack, editLocked, onEditingChange, engineOn = false, onRequestClosing = null }) {
+function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setCeStatus, versionHistory, onSaveVersion, onRestoreVersion, onBack, editLocked, onEditingChange, engineOn = false, onRequestClosing = null, headerEdit = null }) {
 	const [editing, setEditing] = useState(false);
 	const [isParked, setIsParked] = useState(false);
 	const [draft, setDraft] = useState(meta);
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const [drawerDraft, setDrawerDraft] = useState(null);
 	const idleTimerRef = useRef(null);
 	useEffect(() => {
 		onEditingChange?.(editing);
@@ -17847,6 +17853,11 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: () => {
 								setDraft(meta);
+								if (headerEdit) {
+									setDrawerDraft({ ...headerEdit.draft });
+									setDrawerOpen(true);
+									return;
+								}
 								setEditing(true);
 							},
 							type: "button",
@@ -17893,6 +17904,113 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 					className: "ce-mono ce-header-total-val",
 					children: fmt(grand)
 				})]
+			}),
+			drawerOpen && drawerDraft && /* @__PURE__ */ jsx("div", {
+				className: "ce-drawer-overlay",
+				onClick: () => setDrawerOpen(false),
+				children: /* @__PURE__ */ jsxs("aside", {
+					className: "ce-drawer ce-header-drawer",
+					role: "dialog",
+					"aria-label": "Edit header",
+					onClick: (event) => event.stopPropagation(),
+					children: [
+						/* @__PURE__ */ jsxs("div", {
+							className: "ce-drawer-header",
+							children: [/* @__PURE__ */ jsx("h3", {
+								className: "ce-serif",
+								children: "Edit header"
+							}), /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => setDrawerOpen(false),
+								children: "Close"
+							})]
+						}),
+						/* @__PURE__ */ jsxs("div", {
+							className: "ce-drawer-body",
+							children: [
+								HEADER_EDIT_FIELDS.map((field) => {
+									const locked = headerEdit?.draft?.locked === true;
+									if (field.readOnly) return /* @__PURE__ */ jsxs("label", {
+										className: "ce-field",
+										children: [/* @__PURE__ */ jsx("span", {
+											className: "ce-field-label",
+											children: field.label
+										}), headerEdit?.onOpenRce ? /* @__PURE__ */ jsx("button", {
+											type: "button",
+											className: "ce-btn-ghost",
+											onClick: () => headerEdit.onOpenRce(),
+											children: drawerDraft.rceNo || "—"
+										}) : /* @__PURE__ */ jsx("input", {
+											className: "ce-input ce-input-disabled",
+											readOnly: true,
+											value: drawerDraft.rceNo || ""
+										})]
+									}, field.key);
+									if (field.key === "jobType") return /* @__PURE__ */ jsxs("label", {
+										className: "ce-field",
+										children: [/* @__PURE__ */ jsx("span", {
+											className: "ce-field-label",
+											children: field.label
+										}), /* @__PURE__ */ jsxs("select", {
+											className: "ce-input",
+											disabled: locked,
+											value: drawerDraft.jobType || "",
+											onChange: (e) => setDrawerDraft({
+												...drawerDraft,
+												jobType: e.target.value
+											}),
+											children: [/* @__PURE__ */ jsx("option", {
+												value: "",
+												children: "—"
+											}, "blank"), HEADER_JOB_TYPES.map((job) => /* @__PURE__ */ jsx("option", {
+												value: job,
+												children: job
+											}, job))]
+										})]
+									}, field.key);
+									const multiline = field.key === "projectDescription";
+									return /* @__PURE__ */ jsxs("label", {
+										className: "ce-field",
+										children: [/* @__PURE__ */ jsx("span", {
+											className: "ce-field-label",
+											children: field.label
+										}), /* @__PURE__ */ jsx(multiline ? "textarea" : "input", {
+											className: "ce-input",
+											disabled: locked,
+											type: multiline ? void 0 : field.key === "date" || field.key === "targetDeadline" ? "date" : "text",
+											rows: multiline ? 3 : void 0,
+											value: drawerDraft[field.key] || "",
+											onChange: (e) => setDrawerDraft({
+												...drawerDraft,
+												[field.key]: e.target.value
+											})
+										})]
+									}, field.key);
+								}),
+								/* @__PURE__ */ jsxs("div", {
+									className: "ce-drawer-actions",
+									children: [/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-ghost",
+										onClick: () => setDrawerOpen(false),
+										children: "Cancel"
+									}), /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-primary",
+										disabled: headerEdit?.draft?.locked === true,
+										onClick: () => {
+											if (headerEdit?.draft?.locked === true) return;
+											headerEdit?.onSave?.(drawerDraft);
+											setDrawerOpen(false);
+										},
+										children: "Save"
+									})]
+								})
+							]
+						})
+					]
+				})
 			})
 		]
 	});
@@ -18565,7 +18683,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, markup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null, ceOptions = [], release1Message = "", onCeWithdraw = null }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, markup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null, ceOptions = [], release1Message = "", onCeWithdraw = null, onOpenLinkedRce = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -19546,7 +19664,34 @@ ${names.join(", ")}`, editingUser) : editingUser;
 							onEditingChange?.(value);
 						},
 						engineOn,
-						onRequestClosing
+						onRequestClosing,
+						headerEdit: ceTpl4On ? {
+							draft: headerEditDraft({
+								status: ceStatus,
+								meta: state.meta,
+								projectInfo: state.projectInfo,
+								ce: ceData,
+								rce: linkedRce
+							}),
+							onSave: (nextDraft) => {
+								const applied = applyHeaderEdit({
+									status: ceStatus,
+									projectInfo: state.projectInfo,
+									meta: state.meta
+								}, nextDraft);
+								if (!applied.ok) return;
+								dispatch({ type: "PATCH_PROJECT_INFO", patch: applied.projectInfo });
+								["client", "location", "title", "date"].forEach((field) => dispatch({
+									type: "SET_META",
+									field,
+									value: applied.meta[field]
+								}));
+							},
+							onOpenRce: onOpenLinkedRce && (linkedRce || ceData?.rceId) ? () => onOpenLinkedRce(linkedRce || {
+								id: ceData?.rceId,
+								rceNo: ceData?.rceId
+							}) : null
+						} : null
 					}),
 					exportPreview && /* @__PURE__ */ jsx("div", {
 						className: "ce-modal-overlay",
@@ -22705,7 +22850,8 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	}).map((ce) => {
 		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === ce.rceId);
 		const doc = documents?.[ce.id] || {};
-		const deadline = rce?.ceDeadline || rce?.submissionDeadline || "";
+		const headerShown = ceTpl4On ? listHeaderValues(ce, doc, rce) : null;
+		const deadline = headerShown ? headerShown.deadline : rce?.ceDeadline || rce?.submissionDeadline || "";
 		const received = rce?.dateReceived || rce?.rceDate || ce.lastEdited;
 		const start = Date.parse(received || "") || Date.now();
 		const aging = Math.max(0, Math.round((Date.now() - start) / 864e5));
@@ -22716,9 +22862,9 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			ceId: ce.id,
 			rceKey: rce?.id || ce.rceId || "",
 			rceNo: ce.rceId || "—",
-			client: ce.client,
-			clientCode: clientCodeForCe(ce, clients),
-			projectDesc: ce.project,
+			client: headerShown ? headerShown.client : ce.client,
+			clientCode: clientCodeForCe(headerShown ? { ...ce, client: headerShown.client } : ce, clients),
+			projectDesc: headerShown ? headerShown.project : ce.project,
 			companyKey,
 			companyDesignation: companyDesignationName(companyKey, documentControl) || "—",
 			department: ceDepartmentLabel(doc, rce),
@@ -25317,6 +25463,8 @@ function displayCeNo(ce, doc) {
 	return fullCeNumber(ce, doc);
 }
 function ceJobTypeLabel(ce, doc, rce) {
+	const explicit = String(doc?.projectInfo?.jobType || "").trim();
+	if (explicit) return ceJobTypeLabel({ templateType: explicit }, { enabledWorkTypes: [explicit] }, null);
 	const types = new Set();
 	const add = (value) => {
 		const w = String(value || "").toLowerCase();
@@ -25397,7 +25545,9 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	};
 	const deadlineOf = (ce) => {
 		const rce = linkedRce(ce);
-		return ce?.deadline || ce?.ceDeadline || rce?.ceDeadline || rce?.submissionDeadline || "";
+		const doc = documents?.[ce.id] || {};
+		const saved = ceTpl4On ? String(doc?.projectInfo?.targetDeadline || ce?.targetDeadline || "").trim() : "";
+		return saved || ce?.deadline || ce?.ceDeadline || rce?.ceDeadline || rce?.submissionDeadline || "";
 	};
 	const priorityOf = (ce) => {
 		const rce = linkedRce(ce);
@@ -25979,16 +26129,17 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 		const doc = documents?.[ce.id] || {};
 		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === ce.rceId) || null;
 		const companyKey = rce?.company || "";
+		const shown = ceTpl4On ? listHeaderValues(ce, doc, rce) : null;
 		return {
 			id: ce.id,
-			client: ce.client,
-			clientCode: clientCodeForCe(ce, clients),
-			project: ce.project,
+			client: shown ? shown.client : ce.client,
+			clientCode: clientCodeForCe(shown ? { ...ce, client: shown.client } : ce, clients),
+			project: shown ? shown.project : ce.project,
 			date: ce.lastEdited,
 			rceNo: ce.rceId || "",
 			status: ce.awardStatus || ce.status,
 			jobStatus: ce.status,
-			description: ce.project,
+			description: shown ? shown.project : ce.project,
 			timeline: documents[ce.id]?.timeline || [],
 			companyName: companyDesignationName(companyKey, documentControl) || "—",
 			department: ceDepartmentLabel(doc, rce),
@@ -28602,6 +28753,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl1On = adminConfig.features?.ceTpl1 === true;
 	ceTpl2On = adminConfig.features?.ceTpl2 === true;
 	ceTpl3On = adminConfig.features?.ceTpl3 === true;
+	ceTpl4On = adminConfig.features?.ceTpl4 === true;
 	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
@@ -28869,6 +29021,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			lastEditedBy: editorName,
 			client: doc?.meta?.client || ce.client,
 			project: doc?.meta?.title || ce.project,
+			...(ceTpl4On && String(doc?.projectInfo?.targetDeadline || "").trim() ? {
+				deadline: doc.projectInfo.targetDeadline,
+				targetDeadline: doc.projectInfo.targetDeadline
+			} : {}),
 			status: doc?.ceStatus || ce.status
 		} : ce));
 		if (adminConfig?.features?.docSuffixes === true && doc && (doc.awardStatus === "Awarded" || doc.awardStatus === "Lost" || doc.awardJo)) {
@@ -31684,6 +31840,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						actingLevel,
 						onSubmitApproval: handleCeSubmitApproval,
 						onCeWithdraw: handleCeWithdraw,
+						onOpenLinkedRce: (rce) => {
+							const found = (rceList || []).find((row) => (row.id || row.rceNo) === (rce?.id || rce?.rceNo)) || rce;
+							if (found) handleViewRCE(found);
+						},
 						onApprovalDecision: handleCeApprovalDecision,
 						onDocumentChange: handleDocumentChange,
 						documentControl: adminConfig.documentControl,
