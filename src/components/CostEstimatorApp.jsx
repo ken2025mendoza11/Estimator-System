@@ -3455,7 +3455,7 @@ function costingMembers(users) {
 function ceAmountLabel(doc) {
 	const tasks = doc?.tasks;
 	if (!Array.isArray(tasks) || !tasks.length) return "—";
-	return fmt(projectTotal(tasks, doc?.pricing));
+	return fmt(projectTotal(tasks, doc?.pricing, doc?.mobSheets));
 }
 function combinedLabelFor(id, list, docs) {
 	if (!id) return "";
@@ -14917,7 +14917,7 @@ function getMobManpowerRows(tasks) {
 function totalMobManpower(tasks) {
 	return getMobManpowerRows(tasks).reduce((s, r) => s + num2(r.qty), 0);
 }
-function SummaryView({ tasks, viewType, pricing }) {
+function SummaryView({ tasks, viewType, pricing, mobSheets }) {
 	const [expandedTaskId, setExpandedTaskId] = useState(null);
 	const noteRows = collectNotes(tasks);
 	const direct = isDirectPricing(pricing);
@@ -14933,7 +14933,7 @@ function SummaryView({ tasks, viewType, pricing }) {
 		if (index >= 2 && index <= 5 && tasks[index - 2]) return tasks[index - 2].title;
 		return stdLabel;
 	});
-	const grandTotal = direct ? projectTotal(tasks, pricing) : roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
+	const grandTotal = projectTotal(tasks, pricing, mobSheets);
 	const matrixCats = direct ? ["BOL", "A1", "BOTE", "BOCM", "PPE", "MISC"] : CATS;
 	const catTotals = CATS.map((c) => ({
 		cat: c,
@@ -15074,7 +15074,7 @@ function SummaryView({ tasks, viewType, pricing }) {
 								/* @__PURE__ */ jsx("td", { children: "Total" }),
 								WORK_TYPES.filter((w) => tasksOfType(tasks, w.id).length > 0).map((w) => /* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
-									children: fmt(direct ? projectTotal(tasksOfType(tasks, w.id), pricing) : tasksOfType(tasks, w.id).reduce((s, t) => s + taskTotal(t), 0))
+									children: fmt(projectTotal(tasksOfType(tasks, w.id), pricing, mobSheets))
 								}, w.id)),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
@@ -18648,15 +18648,26 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [mobCopy, setMobCopy] = useState(null);
 	const mobSnaps = useRef({});
 	const mobManpower = useMasterlist().BOL || [];
+	const mobSheetTotals = (tasks, snaps) => {
+		const onsite = tasksOfType(tasks || [], "onsite");
+		return {
+			mobilization: buildMobExportSection("Mobilization", onsite, snaps?.Mobilization, [], mobManpower)?.sheetTotal || 0,
+			demobilization: buildMobExportSection("Demobilization", onsite, snaps?.Demobilization, [], mobManpower)?.sheetTotal || 0
+		};
+	};
 	const persistSkip = useRef(true);
 	useEffect(() => {
+		const snaps = mobSnaps.current || {};
+		const opened = snaps.Mobilization || snaps.Demobilization;
+		const mobSheets = opened ? mobSheetTotals(state.tasks, snaps) : state.mobSheets && typeof state.mobSheets === "object" ? state.mobSheets : mobSheetTotals(state.tasks, {});
 		const next = {
 			...state,
 			sowText,
 			ceStatus,
 			docNo,
 			revNo,
-			revDate
+			revDate,
+			mobSheets
 		};
 		if (persistSkip.current) {
 			persistSkip.current = false;
@@ -20079,7 +20090,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								viewType !== "Summary" && /* @__PURE__ */ jsx(SummaryView, {
 									tasks: state.tasks,
 									viewType,
-									pricing: state.pricing
+									pricing: state.pricing,
+									mobSheets: state.mobSheets
 								})
 							] }),
 							tab === "BREAKDOWN" && /* @__PURE__ */ jsx(BreakdownView, {
@@ -25331,7 +25343,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	const moneyOf = (ce) => {
 		const doc = documents?.[ce.id] || {};
 		if (!Array.isArray(doc.tasks)) return "—";
-		return fmt(projectTotal(doc.tasks, doc.pricing));
+		return fmt(projectTotal(doc.tasks, doc.pricing, doc.mobSheets));
 	};
 	const mine = (ceList || []).filter((ce) => ceOnMyList(ce, {
 		me,
@@ -31647,7 +31659,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 										fileAttachments: {},
 										approval: void 0
 									},
-									total: projectTotal(doc?.tasks || [], doc?.pricing),
+									total: projectTotal(doc?.tasks || [], doc?.pricing, doc?.mobSheets),
 									updatedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)
 								}));
 							},

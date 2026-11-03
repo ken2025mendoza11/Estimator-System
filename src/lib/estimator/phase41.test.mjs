@@ -153,6 +153,21 @@ test("each CE page total equals its summary line", () => {
   assert.equal(pair.demobilization, line("DEMOB"));
 });
 
+test("CE lists use the saved mob and demob sheet totals", () => {
+  const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+  [
+    "projectTotal(tasks, doc?.pricing, doc?.mobSheets)",
+    "projectTotal(tasks, pricing, mobSheets)",
+    "projectTotal(doc.tasks, doc.pricing, doc.mobSheets)",
+    "projectTotal(doc?.tasks || [], doc?.pricing, doc?.mobSheets)",
+    "projectTotal(tasksOfType(tasks, w.id), pricing, mobSheets)",
+    "mobSheetTotals(state.tasks, snaps)",
+  ].forEach((snippet) => assert.equal(app.includes(snippet), true, snippet));
+  const sheets = { mobilization: 10, demobilization: 5 };
+  assert.equal(projectTotal(examples.onsite.tasks, direct, sheets), 95697.28);
+  assert.equal(projectTotal(examples.onsite.tasks, direct), 95682.28);
+});
+
 test("job order keeps lead time, mobilization, and annex A", () => {
   const created = createJobOrder({
     byUserId: "sales-1",
