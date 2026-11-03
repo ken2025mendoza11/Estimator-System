@@ -17,26 +17,13 @@ let readFormula = () => ({
   phicPct: 3,
 });
 
-/** @type {(dayType: string) => number} */
-let readDayType = (dayType) => {
-  const formula = readFormula();
-  if (dayType === "Holiday") return Number(formula.holidayMultiplier) || 2;
-  if (dayType === "Sun/Special") return Number(formula.sundayMultiplier) || 1.3;
-  return 1;
-};
-
 /** The editor injects its live formula. Missing model stays on today's maths. */
 export function setFormulaFns(fns) {
   if (fns && typeof fns.formulaNow === "function") readFormula = fns.formulaNow;
-  if (fns && typeof fns.dayTypeMultiplier === "function") readDayType = fns.dayTypeMultiplier;
 }
 
 function formulaNow() {
   return readFormula();
-}
-
-function dayTypeMultiplier(dayType) {
-  return readDayType(dayType);
 }
 
 function num2(v) {
@@ -62,7 +49,7 @@ function chargesPower(workTypeOrTask) {
 }
 
 /** 2025 employer defaults. A direct-v1 estimate snapshots these onto pricing.formula. */
-export const DIRECT_RATES = {
+const DIRECT_RATES = {
   hoursPerDay: 8,
   nightDiffPct: 10,
   regularOtFactor: 1.25,
@@ -98,7 +85,7 @@ function bounded(value, fallback, min, max) {
 }
 
 /** @param {unknown} src */
-export function directFormula(src) {
+function directFormula(src) {
   const raw = src && typeof src === "object" ? /** @type {Record<string, unknown>} */ (src) : {};
   const hours = bounded(raw.hoursPerDay, DIRECT_RATES.hoursPerDay, 0.000001, 24);
   return {
@@ -146,20 +133,47 @@ export function offerDirectSwitch(opts) {
 }
 
 /**
- * One DOLE pay helper. OT on a rest day or holiday uses premiumDayOtFactor, not the regular factor.
+ * Map a stored day type onto the DOLE rows. Existing values stay: Regular,
+ * Sun/Special (rest day / Sunday / special day), Holiday (regular holiday).
+ * Compound types are recognized when already stored. No new field is added.
+ * @param {unknown} dayType
+ */
+function resolveDoleDay(dayType) {
+  const t = String(dayType || "Regular").trim().toLowerCase().replace(/[_/]+/g, " ").replace(/\s+/g, " ");
+  if (!t || t === "regular" || t === "ordinary" || t === "regular day" || t === "ordinary day") return "regular";
+  if (/holiday/.test(t) && /rest|sunday/.test(t)) return "holiday-rest";
+  if (/special/.test(t) && /rest/.test(t) && !/sun/.test(t)) return "special-rest";
+  if (t === "special rest" || t === "special on rest" || t === "special day on rest day" || t === "specialrest") return "special-rest";
+  if (t === "holiday" || t === "regular holiday" || t === "legal holiday") return "holiday";
+  if (t.includes("sun") || t.includes("special") || t.includes("rest")) return "rest";
+  return "regular";
+}
+
+/**
+ * One DOLE pay helper. Regular OT is 1.25. Rest day, special day, and holiday OT are 1.30 of that day's rate.
+ * Night differential is +10% on the day rate and on OT. Compound rest-day rows use the handbook premiums.
  * @param {number} rate
  * @param {string} dayType
  * @param {string} shift
- * @param {Record<string, number>} formula
+ * @param {Record<string, number>=} formula
  */
-export function dolePay(rate, dayType, shift, formula) {
+function dolePay(rate, dayType, shift, formula) {
   const f = directFormula(formula);
-  const premium = dayType === "Holiday" ? f.holidayMultiplier : dayType === "Sun/Special" ? f.sundayMultiplier : 1;
-  const night = shift === "Night" ? f.nightDiffPct / 100 : 0;
+  const kind = resolveDoleDay(dayType);
+  let premium = 1;
+  if (kind === "rest") premium = f.sundayMultiplier;
+  else if (kind === "holiday") premium = f.holidayMultiplier;
+  else if (kind === "special-rest") premium = 1.5;
+  else if (kind === "holiday-rest") premium = 2.6;
+  const night = /^night/i.test(String(shift || "")) ? f.nightDiffPct / 100 : 0;
   const hourly = rate / f.hoursPerDay;
-  const otFactor = !dayType || dayType === "Regular" ? f.regularOtFactor : f.premiumDayOtFactor;
+  const otFactor = kind === "regular" ? f.regularOtFactor : f.premiumDayOtFactor;
   const scale = premium * (1 + night);
   return {
+    kind,
+    premium,
+    otFactor,
+    night,
     dayRate: rate * scale,
     otRate: hourly * scale * otFactor,
   };
@@ -204,7 +218,7 @@ function benefitPerPersonDay(rate, formula) {
  * @param {unknown[]} tasks
  * @param {{ formula?: Record<string, number> }} pricing
  */
-function directStatement(tasks, pricing) {
+function directStatement(tasks, pricing, sheets) {
   const formula = directFormula(pricing.formula);
   let manpower = 0;
   let perDiem = 0;
@@ -244,9 +258,10 @@ function directStatement(tasks, pricing) {
       });
     });
   });
+  const pair = mobDemobPair(tasks, sheets);
   const miscTotal = roundMoney(misc.A + misc.B + misc.C + misc.D + misc.E + misc.I + misc.other);
-  const total = roundMoney(manpower + benefits + tools + materials + ppe + miscTotal);
-  return { manpower, benefits, tools, materials, ppe, misc, miscTotal, perDiem, total };
+  const total = roundMoney(manpower + benefits + tools + materials + ppe + miscTotal + pair.total);
+  return { manpower, benefits, tools, materials, ppe, misc, miscTotal, perDiem, total, mobilization: pair.mobilization, demobilization: pair.demobilization };
 }
 
 function calcBOL(item, pricing) {
@@ -262,19 +277,14 @@ function calcBOL(item, pricing) {
       subtotal: line.subtotal,
     };
   }
-  const f = formulaNow();
-  const dt = dayTypeMultiplier(item.dayType);
-  const shiftAdd = item.shift === "Night" ? f.nightDiffPct / 100 : 0;
-  const hours = f.hoursPerDay || 8;
-  const effRate = num2(item.rate) * dt * (1 + shiftAdd);
-  const otRate = num2(item.rate) / hours * f.otMultiplier * dt * (1 + shiftAdd);
-  const base = num2(item.qty) * num2(item.days) * effRate;
-  const ot = num2(item.qty) * num2(item.days) * num2(item.otHrs) * otRate;
+  const pay = dolePay(num2(item.rate), String(item.dayType || "Regular"), String(item.shift || "Day"), formulaNow());
+  const base = num2(item.qty) * num2(item.days) * pay.dayRate;
+  const ot = num2(item.qty) * num2(item.days) * num2(item.otHrs) * pay.otRate;
   const perDiemAllow = num2(item.qty) * num2(item.days) * (num2(item.perDiem) + num2(item.allowance));
   return {
     base,
     ot,
-    otRate,
+    otRate: pay.otRate,
     perDiemAllow,
     labor: base + ot,
     benefits: perDiemAllow,
@@ -317,15 +327,17 @@ function miscBucket(tasks, section) {
   };
 }
 
-function buildOfficialBaseRows(tasks, pricing) {
+function buildOfficialBaseRows(tasks, pricing, sheets) {
   if (pricing && pricing.model === "direct-v1") {
-    const statement = directStatement(tasks, pricing);
+    const statement = directStatement(tasks, pricing, sheets);
     const rows = [
       { key: "A", item: "A.", label: "MANPOWER COST", computed: statement.manpower, main: true },
       { key: "A1", item: "", label: "A.1 Benefits", computed: statement.benefits, sub: true },
       { key: "B", item: "B.", label: "TOOLS AND EQUIPMENTS", computed: statement.tools, main: true },
       { key: "C", item: "C.", label: "MATERIALS AND CONSUMABLES", computed: statement.materials, main: true },
       { key: "D", item: "D.", label: "PERSONAL PROTECTIVE EQUIPMENT", computed: statement.ppe, main: true },
+      { key: "MOB", item: "", label: "MOBILIZATION", computed: statement.mobilization, main: true },
+      { key: "DEMOB", item: "", label: "DEMOBILIZATION", computed: statement.demobilization, main: true },
       { key: "E", item: "E.", label: "MISCELLANEOUS:", computed: statement.miscTotal, group: true, main: true },
       { key: "E1", item: "", label: "E.1 ACCOMMODATION", computed: statement.misc.A, sub: true },
       { key: "E2", item: "", label: "E.2 TRANSPORTATION", computed: statement.misc.B, sub: true },
@@ -345,11 +357,14 @@ function buildOfficialBaseRows(tasks, pricing) {
   const third = miscBucket(tasks, "E");
   const ins = miscBucket(tasks, "I");
   const miscSum = acc.total + trans.total + req.total + admin.total + ins.total + third.total;
+  const pair = mobDemobPair(tasks, sheets);
   const rows = [
     { key: "A", item: "A.", label: "MANPOWER COST", computed: sumCat("BOL"), main: true },
     { key: "B", item: "B.", label: "TOOLS AND EQUIPMENTS", computed: sumCat("BOTE"), main: true },
     { key: "C", item: "C.", label: "MATERIALS AND CONSUMABLES", computed: sumCat("BOCM"), main: true },
     { key: "D", item: "D.", label: "PERSONAL PROTECTIVE EQUIPMENT", computed: sumCat("PPE"), main: true },
+    { key: "MOB", item: "", label: "MOBILIZATION", computed: pair.mobilization, main: true },
+    { key: "DEMOB", item: "", label: "DEMOBILIZATION", computed: pair.demobilization, main: true },
     { key: "E", item: "E.", label: "MISCELLANEOUS:", computed: miscSum, group: true, main: true },
     { key: "E1", item: "", label: "E.1 ACCOMMODATION", computed: acc.total, sub: true },
     { key: "E2", item: "", label: "E.2 TRANSPORTATION", computed: trans.total, sub: true },
@@ -412,9 +427,64 @@ function taskTotal(task2, pricing) {
   return roundMoney((task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt, pricing), 0));
 }
 
-function projectTotal(tasks, pricing) {
-  if (pricing && pricing.model === "direct-v1") return directStatement(tasks, pricing).total;
-  return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
+const MOB_ALLOWANCE_RATES = { "Project Manager": 0, Skilled: 0, Admin: 0 };
+
+function classifyMobRole(role) {
+  const r = String(role || "").toLowerCase();
+  if (/(project\s*manager|\bproj(?:ect)?\s*mgr\b|\bpm\b)/.test(r)) return "Project Manager";
+  if (/(admin|secretary|clerk|accountant|document\s*control|\bhr\b|office)/.test(r)) return "Admin";
+  return "Skilled";
+}
+
+/** A typed mob/demob line. A blank qty, days, or rate is 0. Nothing is invented. */
+function mobLineAmount(row) {
+  if (!row || typeof row !== "object") return 0;
+  if (row.amount != null && row.amount !== "") return num2(row.amount);
+  if (row.total != null && row.total !== "") return num2(row.total);
+  const qty = row.qty == null || row.qty === "" ? 0 : num2(row.qty);
+  const hasDays = Object.prototype.hasOwnProperty.call(row, "days");
+  const days = !hasDays || row.days == null || row.days === "" ? 0 : num2(row.days);
+  const rateRaw = row.rate != null ? row.rate : row.unitCost != null ? row.unitCost : row.price;
+  const rate = rateRaw == null || rateRaw === "" ? 0 : num2(rateRaw);
+  if (!hasDays) return qty * rate;
+  return qty * days * rate;
+}
+
+/** One sheet total. A missing sheet is 0. User lines are summed. Allowance rates are not filled in. */
+function mobSheetAmount(tasks, sheet) {
+  if (sheet == null || sheet === "") return 0;
+  if (typeof sheet === "number" || typeof sheet === "string") return roundMoney(num2(sheet));
+  if (typeof sheet !== "object") return 0;
+  if (!Array.isArray(sheet) && sheet.total != null && sheet.total !== "" && !sheet.manpower && !sheet.lines && !sheet.items && !sheet.allowance) {
+    return roundMoney(num2(sheet.total));
+  }
+  const lines = []
+    .concat(sheet.manpower || [])
+    .concat(sheet.allowance || [])
+    .concat(sheet.lines || [])
+    .concat(sheet.items || []);
+  if (!lines.length && sheet.amount != null) return roundMoney(num2(sheet.amount));
+  return roundMoney(lines.reduce((sum, row) => sum + mobLineAmount(row), 0));
+}
+
+/** Mobilization and demobilization stay separate. No copy from one sheet to the other. Shop and trading stay 0. */
+function mobDemobPair(tasks, sheets) {
+  const onsite = (tasks || []).filter((t) => normalizeWorkType(t?.workType) === "onsite");
+  if (!onsite.length) return { mobilization: 0, demobilization: 0, total: 0 };
+  const src = sheets && typeof sheets === "object" ? sheets : {};
+  const mobilization = mobSheetAmount(onsite, src.mobilization != null ? src.mobilization : src.mob);
+  const demobilization = mobSheetAmount(onsite, src.demobilization != null ? src.demobilization : src.demob);
+  return { mobilization, demobilization, total: roundMoney(mobilization + demobilization) };
+}
+
+/** Kept for the golden loader. The sheet no longer invents a manpower list or an allowance. */
+function mobManpowerRows() {
+  return [];
+}
+
+function projectTotal(tasks, pricing, sheets) {
+  if (pricing && pricing.model === "direct-v1") return directStatement(tasks, pricing, sheets).total;
+  return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0) + mobDemobPair(tasks, sheets).total);
 }
 
 /** BOL sheet for direct-v1 is the line labour, which is row A minus per diem. */
@@ -501,14 +571,15 @@ export function shownOfficialAmount(row, overrides, pricing) {
 }
 
 /** Same number the screen official total and the export total use. */
-export function screenOfficialTotal(tasks, pricing, overrides) {
-  const official = buildOfficialBaseRows(tasks, pricing);
+export function screenOfficialTotal(tasks, pricing, overrides, sheets) {
+  const official = buildOfficialBaseRows(tasks, pricing, sheets);
   const shown = (row) => shownOfficialAmount(row, overrides, pricing);
   const miscShown = roundMoney(official.rows.filter((row) => row.sub && !row.breakdown && row.key !== "A1").reduce((sum, row) => sum + roundMoney(shown(row)), 0));
   const benefitRow = official.rows.find((row) => row.key === "A1");
   const benefitShown = benefitRow ? roundMoney(shown(benefitRow)) : 0;
+  const mobShown = roundMoney(official.rows.filter((row) => row.key === "MOB" || row.key === "DEMOB").reduce((sum, row) => sum + roundMoney(shown(row)), 0));
   const mains = official.rows.filter((row) => ["A", "B", "C", "D"].includes(row.key)).reduce((sum, row) => sum + roundMoney(shown(row)), 0);
-  return roundMoney(mains + benefitShown + miscShown);
+  return roundMoney(mains + benefitShown + miscShown + mobShown);
 }
 
 /** Warnings Step 13 will list. Not a checker screen. */
@@ -549,10 +620,18 @@ export {
   calcPPE,
   categoryOnTask,
   categoryTotal,
+  DIRECT_RATES,
+  directFormula,
+  dolePay,
   flattenSubs,
   itemSubtotal,
   miscBucket,
+  mobDemobPair,
+  MOB_ALLOWANCE_RATES,
+  classifyMobRole,
+  mobManpowerRows,
   projectTotal,
+  resolveDoleDay,
   subtaskTotal,
   taskTotal,
 };

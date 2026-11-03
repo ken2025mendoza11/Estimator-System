@@ -26,6 +26,16 @@ const NAMES = [
   "taskWorkType",
   "tasksOfType",
   "chargesPower",
+  "DIRECT_RATES",
+  "bounded",
+  "directFormula",
+  "resolveDoleDay",
+  "dolePay",
+  "MOB_ALLOWANCE_RATES",
+  "classifyMobRole",
+  "mobManpowerRows",
+  "mobSheetAmount",
+  "mobDemobPair",
   "calcBOL",
   "calcBOTE",
   "calcBOCM",
@@ -276,20 +286,24 @@ function exportOfficial(ce) {
   const official = buildOfficialBaseRows(ce.tasks || []);
   const bodyParts = official.rows.filter((r) => ["A", "B", "C", "D"].includes(r.key)).reduce((s, r) => s + shownAmount(ce, r), 0);
   const miscParts = official.rows.filter((r) => r.sub && !r.breakdown).reduce((s, r) => s + shownAmount(ce, r), 0);
+  const mobParts = official.rows.filter((r) => r.key === "MOB" || r.key === "DEMOB").reduce((s, r) => s + shownAmount(ce, r), 0);
   const rows = {};
   official.rows.forEach((r) => {
     rows[r.key] = r.key === "E" ? miscParts : shownAmount(ce, r);
   });
-  return { bodySum: bodyParts + miscParts, rows, computedC: official.rows.find((r) => r.key === "C").computed };
+  return { bodySum: bodyParts + miscParts + mobParts, rows, computedC: official.rows.find((r) => r.key === "C").computed };
 }
 function screenOfficial(ce) {
   const official = buildOfficialBaseRows(ce.tasks || []);
   const miscShown = roundMoney(
     official.rows.filter((r) => r.sub && !r.breakdown).reduce((s, r) => s + roundMoney(shownAmount(ce, r)), 0),
   );
+  const mobShown = roundMoney(
+    official.rows.filter((r) => r.key === "MOB" || r.key === "DEMOB").reduce((s, r) => s + roundMoney(shownAmount(ce, r)), 0),
+  );
   return roundMoney(
     official.rows.filter((r) => ["A", "B", "C", "D"].includes(r.key)).reduce((s, r) => s + roundMoney(shownAmount(ce, r)), 0) +
-      miscShown,
+      miscShown + mobShown,
   );
 }
 function netOf(ce) {
@@ -389,8 +403,8 @@ const shopBol = [
 const onsiteBol = [
   { workType: "onsite", dayType: "Regular", shift: "Day", role: "Rigger", qty: 4, days: 8, rate: 700, otHrs: 2, subtotal: 29400 },
   { workType: "onsite", dayType: "Regular", shift: "Night", role: "Electrician", qty: 2, days: 3, rate: 900, otHrs: 1, subtotal: 6868.13 },
-  { workType: "onsite", dayType: "Sun/Special", shift: "Day", role: "Rigger", qty: 4, days: 1, rate: 700, otHrs: 2, subtotal: 4777.5 },
-  { workType: "onsite", dayType: "Holiday", shift: "Day", role: "Rigger", qty: 4, days: 1, rate: 700, otHrs: 2, subtotal: 7350 },
+  { workType: "onsite", dayType: "Sun/Special", shift: "Day", role: "Rigger", qty: 4, days: 1, rate: 700, otHrs: 2, subtotal: 4823 },
+  { workType: "onsite", dayType: "Holiday", shift: "Day", role: "Rigger", qty: 4, days: 1, rate: 700, otHrs: 2, subtotal: 7420 },
 ];
 
 /** @type {Record<string, any>} */
@@ -400,16 +414,16 @@ const LOCK = {
     official: 23342,
     net: 24542,
     bol: 12800,
-    rows: { A: 12800, B: 4900, C: 1800, D: 342, E: 3500, E1: 0, E2: 3500, E3: 0, E4: 0, E5: 0, E6: 0 },
+    rows: { A: 12800, B: 4900, C: 1800, D: 342, MOB: 0, DEMOB: 0, E: 3500, E1: 0, E2: 3500, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: shopBol,
     benefits: [welderBenefit],
   },
   onsite: {
-    grand: 89445.63,
-    official: 89445.63,
-    net: 89445.63,
-    bol: 48395.63,
-    rows: { A: 57145.63, B: 12000, C: 0, D: 2700, E: 17600, E1: 12000, E2: 5600, E3: 0, E4: 0, E5: 0, E6: 0 },
+    grand: 89561.13,
+    official: 89561.13,
+    net: 89561.13,
+    bol: 48511.13,
+    rows: { A: 57261.13, B: 12000, C: 0, D: 2700, MOB: 0, DEMOB: 0, E: 17600, E1: 12000, E2: 5600, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: onsiteBol,
     benefits: [electricianBenefit, riggerBenefit],
   },
@@ -418,27 +432,27 @@ const LOCK = {
     official: 31692.31,
     net: 31692.31,
     bol: 0,
-    rows: { A: 0, B: 2500, C: 24692.31, D: 0, E: 4500, E1: 0, E2: 4500, E3: 0, E4: 0, E5: 0, E6: 0 },
+    rows: { A: 0, B: 2500, C: 24692.31, D: 0, MOB: 0, DEMOB: 0, E: 4500, E1: 0, E2: 4500, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: [],
     benefits: [],
   },
   hybrid: {
-    grand: 145679.94,
-    official: 137987.63,
-    net: 152963.94,
-    bol: 61195.63,
-    rows: { A: 69945.63, B: 19400, C: 20000, D: 3042, E: 25600, E1: 12000, E2: 13600, E3: 0, E4: 0, E5: 0, E6: 0 },
+    grand: 145795.44,
+    official: 138103.13,
+    net: 153085.21,
+    bol: 61311.13,
+    rows: { A: 70061.13, B: 19400, C: 20000, D: 3042, MOB: 0, DEMOB: 0, E: 25600, E1: 12000, E2: 13600, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: [...onsiteBol, ...shopBol],
     benefits: [electricianBenefit, riggerBenefit, welderBenefit],
   },
   legacy: {
-    grand: 5576.01,
-    official: 24375,
-    net: 5737.71,
-    bol: 3675,
-    rows: { A: 4375, B: 0, C: 20000, D: 0, E: 0, E1: 0, E2: 0, E3: 0, E4: 0, E5: 0, E6: 0 },
+    grand: 5611.01,
+    official: 24410,
+    net: 5773.73,
+    bol: 3710,
+    rows: { A: 4410, B: 0, C: 20000, D: 0, MOB: 0, DEMOB: 0, E: 0, E1: 0, E2: 0, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: [
-      { workType: "onsite", dayType: "Holiday", shift: "Day", role: "Rigger", qty: 2, days: 1, rate: 700, otHrs: 2, subtotal: 3675 },
+      { workType: "onsite", dayType: "Holiday", shift: "Day", role: "Rigger", qty: 2, days: 1, rate: 700, otHrs: 2, subtotal: 3710 },
     ],
     benefits: [
       {
@@ -507,7 +521,7 @@ test("hybrid official uses the C override and the grand does not", () => {
   const official = api.exportOfficial(examples.hybrid);
   assert.equal(roundMoney(official.computedC), 26492.31);
   assert.equal(official.rows.C, 20000);
-  assert.equal(api.netOf(examples.hybrid).grand, 145679.94);
+  assert.equal(api.netOf(examples.hybrid).grand, 145795.44);
 });
 
 test("the four examples and the legacy fixture are still legacy pricing", () => {
@@ -522,8 +536,8 @@ test("today's unit rates, not the direct-v1 rates", () => {
   const holiday = api.calcBOL({ qty: 1, days: 1, rate: 700, otHrs: 1, dayType: "Holiday", shift: "Day", perDiem: 0 });
   const night = api.calcBOL({ qty: 1, days: 1, rate: 900, otHrs: 0, dayType: "Regular", shift: "Night", perDiem: 0 });
   assert.equal(regular.otRate, 109.375);
-  assert.equal(rest.otRate, 142.1875);
-  assert.equal(holiday.otRate, 218.75);
+  assert.equal(rest.otRate, 147.875);
+  assert.equal(holiday.otRate, 227.5);
   assert.equal(roundMoney(night.base), 990);
   assert.equal(api.calcMISC({ qty: 2, days: 0, unitCost: 300 }), 600);
   assert.equal(api.calcMISC({ qty: 2, unitCost: 300 }), 600);

@@ -17,7 +17,7 @@ const PLACEHOLDER = /^(?:-+|—|–|n\/a|na|null|none|\.|nil)$/i;
 const CSV_FIELD_MAP = {
   manpower: {
     role: ['role / position', 'position', 'designation', 'manpower', 'labor', 'labour', 'name'],
-    dailyRate: ['daily rate', 'rate/day', 'rate per day'],
+    dailyRate: ['daily rate', 'rate/day', 'rate per day', 'unit price', 'rate / unit cost'],
     monthlyRate: ['monthly rate', 'rate/month', 'rate per month'],
     perDiem: ['per diem'],
     allowance: ['allowances'],
@@ -27,7 +27,7 @@ const CSV_FIELD_MAP = {
   equipment: {
     description: ['item', 'tool', 'equipment', 'name'],
     unit: ['uom', 'unit of measure'],
-    ratePerDay: ['daily rate', 'rate per day', 'rate/day', 'rate'],
+    ratePerDay: ['daily rate', 'rate per day', 'rate/day', 'rate', 'unit price', 'rate / unit cost'],
     powerKw: ['kw', 'power', 'power kw', 'power (kw)'],
     hoursPerDay: ['hrs/day', 'hours/day', 'hours per day', 'hrs per day', 'hours'],
     kwhRate: ['kwh', 'php/kwh', 'peso/kwh', 'rate/kwh', '₱/kwh'],
@@ -37,20 +37,20 @@ const CSV_FIELD_MAP = {
   consumables: {
     description: ['item', 'name', 'material'],
     unit: ['uom', 'unit of measure'],
-    unitCost: ['unit cost', 'cost', 'rate', 'price'],
+    unitCost: ['unit cost', 'unit price', 'rate / unit cost', 'cost', 'rate', 'price'],
     active: ['status'],
     lastReviewed: ['last reviewed', 'reviewed', 'date reviewed'],
   },
   ppe: {
     item: ['description', 'name', 'ppe'],
     unit: ['uom', 'unit of measure'],
-    unitCost: ['unit cost', 'cost', 'rate', 'price'],
+    unitCost: ['unit cost', 'unit price', 'rate / unit cost', 'cost', 'rate', 'price'],
     active: ['status'],
     lastReviewed: ['last reviewed', 'reviewed', 'date reviewed'],
   },
   misc: {
     description: ['item', 'name'],
-    estimatedCost: ['estimated cost', 'cost', 'amount', 'rate'],
+    estimatedCost: ['estimated cost', 'unit price', 'unit cost', 'cost', 'amount', 'rate'],
     active: ['status'],
     lastReviewed: ['last reviewed', 'reviewed', 'date reviewed'],
   },

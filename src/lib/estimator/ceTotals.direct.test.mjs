@@ -27,10 +27,10 @@ const EXPECT = {
 
 test("legacy totals stay today's numbers when the pricing model is missing", () => {
   assert.equal(projectTotal(examples.shop.tasks), 24542);
-  assert.equal(projectTotal(examples.onsite.tasks), 89445.63);
+  assert.equal(projectTotal(examples.onsite.tasks), 89561.13);
   assert.equal(projectTotal(examples.trading.tasks), 31692.31);
-  assert.equal(projectTotal(examples.hybrid.tasks), 145679.94);
-  assert.equal(projectTotal(legacy.tasks), 5576.01);
+  assert.equal(projectTotal(examples.hybrid.tasks), 145795.44);
+  assert.equal(projectTotal(legacy.tasks), 5611.01);
 });
 
 test("direct-v1 matches section D to the centavo", () => {
@@ -72,7 +72,7 @@ test("the screen total equals the export total, and an override is ignored", () 
     assert.equal(screen, projectTotal(ce.tasks, direct), name);
   }
   assert.equal(screenOfficialTotal(examples.shop.tasks, undefined, examples.shop.summaryOverrides), 23342);
-  assert.equal(screenOfficialTotal(examples.hybrid.tasks, undefined, examples.hybrid.summaryOverrides), 137987.63);
+  assert.equal(screenOfficialTotal(examples.hybrid.tasks, undefined, examples.hybrid.summaryOverrides), 138103.13);
 });
 
 test("the direct BOL sheet grand is row A minus per diem", () => {

@@ -55,6 +55,21 @@ function entry(who, action, remarks, now) {
 	};
 }
 
+/** Lead-time lines are text only. A missing line is dropped. Nothing is priced.
+ * @param {unknown} value
+ */
+export function normalizeLeadtime(value) {
+	if (!Array.isArray(value)) return [];
+	return value.map((item) => {
+		if (Array.isArray(item)) return { span: String(item[0] || "").trim(), text: String(item[1] || "").trim() };
+		if (item && typeof item === "object") {
+			const row = /** @type {Record<string, unknown>} */ (item);
+			return { span: String(row.span || row.days || "").trim(), text: String(row.text || row.note || "").trim() };
+		}
+		return { span: "", text: String(item || "").trim() };
+	}).filter((row) => row.span || row.text);
+}
+
 /**
  * Drop every price. Keep quantities and names only.
  * @param {unknown} value
@@ -188,6 +203,10 @@ export function createJobOrder(input) {
 		poKind: String(input.poKind || "").trim().toUpperCase(),
 		drawingNames: (Array.isArray(input.drawingNames) ? input.drawingNames : []).map((/** @type {unknown} */ name) => String(name || "")).filter(Boolean),
 		ceQuantity: qty,
+		leadtime: normalizeLeadtime(input?.leadtime),
+		mobilization: String(input?.mobilization || ""),
+		mobilizationNote: String(input?.mobilizationNote || ""),
+		annexA: input?.annexA === false ? false : true,
 		status: "Draft",
 		finalApproved: false,
 		ownerId: byUserId,
@@ -243,6 +262,10 @@ export function patchJobOrder(jo, patch, input) {
 		next.ceIds = ceIds;
 	}
 	if (Array.isArray(src.drawingNames)) next.drawingNames = src.drawingNames.map((/** @type {unknown} */ name) => String(name || "")).filter(Boolean);
+	if (Array.isArray(src.leadtime)) next.leadtime = normalizeLeadtime(src.leadtime);
+	if (src.mobilization != null) next.mobilization = String(src.mobilization);
+	if (src.mobilizationNote != null) next.mobilizationNote = String(src.mobilizationNote);
+	if (src.annexA != null) next.annexA = src.annexA !== false;
 	next.joNo = jo.joNo;
 	next.rev = jo.rev;
 	next.id = jo.id;

@@ -33,15 +33,15 @@ const CE_FIELDS = {
   ],
   BOCM: [
     { key: "qty", label: "Qty" },
-    { key: "unitCost", label: "Unit Cost" },
+    { key: "unitCost", label: "Unit Price" },
   ],
   PPE: [
     { key: "qty", label: "Qty" },
-    { key: "unitCost", label: "Unit Cost" },
+    { key: "unitCost", label: "Unit Price" },
   ],
   MISC: [
     { key: "qty", label: "Qty" },
-    { key: "unitCost", label: "Unit Cost" },
+    { key: "unitCost", label: "Unit Price" },
   ],
 };
 
@@ -141,13 +141,13 @@ const MASTER_SHEETS = [
     key: "consumables",
     label: "Consumables",
     nameKeys: ["description"],
-    fields: [{ key: "unitCost", label: "Unit Cost" }],
+    fields: [{ key: "unitCost", label: "Unit Price" }],
   },
   {
     key: "ppe",
     label: "Safety & PPE",
     nameKeys: ["item"],
-    fields: [{ key: "unitCost", label: "Unit Cost" }],
+    fields: [{ key: "unitCost", label: "Unit Price" }],
   },
   {
     key: "misc",

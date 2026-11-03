@@ -9,7 +9,8 @@ import Underline from "@tiptap/extension-underline";
 import TextStyle from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
-import jsPDF from "jspdf";
+import jsPDFModule, { jsPDF as jsPDFNamed } from "jspdf";
+const jsPDF = typeof jsPDFNamed === "function" ? jsPDFNamed : typeof jsPDFModule === "function" ? jsPDFModule : jsPDFModule?.jsPDF || jsPDFModule?.default;
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -73,6 +74,7 @@ import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/e
 import { orderExportSections, refreshSchedule, scheduleExportSection } from "../lib/estimator/phase10";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
+import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
@@ -152,7 +154,17 @@ function drawExportChrome(doc, data, opts = {}) {
 	doc.rect(m + logoW, m, midW, headH);
 	doc.rect(pageWidth - m - infoW, m, infoW, headH);
 	if (logo) try {
-		doc.addImage(logo, logoFormat(logo), 10, 11, logoW - 4, Math.min(14, headH - 6));
+		const boxW = logoW - 1.6;
+		const boxH = headH - 1.6;
+		let drawW = boxW;
+		let drawH = boxH;
+		try {
+			const props = doc.getImageProperties(logo);
+			const ratio = props.width && props.height ? props.width / props.height : boxW / boxH;
+			if (boxW / boxH > ratio) drawW = boxH * ratio;
+			else drawH = boxW / ratio;
+		} catch { /* unknown size: stretch to the box */ }
+		doc.addImage(logo, logoFormat(logo), m + .8 + (boxW - drawW) / 2, m + .8 + (boxH - drawH) / 2, drawW, drawH);
 	} catch {
 		doc.setFontSize(8);
 		doc.text("LOGO", 14, 20);
@@ -166,19 +178,19 @@ function drawExportChrome(doc, data, opts = {}) {
 	}
 	doc.setFont(void 0, "bold");
 	doc.setFontSize(10);
-	const titleTop = m + Math.max(5.5, (headH - lines.length * 4.4) / 2 + 3.2);
+	const titleTop = m + Math.max(5, (headH - lines.length * 4.4) / 2 + 3.2);
 	lines.forEach((line, i) => {
 		doc.text(line, m + logoW + midW / 2, titleTop + i * 4.4, { align: "center" });
 	});
 	doc.setFont(void 0, "normal");
 	doc.setFontSize(7);
 	const infoX = pageWidth - m - infoW + 2;
-	doc.text("Document No.", infoX, 14);
-	doc.text(isoDocNo, infoX + 24, 14);
-	doc.text("Revision No.", infoX, 20);
-	doc.text(isoRev, infoX + 24, 20);
-	doc.text("Revision Date", infoX, 26);
-	doc.text(isoRevDate, infoX + 24, 26);
+	const rowGap = 3.6;
+	const firstRow = m + headH / 2 - rowGap + 1;
+	[["Document No.:", isoDocNo], ["Revision No.:", isoRev], ["Revision Date:", isoRevDate]].forEach(([label, value], i) => {
+		doc.text(label, infoX, firstRow + i * rowGap);
+		doc.text(value, infoX + 22, firstRow + i * rowGap);
+	});
 }
 function drawSummaryInfo(doc, info, x, y, width) {
 	const font = doc.getFont()?.fontName || "helvetica";
@@ -187,7 +199,7 @@ function drawSummaryInfo(doc, info, x, y, width) {
 	const c4 = Math.round(width * .2 * 10) / 10;
 	const c2 = Math.round((width - c1 - c3 - c4) * 10) / 10;
 	const ceCell = {
-		content: `COST ESTIMATE (CE) NUMBER\n${info.docNo || ""}${info.markupNo ? `\nMARKUP NO.\n${info.markupNo}` : ""}`,
+		content: `${info.ceLabel || "COST ESTIMATE (CE) NUMBER"}\n${info.docNo || ""}${info.markupNo ? `\nMARKUP NO.\n${info.markupNo}` : ""}`,
 		colSpan: 2,
 		styles: {
 			fontStyle: "bold",
@@ -195,14 +207,13 @@ function drawSummaryInfo(doc, info, x, y, width) {
 			valign: "middle"
 		}
 	};
-	const revCell = {
-		content: `REVISION NO.      ${info.revNo || ""}\nREVISION DATE      ${info.revDate || ""}`,
-		colSpan: 2,
-		styles: {
-			fontStyle: "bold",
-			halign: "left",
-			valign: "middle"
-		}
+	const revLabel = {
+		content: "REVISION NO.\nREVISION DATE",
+		styles: { fontStyle: "bold", halign: "left", valign: "middle" }
+	};
+	const revValue = {
+		content: `${info.revNo || ""}\n${info.revDate || ""}`,
+		styles: { fontStyle: "normal", halign: "left", valign: "middle" }
 	};
 	autoTable(doc, {
 		startY: y,
@@ -268,7 +279,8 @@ function drawSummaryInfo(doc, info, x, y, width) {
 			[
 				"CLIENT NAME:",
 				String(info.client || ""),
-				revCell
+				revLabel,
+				revValue
 			],
 			[
 				"CLIENT LOCATION:",
@@ -353,7 +365,7 @@ function exportHeadSpec(doc, title) {
 	const logoW = 42;
 	const infoW = 62;
 	const midW = pageWidth - 16 - logoW - infoW;
-	const lines = doc.splitTextToSize(String(title || "COST ESTIMATE SUMMARY"), Math.max(20, midW - 8)).slice(0, 3);
+	const lines = doc.splitTextToSize(String(title || "COST ESTIMATE SUMMARY").toUpperCase(), Math.max(20, midW - 8)).slice(0, 3);
 	return {
 		pageWidth,
 		m,
@@ -361,7 +373,7 @@ function exportHeadSpec(doc, title) {
 		infoW,
 		midW,
 		lines,
-		headH: Math.max(22, 7 + lines.length * 4.5)
+		headH: Math.max(16, 6 + lines.length * 4.5)
 	};
 }
 function exportHeaderBottom(doc, title) {
@@ -378,7 +390,7 @@ function drawExportNotes(doc, notes, y, margin, opts = {}) {
 		const body = `${opts.numbered ? `${i + 1}. ` : ""}${String(text || "")}`;
 		const lines = doc.splitTextToSize(body, pageW - margin * 2);
 		doc.text(lines, margin, yy);
-		yy += lines.length * 3.8 + 1.2;
+		yy += lines.length * 3.3 + .3;
 	});
 	doc.setTextColor(0, 0, 0);
 	doc.setFont(void 0, "normal");
@@ -394,15 +406,16 @@ function splitExportStamp(stamp) {
 		time: m[3]
 	};
 }
-function drawExportSigns(doc, signs, y, margin) {
-	const colW = (doc.internal.pageSize.getWidth() - margin * 2) / 4;
+function drawExportSigns(doc, signs, y, margin, opts = {}) {
+	const cols = opts.cols || 4;
+	const colW = (doc.internal.pageSize.getWidth() - margin * 2) / cols;
 	const bodyFont = doc.getFont()?.fontName || "helvetica";
 	const fontList = typeof doc.getFontList === "function" ? doc.getFontList() : {};
 	const hasScript = !!(fontList.Signature || fontList.signature);
 	let yy = y + 3;
 	(signs || []).forEach((slot, i) => {
-		if (i > 0 && i % 4 === 0) yy += 36;
-		const x = margin + i % 4 * colW;
+		if (i > 0 && i % cols === 0) yy += 27;
+		const x = margin + i % cols * colW;
 		if (!slot?.label) return;
 		doc.setFont(bodyFont, "bold");
 		doc.setFontSize(8);
@@ -410,19 +423,23 @@ function drawExportSigns(doc, signs, y, margin) {
 		doc.text(String(slot.label), x + 1.5, yy);
 		const parts = splitExportStamp(slot.stamp);
 		const script = (slot.stamp && (parts.who || String(slot.name || "").replace(/^(mr|mrs|ms|miss)\.?\s+/i, "").trim())) || "";
-		const stampW = parts.date ? 15 : 0;
-		const scriptY = yy + 8.2;
+		const stampW = parts.date ? 13 : 0;
+		const scriptY = yy + 9;
+		const centerX = x + colW / 2;
+		let sigRight = centerX;
 		let drewImage = false;
 		if (exportEngineOn) {
 			const image = cachedSignature({ name: slot.name });
 			if (image) try {
-				const imgW = Math.min(32, Math.max(12, colW - stampW - 4));
-				doc.addImage(image, "PNG", x + (colW - stampW - imgW) / 2, scriptY - 6, imgW, 8);
+				const imgW = Math.min(30, Math.max(12, colW - stampW - 6));
+				const imgX = centerX - (imgW + (stampW ? 1 + stampW : 0)) / 2;
+				doc.addImage(image, "PNG", imgX, scriptY - 6.5, imgW, 8);
+				sigRight = imgX + imgW;
 				drewImage = true;
 			} catch { /* script font if the image cannot be drawn */ }
 		}
 		if (script && !drewImage) {
-			const maxW = Math.max(12, colW - stampW - 2);
+			const maxW = Math.max(12, colW - stampW - 4);
 			try {
 				doc.setFont(hasScript ? "Signature" : bodyFont, hasScript ? "normal" : "italic");
 			} catch {
@@ -435,33 +452,44 @@ function drawExportSigns(doc, signs, y, margin) {
 				size -= .5;
 				doc.setFontSize(size);
 			}
-			doc.text(script, x + (colW - stampW) / 2, scriptY, { align: "center" });
+			const w = doc.getTextWidth(script);
+			const sx = centerX - (w + (stampW ? 1 + stampW : 0)) / 2;
+			doc.text(script, sx, scriptY);
+			sigRight = sx + w;
 		}
 		if (parts.date) {
+			// Date/time stamp sits immediately right of the signature.
 			doc.setFont(bodyFont, "italic");
 			doc.setFontSize(6);
 			doc.setTextColor(155, 28, 28);
-			doc.text(parts.date, x + colW - 1.2, scriptY - 1.2, { align: "right" });
-			doc.text(parts.time, x + colW - 1.2, scriptY + 1.2, { align: "right" });
+			doc.text(parts.date, sigRight + 1, scriptY - 2.6);
+			doc.text(parts.time, sigRight + 1, scriptY - .2);
 		}
+		// Name: always one line, shrink the font until it fits the column.
 		doc.setTextColor(0, 0, 0);
 		doc.setFont(bodyFont, "normal");
-		doc.setFontSize(7.5);
-		const nameLines = doc.splitTextToSize(String(slot.name || ""), colW - stampW - 1).slice(0, 2);
-		const nameY = scriptY + 5.4;
-		doc.text(nameLines, x + (colW - stampW) / 2, nameY, { align: "center" });
-		const lineW = Math.min(24, (colW - stampW) * .62);
-		const lineY = nameY + nameLines.length * 2.4 + 1.2;
-		const lineX = x + (colW - stampW - lineW) / 2;
+		const name = String(slot.name || "");
+		let nameSize = 7.5;
+		doc.setFontSize(nameSize);
+		while (nameSize > 5 && doc.getTextWidth(name) > colW - 3) {
+			nameSize -= .25;
+			doc.setFontSize(nameSize);
+		}
+		const nameY = scriptY + 3.6;
+		doc.text(name, centerX, nameY, { align: "center" });
+		const lineW = Math.min(colW - 6, Math.max(26, doc.getTextWidth(name) + 4));
+		const lineY = nameY + 1;
 		doc.setDrawColor(0, 0, 0);
-		doc.setLineWidth(.45);
-		doc.line(lineX, lineY, lineX + lineW, lineY);
+		doc.setLineWidth(.35);
+		doc.line(centerX - lineW / 2, lineY, centerX + lineW / 2, lineY);
+		doc.setFont(bodyFont, "normal");
 		doc.setFontSize(6.5);
 		const titleLines = doc.splitTextToSize(String(slot.title || ""), colW - 3).slice(0, 2);
-		doc.text(titleLines, x + (colW - stampW) / 2, lineY + 3.4, { align: "center" });
+		doc.text(titleLines, centerX, lineY + 3, { align: "center" });
 	});
 	doc.setTextColor(0, 0, 0);
 	doc.setFont(bodyFont, "normal");
+	return yy + 22;
 }
 function sowFontStyle(bold, italic) {
 	if (bold && italic) return "bolditalic";
@@ -513,27 +541,46 @@ function sowBlocksFromHtml(html) {
 				});
 				return out;
 			};
-			const walk = (node, list) => {
+			const walk = (node, list, depth = 0) => {
 				node.childNodes.forEach((child) => {
 					if (child.nodeType !== 1) {
 						const text = String(child.textContent || "").trim();
-						if (text) blocks.push({ runs: [{ text, bold: false, italic: false }], list, heading: false });
+						if (text) blocks.push({ runs: [{ text, bold: false, italic: false }], list, heading: false, depth });
 						return;
 					}
 					const tag = child.tagName.toLowerCase();
 					if (tag === "ul" || tag === "ol") {
-						walk(child, true);
+						walk(child, true, depth + 1);
 						return;
 					}
-					if (tag === "li" || tag === "p" || tag === "div" || tag === "blockquote" || /^h[1-6]$/.test(tag)) {
+					if (tag === "li") {
+						// A list item's own text is one block; nested lists under it are its sub-tasks.
+						const own = parsed.createElement("div");
+						const nested = [];
+						Array.from(child.childNodes).forEach((n) => {
+							const t = n.nodeType === 1 ? n.tagName.toLowerCase() : "";
+							if (t === "ul" || t === "ol") nested.push(n);
+							else own.appendChild(n.cloneNode(true));
+						});
+						blocks.push({
+							runs: runsFrom(own, { bold: false, italic: false, underline: false, color: "" }),
+							list: true,
+							heading: false,
+							depth: Math.max(1, depth)
+						});
+						nested.forEach((n) => walk(n, true, Math.max(1, depth) + 1));
+						return;
+					}
+					if (tag === "p" || tag === "div" || tag === "blockquote" || /^h[1-6]$/.test(tag)) {
 						blocks.push({
 							runs: runsFrom(child, { bold: /^h[1-6]$/.test(tag), italic: false, underline: false, color: "" }),
-							list: list || tag === "li",
-							heading: /^h[1-6]$/.test(tag)
+							list,
+							heading: /^h[1-6]$/.test(tag),
+							depth
 						});
 						return;
 					}
-					walk(child, list);
+					walk(child, list, depth);
 				});
 			};
 			walk(root, false);
@@ -542,9 +589,10 @@ function sowBlocksFromHtml(html) {
 	}
 	const text = raw.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|h[1-6]|li|blockquote|tr)>/gi, "\n").replace(/<li\b[^>]*>/gi, "\n• ").replace(/<[^>]+>/g, "").replace(/&nbsp;/gi, " ").replace(/&/gi, "&").replace(/</gi, "<").replace(/>/gi, ">").replace(/"/gi, "\"").replace(/&#39;/gi, "'");
 	return text.split(/\n/).map((line) => ({
-		runs: [{ text: line.replace(/^[•]\s*/, ""), bold: false, italic: false, underline: false, color: "" }],
-		list: /^\s*•/.test(line),
-		heading: false
+		runs: [{ text: line.replace(/^\s*[•–-]\s*/, ""), bold: false, italic: false, underline: false, color: "" }],
+		list: /^\s*[•–-]/.test(line),
+		heading: false,
+		depth: /^\s*[•]/.test(line) ? 1 : /^\s+[–-]/.test(line) ? 2 : 0
 	}));
 }
 function sowPlainLines(html) {
@@ -555,64 +603,92 @@ function sowPlainLines(html) {
 	}).filter((line) => line);
 }
 function drawSowBody(doc, data, html, startY, margin, font, title) {
+	// Formal scope layout: padded from the page frame, main tasks numbered in bold
+	// black, sub-tasks indented beneath them in a smaller regular font, tight rows.
 	const pageW = doc.internal.pageSize.getWidth();
-	const maxW = pageW - margin * 2;
-	const lineH = 4.6;
-	let y = startY;
+	const left = margin + 4;
+	const maxW = pageW - left - (margin + 4);
+	let y = startY + 5;
+	let mainNo = 0;
+	let subNo = 0;
+	let prevList = false;
 	const ensure = (need) => {
 		const pageH = doc.internal.pageSize.getHeight();
 		if (y + need <= pageH - 16) return;
 		doc.addPage("a4", "portrait");
 		drawExportChrome(doc, data, { first: false, title });
-		y = exportHeaderBottom(doc, title) + 4;
+		y = 8 + 9;
 	};
-	sowBlocksFromHtml(html).forEach((block) => {
+	const blocks = sowBlocksFromHtml(html);
+	blocks.forEach((block) => {
 		const runs = block.runs || [];
+		const plain = runs.map((r) => r.text || "").join("").trim();
+		if (!plain) {
+			y += 1.2;
+			return;
+		}
+		if (prevList && !block.list) y += 2;
+		const depth = block.list ? Math.max(1, block.depth || 1) : 0;
+		const isMain = depth === 1;
+		const isSub = depth >= 2;
+		const allBold = runs.filter((r) => String(r.text || "").trim()).every((r) => r.bold);
+		const isTitle = !block.list && (block.heading || allBold);
+		const size = isTitle ? 10.5 : isMain ? 9.5 : isSub ? 8.5 : 9;
+		const lineH = isTitle ? 4.6 : isMain ? 4.1 : isSub ? 3.6 : 4;
+		let marker = "";
+		let markerX = left;
+		let textX = left;
+		if (isMain) {
+			if (mainNo > 0) y += 1;
+			mainNo += 1;
+			subNo = 0;
+			marker = `${mainNo}.`;
+			markerX = left + 1;
+			textX = left + 7;
+		} else if (isSub) {
+			subNo += 1;
+			marker = `${String.fromCharCode(96 + Math.min(26, subNo))}.`;
+			markerX = left + 7 + (depth - 2) * 5;
+			textX = markerX + 5;
+		}
+		const limit = maxW - (textX - left);
 		const words = [];
 		runs.forEach((run) => {
-			String(run.text || "").split("\n").forEach((part, index, parts) => {
+			String(run.text || "").split("\n").forEach((part, index) => {
 				if (index > 0) words.push({ break: true });
 				part.split(/(\s+)/).forEach((piece) => {
 					if (piece) words.push({
 						text: piece,
-						bold: !!run.bold,
+						bold: isMain || isTitle ? true : isSub ? false : !!run.bold,
 						italic: !!run.italic,
 						underline: !!run.underline,
-						color: run.color || "",
-						heading: !!block.heading
+						color: isMain || isTitle ? "" : run.color || ""
 					});
 				});
 			});
 		});
-		if (!words.some((word) => String(word.text || "").trim())) {
-			y += 2.2;
-			return;
-		}
-		const indent = block.list ? 5 : 0;
-		const x0 = margin + indent;
-		const limit = maxW - indent;
 		let line = [];
 		let width = 0;
-		let bullet = !block.list;
+		let first = true;
 		const measure = (word) => {
 			doc.setFont(font, sowFontStyle(word.bold, word.italic));
-			doc.setFontSize(word.heading ? 11 : 10);
+			doc.setFontSize(size);
 			return doc.getTextWidth(word.text);
 		};
 		const flush = () => {
 			if (!line.length) return;
 			ensure(lineH);
-			if (!bullet) {
-				doc.setFont(font, "normal");
-				doc.setFontSize(10);
+			if (first && marker) {
+				doc.setFont(font, isMain ? "bold" : "normal");
+				doc.setFontSize(size);
 				doc.setTextColor(0, 0, 0);
-				doc.text("•", margin + 0.6, y);
-				bullet = true;
+				doc.text(marker, markerX, y);
 			}
-			let x = x0;
+			first = false;
+			let x = textX;
 			line.forEach((word) => {
 				doc.setFont(font, sowFontStyle(word.bold, word.italic));
-				doc.setFontSize(word.heading ? 11 : 10);
+				doc.setFontSize(size);
 				const rgb = word.color ? cssColorToRgb(word.color) : null;
 				doc.setTextColor(rgb ? rgb[0] : 0, rgb ? rgb[1] : 0, rgb ? rgb[2] : 0);
 				doc.text(word.text, x, y);
@@ -642,12 +718,13 @@ function drawSowBody(doc, data, html, startY, margin, font, title) {
 			width += w;
 		});
 		flush();
-		y += block.heading ? 1.8 : 1.3;
+		y += isTitle ? 1.6 : isMain ? .7 : isSub ? .2 : 1;
+		prevList = !!block.list;
 	});
 	return y;
 }
 var BOL_LIGHT_BLUE = [173, 216, 230];
-function drawSheetBanner(doc, text, y, margin, fill, fontName) {
+function drawSheetBanner(doc, text, y, margin, fill, fontName, textColor) {
 	const pageW = doc.internal.pageSize.getWidth();
 	const w = pageW - margin * 2;
 	const h = 7;
@@ -657,9 +734,67 @@ function drawSheetBanner(doc, text, y, margin, fill, fontName) {
 	doc.rect(margin, y, w, h, "FD");
 	doc.setFont(fontName || "helvetica", "bold");
 	doc.setFontSize(8.5);
-	doc.setTextColor(0, 0, 0);
+	const tc = textColor || [0, 0, 0];
+	doc.setTextColor(tc[0], tc[1], tc[2]);
 	doc.text(String(text || ""), margin + w / 2, y + 4.6, { align: "center" });
+	doc.setTextColor(0, 0, 0);
 	return y + h;
+}
+function planExportColumns(doc, font, columns, body, rowMeta, descIdx, fontSize, block) {
+	// Item No. stays narrow (its header wraps "Item / No."), numbers never wrap,
+	// no word is ever split mid-word, and the description column takes the rest.
+	if (block.keepWidths || descIdx < 0) return block.columnStyles || {};
+	const pad = 1.15 * 2 + .8;
+	const tableW = doc.internal.pageSize.getWidth() - 20;
+	const spanned = (meta) => meta && (meta.kind === "group" || meta.kind === "shift" || meta.kind === "total" || meta.kind === "labelled-total");
+	const width = (text, bold) => {
+		doc.setFont(font, bold ? "bold" : "normal");
+		doc.setFontSize(fontSize);
+		return doc.getTextWidth(String(text ?? ""));
+	};
+	const longestWord = (text, bold) => String(text ?? "").split(/\s+/).reduce((mx, w) => Math.max(mx, width(w, bold)), 0);
+	const styles = {};
+	let fixed = 0;
+	columns.forEach((col, i) => {
+		const base = { ...(block.columnStyles?.[i] || {}) };
+		delete base.cellWidth;
+		if (i === descIdx) {
+			let minW = longestWord(col, true);
+			body.forEach((row, r) => {
+				if (!spanned(rowMeta[r])) minW = Math.max(minW, longestWord(row[i]));
+			});
+			styles[i] = { ...base, minCellWidth: minW + pad };
+			return;
+		}
+		let w = longestWord(col, true);
+		body.forEach((row, r) => {
+			const meta = rowMeta[r];
+			if (!spanned(meta)) w = Math.max(w, width(row[i], true));
+			else if (meta.kind === "labelled-total" && meta.labelCol === i && !meta.labelSpan) w = Math.max(w, width(row[i], true));
+			else if ((meta.kind === "labelled-total" || meta.kind === "total") && i === columns.length - 1) w = Math.max(w, width(row[i], true));
+			else if (meta.kind === "total" && i === block.totalQtyCol) w = Math.max(w, width(row[i], true));
+		});
+		const cw = Math.max(i === 0 ? 7 : 9, w + pad);
+		styles[i] = { ...base, cellWidth: cw };
+		fixed += cw;
+	});
+	// Spare width first lets headers sit on one line, the rest goes to the description.
+	const descKeep = Math.max(styles[descIdx].minCellWidth, tableW * .34);
+	let spare = tableW - fixed - descKeep;
+	if (spare > 0) {
+		const wants = columns.map((col, i) => i === descIdx || i === 0 ? 0 : Math.max(0, width(col, true) + pad - styles[i].cellWidth));
+		const need = wants.reduce((a, b) => a + b, 0);
+		if (need > 0) {
+			const share = Math.min(1, spare / need);
+			wants.forEach((want, i) => {
+				if (!want) return;
+				styles[i].cellWidth += want * share;
+				fixed += want * share;
+			});
+		}
+	}
+	styles[descIdx].cellWidth = Math.max(styles[descIdx].minCellWidth, tableW - fixed);
+	return styles;
 }
 function paintSheetTable(doc, data, section, block, startY, margin, font, pageState) {
 	const columns = block.columns || [];
@@ -670,9 +805,12 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 		return cells.slice(0, columns.length);
 	});
 	if (!columns.length) return startY;
-	const descIdx = columns.findIndex((c) => /description|role|manpower|category/i.test(String(c)));
+	const descIdx = columns.findIndex((c) => /description|designation|role|manpower|category/i.test(String(c)));
 	const moneyIdx = columns.map((c, i) => /cost|rate|subtotal|total|price|amount/i.test(String(c)) ? i : -1).filter((i) => i >= 0);
 	const headFill = block.headFill || [255, 255, 255];
+	const tableFont = block.fontSize || (columns.length > 8 ? 7 : 8);
+	const planBody = block.planRows ? block.planRows.map((row) => (row || []).map(pdfCell)) : body;
+	const columnStyles = planExportColumns(doc, font, columns, planBody, block.planMeta || rowMeta, descIdx, tableFont, block);
 	autoTable(doc, {
 		head: [columns.map(pdfCell)],
 		showHead: block.hideHead ? "never" : "everyPage",
@@ -693,7 +831,7 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 			],
 			lineWidth: .35,
 			cellPadding: 1.15,
-			fontSize: block.fontSize || (columns.length > 8 ? 7 : 8),
+			fontSize: tableFont,
 			valign: "middle",
 			halign: "center",
 			textColor: [
@@ -728,11 +866,29 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 				0
 			]
 		},
-		columnStyles: block.columnStyles || {},
+		columnStyles,
 		didParseCell: (hook) => {
 			if (hook.section !== "body") return;
 			const meta = rowMeta[hook.row.index] || {};
 			const last = columns.length - 1;
+			if (meta.kind === "labelled-total") {
+				// MISC style: "SUB TOTAL:" sits in the label column, amount in the last column.
+				const lc = meta.labelCol;
+				if (hook.column.index === 0 && lc > 0) {
+					hook.cell.colSpan = lc;
+					hook.cell.styles.lineWidth = meta.open ? 0 : .35;
+					hook.cell.styles.fillColor = meta.fill || [255, 255, 255];
+				}
+				if (hook.column.index === lc) {
+					if (meta.labelSpan) hook.cell.colSpan = meta.labelSpan;
+					hook.cell.styles.halign = "right";
+					hook.cell.styles.fontStyle = "bold";
+				}
+				if (hook.column.index === last) hook.cell.styles.fontStyle = "bold";
+				if (meta.fill) hook.cell.styles.fillColor = meta.fill;
+				if (hook.column.index === last || hook.column.index === lc) hook.cell.styles.halign = "right";
+				return;
+			}
 			if ((meta.kind === "group" || meta.kind === "shift") && hook.column.index === 0) {
 				hook.cell.colSpan = columns.length;
 				hook.cell.styles.halign = "left";
@@ -768,11 +924,16 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 			if (meta.kind === "sum-main" && (hook.column.index === 1 || hook.column.index === last)) hook.cell.styles.fontStyle = "bold";
 			if ((meta.kind === "sum-sub" || meta.kind === "sum-break" || meta.kind === "sum-custom") && hook.column.index === 1) hook.cell.styles.fontStyle = "italic";
 			if ((meta.kind === "sum-sub" || meta.kind === "sum-break" || meta.kind === "sum-custom" || meta.kind === "sum-line") && hook.column.index === last) hook.cell.styles.fontStyle = "bold";
-			if (meta.kind === "sum-blue") {
+			if (meta.kind === "sum-blue" || meta.kind === "sum-final") {
 				hook.cell.styles.fillColor = [173, 216, 230];
+				hook.cell.styles.textColor = [0, 0, 0];
+				if (hook.column.index === 1) {
+					hook.cell.styles.halign = "right";
+					hook.cell.styles.fontStyle = "bold";
+				}
 				if (hook.column.index === last && String(hook.cell.text || "").trim()) hook.cell.styles.fontStyle = "bold";
 			}
-			if (descIdx >= 0 && hook.column.index === descIdx && meta.kind !== "total" && meta.kind !== "group") hook.cell.styles.halign = "left";
+			if (descIdx >= 0 && hook.column.index === descIdx && meta.kind !== "total" && meta.kind !== "group" && meta.kind !== "sum-final") hook.cell.styles.halign = "left";
 			if (moneyIdx.includes(hook.column.index) || hook.column.index === last) hook.cell.styles.halign = "right";
 		},
 		didDrawPage: () => {
@@ -948,16 +1109,34 @@ async function renderCostEstimatePdf(data) {
 				first: true,
 				title: title || "SCOPE OF WORK"
 			});
-			drawSowBody(doc, data, section.sowHtml, startY + 1, margin, font, title || "SCOPE OF WORK");
+			drawSowBody(doc, data, section.sowHtml, startY + 2, margin, font, title || "SCOPE OF WORK");
 			return;
 		}
 		if (section.projectBlock) startY = drawSummaryInfo(doc, section.projectBlock, margin, startY, doc.internal.pageSize.getWidth() - 20) + 2;
 		const pageState = { first: true };
+		// Tables of one sheet that share a header get the same column widths, so they line up.
+		const shared = new Map();
+		(section.blocks || []).forEach((block) => {
+			if (!block.columns?.length || !Array.isArray(block.rows)) return;
+			const key = block.columns.join("|");
+			const hit = shared.get(key) || { rows: [], meta: [] };
+			hit.rows.push(...block.rows);
+			hit.meta.push(...block.rows.map((_, i) => (block.rowMeta || [])[i] || {}));
+			shared.set(key, hit);
+		});
+		(section.blocks || []).forEach((block) => {
+			const hit = block.columns?.length ? shared.get(block.columns.join("|")) : null;
+			if (hit && !block.planRows) {
+				block.planRows = hit.rows;
+				block.planMeta = hit.meta;
+			}
+		});
 		(section.blocks?.length ? section.blocks : [{
 			columns: section.columns,
 			rows: section.rows,
 			rowMeta: section.rowMeta,
-			columnStyles: section.columnStyles
+			columnStyles: section.columnStyles,
+			keepWidths: section.keepWidths
 		}]).forEach((block) => {
 			const pageH = doc.internal.pageSize.getHeight();
 			const need = (block.banner ? 8 : 0) + (block.columns?.length ? 22 : 0);
@@ -966,7 +1145,7 @@ async function renderCostEstimatePdf(data) {
 				startY = exportHeaderBottom(doc, title) + 2;
 				pageState.first = true;
 			}
-			if (block.banner) startY = drawSheetBanner(doc, block.banner, startY, margin, block.bannerFill || BOL_LIGHT_BLUE, font);
+			if (block.banner) startY = drawSheetBanner(doc, block.banner, startY, margin, block.bannerFill || BOL_LIGHT_BLUE, font, block.bannerText);
 			if (block.heading) {
 				if (startY > pageH - 28) {
 					doc.addPage("a4", orientation);
@@ -980,8 +1159,8 @@ async function renderCostEstimatePdf(data) {
 				doc.setFont(font, "bold");
 				doc.setFontSize(9);
 				doc.setTextColor(0, 0, 0);
-				doc.text(String(block.heading), margin, startY + 4);
-				startY += 6;
+				doc.text(String(block.heading), margin + .5, startY + 3.6);
+				startY += block.headingTight ? 4.6 : 6;
 			}
 			if (block.columns?.length && Array.isArray(block.rows) && block.rows.length) {
 				startY = paintSheetTable(doc, data, section, block, startY, margin, font, pageState) + (block.afterTight ? .6 : 3);
@@ -1003,12 +1182,15 @@ async function renderCostEstimatePdf(data) {
 		doc.setFontSize(8);
 		doc.setTextColor(0, 0, 0);
 		doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 11, { align: "right" });
+		if (data?.footerTag) {
+			doc.setFont(font, "bold");
+			doc.setTextColor(155, 28, 28);
+			doc.text(String(data.footerTag), pageWidth / 2, pageHeight - 11, { align: "center" });
+			doc.setTextColor(0, 0, 0);
+		}
 	}
 	if (data?.draftWatermark) stampDraftWatermark(doc);
 	return pdfHandle(await stitchPdfAttachments(doc, inserts));
-}
-function sheetName(title) {
-	return String(title || "Sheet").replace(/[\\/?*[\]]/g, " ").slice(0, 31);
 }
 function issuePdfData(data = {}) {
 	const ceNumber = data.ceNumber || data.cover?.ceNumber || "CE";
@@ -1066,160 +1248,26 @@ async function exportIssuePdf(data = {}) {
 	link.click();
 	URL.revokeObjectURL(url);
 }
-function coverWorkAmounts(tasks, pricing) {
-	const blank = () => ({ onsite: 0, shop: 0, trading: 0 });
-	if (isDirectPricing(pricing)) {
-		const rows = [
-			["BOL", blank()],
-			["A.1 Benefits", blank()],
-			["BOTE", blank()],
-			["BOCM", blank()],
-			["PPE", blank()],
-			["MISC", blank()]
-		];
-		const keyOf = { BOL: "A", "A.1 Benefits": "A1", BOTE: "B", BOCM: "C", PPE: "D", MISC: "E" };
-		["onsite", "shop", "trading"].forEach((col) => {
-			const subset = (tasks || []).filter((task2) => taskWorkType(task2) === col);
-			const totals = directColumnTotals(subset, pricing);
-			rows.forEach((row) => {
-				row[1][col] = totals[keyOf[row[0]]] || 0;
-			});
-		});
-		return { direct: true, rows };
+async function exportIssueExcel(data = {}) {
+	const ceNumber = data.ceNumber || data.cover?.ceNumber || "CE";
+	try {
+		const ExcelJS = (await import("exceljs")).default;
+		const res = await fetch("/templates/ce-template.xlsx");
+		if (!res.ok) throw new Error("template");
+		const buffer = await res.arrayBuffer();
+		const filled = await fillCeTemplate(ExcelJS, buffer, buildCeExcelModel(data));
+		const blob = new Blob([filled.buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = `CE_${ceNumber}.xlsx`;
+		link.click();
+		URL.revokeObjectURL(url);
+		return { checksum: filled.total, unresolved: filled.unresolved, totals: filled.totals };
+	} catch {
+		alert("Couldn't get a workbook, try again");
+		return null;
 	}
-	const cats = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
-	const table = {
-		BOL: blank(),
-		BOTE: blank(),
-		BOCM: blank(),
-		PPE: blank(),
-		MISC: blank(),
-		MOB: blank()
-	};
-	(tasks || []).forEach((task2) => {
-		const wt = taskWorkType(task2);
-		const col = wt === "shop" ? "shop" : wt === "trading" ? "trading" : "onsite";
-		cats.forEach((cat) => {
-			table[cat][col] = roundMoney(table[cat][col] + categoryOnTask(task2, cat));
-		});
-	});
-	return {
-		direct: false,
-		rows: ["BOL", "BOTE", "BOCM", "PPE", "MISC", "MOB"].map((name) => [name, table[name]])
-	};
-}
-function exportIssueExcel(data = {}) {
-	const cover = data.cover || {};
-	const grand = Number(cover.grandTotal) || 0;
-	const checksum = Math.round(grand * 100) / 100;
-	const stamp = cover.exportedAt || (/* @__PURE__ */ new Date()).toISOString();
-	const ceNumber = data.ceNumber || cover.ceNumber || "CE";
-	const rceLabel2 = cover.rceLabel || "";
-	const wb = XLSX.utils.book_new();
-	const letter = resolvedLetterhead(data, "&P");
-	const categorySheets = (data.sections || []).filter((s) => s.title && s.title !== "Cover" && Array.isArray(s.columns) && !s.rceForm && !s.imageData && !s.pdfData);
-	const coverAoA = [
-		[
-			letter.headerLeft,
-			data.draftWatermark ? "DRAFT" : "",
-			letter.headerRight
-		],
-		[],
-		["Project cover — formulas sum category sheets. Do not paste over the net."],
-		["Client", cover.client || ""],
-		["Site", cover.location || ""],
-		["CE #", ceNumber],
-		["RCE #", rceLabel2],
-		["Date", cover.date || ""],
-		["Validity days", Number(cover.validityDays) || 30],
-		["Prepared", cover.preparedBy || ""],
-		["Reviewed", cover.reviewedBy || ""],
-		["Approved", cover.approvedBy || ""],
-		[],
-		[
-			"Category",
-			"Onsite",
-			"Shop",
-			"Trading",
-			"Total"
-		]
-	];
-	const amounts = coverWorkAmounts(data.tasks || [], data.pricing);
-	const catRows = amounts.rows;
-	catRows.forEach((entry, i) => {
-		const row = 15 + i;
-		const cell = entry[1] || { onsite: 0, shop: 0, trading: 0 };
-		coverAoA.push([
-			entry[0],
-			roundMoney(cell.onsite),
-			roundMoney(cell.shop),
-			roundMoney(cell.trading),
-			{ f: `ROUND(B${row}+C${row}+D${row},2)` }
-		]);
-	});
-	const first = 15;
-	const last = 14 + catRows.length;
-	coverAoA.push([]);
-	coverAoA.push([
-		"Grand",
-		"",
-		"",
-		"",
-		{ f: `ROUND(SUM(E${first}:E${last}),2)` }
-	]);
-	if (!amounts.direct) {
-		coverAoA.push(["Contingency %", Number(cover.contingencyPct) || 0]);
-		coverAoA.push(["Discount %", Number(cover.discountPct) || 0]);
-		coverAoA.push([
-			"Net",
-			"",
-			"",
-			"",
-			{ f: `ROUND(E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100),2)` }
-		]);
-	}
-	coverAoA.push([]);
-	coverAoA.push(["Assumptions / exclusions", cover.assumptions || ""]);
-	const coverWs = XLSX.utils.aoa_to_sheet(coverAoA);
-	coverWs["!freeze"] = {
-		xSplit: 0,
-		ySplit: 1
-	};
-	XLSX.utils.book_append_sheet(wb, coverWs, "Cover");
-	categorySheets.forEach((section) => {
-		const wsData = [
-			[
-				letter.headerLeft,
-				"",
-				letter.headerRight
-			],
-			section.columns,
-			...section.rows
-		];
-		const ws = XLSX.utils.aoa_to_sheet(wsData);
-		ws["!freeze"] = {
-			xSplit: 0,
-			ySplit: 2
-		};
-		ws["!cols"] = (section.columns || []).map((col, i) => ({ wch: Math.max(String(col || "").length, ...section.rows.map((row) => row[i] ? String(row[i]).length : 0), 8) }));
-		XLSX.utils.book_append_sheet(wb, ws, sheetName(section.title));
-	});
-	const metaRows = [
-		["CE #", ceNumber],
-		["RCE", rceLabel2],
-		["Markup #", cover.markupNo || ""],
-		["Exported by", cover.exportedBy || ""],
-		["Timestamp", stamp],
-		["Grand total checksum", checksum]
-	];
-	if (!amounts.direct) metaRows.push(["Net", cover.netTotal || checksum]);
-	const meta = XLSX.utils.aoa_to_sheet(metaRows);
-	XLSX.utils.book_append_sheet(wb, meta, "ExportMeta");
-	XLSX.writeFile(wb, `Issue_Pack_${ceNumber}.xlsx`);
-	return {
-		checksum,
-		stamp
-	};
 }
 function rceMark(doc, x, y, on) {
 	doc.setLineWidth(.3);
@@ -1229,6 +1277,34 @@ function rceMark(doc, x, y, on) {
 		doc.line(x + .5, y - 1.1, x + 1.3, y + .2);
 		doc.line(x + 1.3, y + .2, x + 2.7, y - 2.3);
 	}
+}
+// RCE form document control. The official RCE form number is not known yet:
+// set docControlNo / revisionNo / revisionDate here (or pass rce.docControl /
+// documentControl.rceDocControl) once Document Control issues them.
+const RCE_DOC_CONTROL = {
+	docControlNo: "F-____",
+	revisionNo: "",
+	revisionDate: ""
+};
+// Vector marks for the YES / NO / N/A columns (no font glyphs needed).
+function rceDrawTick(doc, cx, cy) {
+	doc.setDrawColor(16, 150, 64);
+	doc.setLineWidth(.75);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("round");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("round");
+	doc.lines([[1.15, 1.35], [2.35, -3.1]], cx - 1.75, cy + .05, [1, 1], "S", false);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("butt");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("miter");
+	doc.setDrawColor(0, 0, 0);
+}
+function rceDrawCross(doc, cx, cy) {
+	doc.setDrawColor(210, 28, 28);
+	doc.setLineWidth(.75);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("round");
+	doc.line(cx - 1.35, cy - 1.35, cx + 1.35, cy + 1.35);
+	doc.line(cx - 1.35, cy + 1.35, cx + 1.35, cy - 1.35);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("butt");
+	doc.setDrawColor(0, 0, 0);
 }
 function exportRceToPDF(rce = {}, hostDoc) {
 	const doc = hostDoc || new jsPDF({
@@ -1240,34 +1316,87 @@ function exportRceToPDF(rce = {}, hostDoc) {
 	const pageH = doc.internal.pageSize.getHeight();
 	const m = 10;
 	const innerW = pageW - 20;
+	const startPage = doc.getCurrentPageInfo?.().pageNumber || doc.getNumberOfPages();
+	const fontName = doc.getFont()?.fontName || "helvetica";
+	const fontStyles = (typeof doc.getFontList === "function" ? doc.getFontList()[fontName] : null) || ["normal", "bold", "italic"];
+	const italicStyle = fontStyles.includes("italic") ? "italic" : "normal";
+	doc.setDrawColor(0, 0, 0);
+	doc.setTextColor(0, 0, 0);
 	doc.setLineWidth(.5);
 	doc.rect(m, m, innerW, pageH - 20);
-	let y = 14;
-	const logo = rce.companyLogo;
-	if (logo) try {
-		doc.addImage(logo, logoFormat(logo), 14, y, 42, 14);
-	} catch {
-		doc.setFontSize(11);
-		doc.setFont(void 0, "bold");
-		doc.text("LOGO", 16, y + 9);
-	}
-	else {
-		doc.setFontSize(11);
-		doc.setFont(void 0, "bold");
-		doc.text("LOGO", 16, y + 9);
-	}
-	y += 18;
+	// ---- Header: logo (fills its box) + document control block (upper right) ----
+	const headH = 22;
+	const dcLabelW = 27;
+	const dcValueW = 31;
+	const dcX = pageW - m - dcLabelW - dcValueW;
+	const dcRowH = headH / 4;
+	const dcCfg = { ...RCE_DOC_CONTROL, ...(rce.docControl || {}) };
 	doc.setLineWidth(.3);
+	doc.line(dcX, m, dcX, m + headH);
+	doc.line(dcX + dcLabelW, m, dcX + dcLabelW, m + dcRowH * 3);
+	for (let i = 1; i < 4; i += 1) doc.line(dcX, m + dcRowH * i, pageW - m, m + dcRowH * i);
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(7.5);
+	[
+		["Doc. Control No.:", dcCfg.docControlNo],
+		["Revision No.:", dcCfg.revisionNo],
+		["Revision Date:", dcCfg.revisionDate]
+	].forEach(([label, value], i) => {
+		const ty = m + dcRowH * i + dcRowH / 2 + 1;
+		doc.text(label, dcX + 1.5, ty);
+		doc.text(String(value || ""), dcX + dcLabelW + 1.5, ty);
+	});
+	const pageRowY = m + dcRowH * 3 + dcRowH / 2 + 1;
+	const logoBoxW = 42; // same logo cell as the CE header
+	const logo = rce.companyLogo;
+	const pad = 1.2;
+	const boxW = logoBoxW - pad * 2;
+	const boxH = headH - pad * 2;
+	let drewLogo = false;
+	if (logo) try {
+		let drawW = boxW;
+		let drawH = boxH;
+		try {
+			const props = doc.getImageProperties(logo);
+			const ratio = props.width && props.height ? props.width / props.height : boxW / boxH;
+			if (boxW / boxH > ratio) drawW = boxH * ratio;
+			else drawH = boxW / ratio;
+		} catch { /* unknown size: use the whole box */ }
+		doc.addImage(logo, logoFormat(logo), m + pad + (boxW - drawW) / 2, m + pad + (boxH - drawH) / 2, drawW, drawH);
+		drewLogo = true;
+	} catch { /* fall through to the text placeholder */ }
+	if (!drewLogo) {
+		doc.setFontSize(11);
+		doc.setFont(void 0, "bold");
+		doc.text("LOGO", m + logoBoxW / 2, m + headH / 2 + 1.5, { align: "center" });
+	}
+	doc.setLineWidth(.3);
+	doc.line(m + logoBoxW, m, m + logoBoxW, m + headH);
+	let y = m + headH;
+	doc.setFillColor(173, 216, 230);
+	doc.rect(m, y, innerW, 11, "F");
 	doc.line(m, y, pageW - m, y);
-	y += 8;
+	y += 7;
 	doc.setFontSize(13);
 	doc.setFont(void 0, "bold");
 	doc.text("REQUEST FOR COSTING (RCE) CHECKLIST FORM", pageW / 2, y, { align: "center" });
-	y += 5;
+	y += 4;
 	doc.line(m, y, pageW - m, y);
-	const leftW = innerW * .58;
+	// ---- Info block: wide left values, compact right labels with values beside them ----
+	const leftW = Math.round(innerW * .665 * 10) / 10;
 	const rightX = m + leftW;
-	const rowH = 8;
+	const rightW = innerW - leftW;
+	const leftLabelW = 26;
+	const leftValX = m + leftLabelW + 1.5;
+	const leftValW = leftW - leftLabelW - 4;
+	const rLabelW = 25;
+	const rDivX = rightX + 1.8 + rLabelW + .6;
+	const rValX = rDivX + 1.6;
+	const rValW = rightX + rightW - rValX - 1.5;
+	const LBL = 7;
+	const LBL_LH = 2.9;
+	const VAL = 8;
+	const VAL_LH = 3.4;
 	const box = (x, yy, w, h) => {
 		doc.setLineWidth(.25);
 		doc.rect(x, yy, w, h);
@@ -1278,93 +1407,76 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		doc.setFont(void 0, "normal");
 		doc.text(label, x + 4.5, yy);
 	};
+	const wrap = (text, width, size, style) => {
+		doc.setFont(void 0, style);
+		doc.setFontSize(size);
+		return String(text || "").split("\n").flatMap((part) => doc.splitTextToSize(part, width));
+	};
+	const rightCell = (label, value) => ({ label: wrap(label, rLabelW, LBL, "bold"), value: wrap(value, rValW, VAL, "normal") });
+	const rightH = (cell) => Math.max(cell.label.length * LBL_LH, cell.value.length * VAL_LH);
+	const drawRight = (cell, rowY, rowH) => {
+		const top = rowY + (rowH - rightH(cell)) / 2 + 2.5;
+		doc.setFont(void 0, "bold");
+		doc.setFontSize(LBL);
+		doc.text(cell.label, rightX + 1.8, top, { lineHeightFactor: LBL_LH / (LBL * .3528) });
+		doc.setFont(void 0, "normal");
+		doc.setFontSize(VAL);
+		doc.text(cell.value, rValX, top + .1, { lineHeightFactor: VAL_LH / (VAL * .3528) });
+	};
+	const rows = [
+		{ kind: "project", right: rightCell("INQUIRY NUMBER & DATE:", [rce.inquiryNumber, rce.inquiryDate].filter(Boolean).join("\n")) },
+		{ kind: "text", label: "CUSTOMER:", value: rce.customer || rce.client || "", right: rightCell("RCE NO.:", rce.rceNo || rce.id || "") },
+		{ kind: "text", label: "ADDRESS:", value: rce.address || "", right: rightCell("RCE DATE:", rce.rceDate || "") },
+		{ kind: "text", label: "PROJECT TITLE:", value: rce.projectTitle || "", right: rightCell("PRIORITY LEVEL:", rce.priorityLevel || "") },
+		{ kind: "type", right: rightCell("CE DEADLINE:", rce.ceDeadline || "") },
+		{ kind: "dept", right: rightCell("SUBMISSION DEADLINE:", rce.submissionDeadline || "") }
+	];
 	let rowY = y;
-	box(m, rowY, leftW, rowH);
-	box(rightX, rowY, innerW - leftW, rowH);
-	drawCheck(13, rowY + 5.2, "NEW PROJECT", rce.projectType === "New Project");
-	drawCheck(52, rowY + 5.2, "EXISTING PROJECT", rce.projectType === "Existing Project");
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("INQUIRY NUMBER & DATE:", rightX + 2, rowY + 3.2);
-	doc.setFont(void 0, "normal");
-	doc.setFontSize(8);
-	doc.text(`${rce.inquiryNumber || ""}   ${rce.inquiryDate || ""}`, rightX + 2, rowY + 6.6);
-	[
-		[
-			"CUSTOMER:",
-			rce.customer || rce.client || "",
-			"RCE NO.:",
-			rce.rceNo || rce.id || ""
-		],
-		[
-			"ADDRESS:",
-			rce.address || "",
-			"RCE DATE:",
-			rce.rceDate || ""
-		],
-		[
-			"PROJECT TITLE:",
-			rce.projectTitle || "",
-			"PRIORITY LEVEL:",
-			rce.priorityLevel || ""
-		]
-	].forEach((row) => {
-		rowY += rowH;
+	rows.forEach((row) => {
+		const valueLines = row.kind === "text" ? wrap(row.value, leftValW, VAL, "normal") : [];
+		const rowH = Math.max(8, valueLines.length * VAL_LH + 3.4, rightH(row.right) + 3.2);
 		box(m, rowY, leftW, rowH);
-		box(rightX, rowY, innerW - leftW, rowH);
-		doc.setFontSize(7);
-		doc.setFont(void 0, "bold");
-		if (row[0]) doc.text(row[0], 12, rowY + 3);
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(8);
-		if (row[0]) doc.text(String(row[1] || ""), 42, rowY + 5.5, { maxWidth: leftW - 34 });
-		doc.setFontSize(7);
-		doc.setFont(void 0, "bold");
-		doc.text(row[2], rightX + 2, rowY + 3);
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(8);
-		doc.text(String(row[3] || ""), rightX + 2, rowY + 6.4);
+		box(rightX, rowY, rightW, rowH);
+		doc.line(rDivX, rowY, rDivX, rowY + rowH);
+		if (row.kind !== "project") doc.line(m + leftLabelW, rowY, m + leftLabelW, rowY + rowH);
+		const midY = rowY + rowH / 2;
+		if (row.kind === "project") {
+			drawCheck(13, midY + 1.2, "NEW PROJECT", rce.projectType === "New Project");
+			drawCheck(52, midY + 1.2, "EXISTING PROJECT", rce.projectType === "Existing Project");
+		} else {
+			doc.setFont(void 0, "bold");
+			doc.setFontSize(LBL);
+			doc.text(row.kind === "type" ? "PROJECT TYPE:" : row.kind === "dept" ? "DEPARTMENT:" : row.label, 12, midY + 1);
+			if (row.kind === "text") {
+				doc.setFont(void 0, "normal");
+				doc.setFontSize(VAL);
+				const top = midY - (valueLines.length * VAL_LH) / 2 + 2.5;
+				doc.text(valueLines, leftValX, top, { lineHeightFactor: VAL_LH / (VAL * .3528) });
+			} else if (row.kind === "type") {
+				drawCheck(leftValX, midY + 1.2, "SHOPWORK", !!rce.shopwork);
+				drawCheck(leftValX + 30, midY + 1.2, "ON-SITE", !!rce.onsite);
+				drawCheck(leftValX + 58, midY + 1.2, "TRADING", !!rce.trading);
+			} else {
+				drawCheck(leftValX, midY + 1.2, "MECHANICAL", !!rce.mechanical);
+				drawCheck(leftValX + 34, midY + 1.2, "ELECTRICAL", !!rce.electrical);
+			}
+		}
+		drawRight(row.right, rowY, rowH);
+		rowY += rowH;
 	});
-	rowY += rowH;
-	box(m, rowY, leftW, 10);
-	box(rightX, rowY, innerW - leftW, 10);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("PROJECT TYPE:", 12, rowY + 3.4);
-	drawCheck(38, rowY + 6.4, "SHOPWORK", !!rce.shopwork);
-	drawCheck(68, rowY + 6.4, "ON-SITE", !!rce.onsite);
-	drawCheck(96, rowY + 6.4, "TRADING", !!rce.trading);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("CE DEADLINE:", rightX + 2, rowY + 3.2);
-	doc.setFont(void 0, "normal");
-	doc.setFontSize(8);
-	doc.text(String(rce.ceDeadline || ""), rightX + 2, rowY + 6.8);
-	rowY += 10;
-	box(m, rowY, leftW, rowH);
-	box(rightX, rowY, innerW - leftW, rowH);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("DEPARTMENT:", 12, rowY + 3.2);
-	drawCheck(38, rowY + 5.6, "MECHANICAL", !!rce.mechanical);
-	drawCheck(72, rowY + 5.6, "ELECTRICAL", !!rce.electrical);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("SUBMISSION DEADLINE:", rightX + 2, rowY + 3.2);
-	doc.setFont(void 0, "normal");
-	doc.setFontSize(8);
-	doc.text(String(rce.submissionDeadline || ""), rightX + 2, rowY + 6.8);
-	rowY += 11;
+	rowY += 3.5;
 	doc.setFontSize(7.5);
-	doc.setFont(void 0, "italic");
+	doc.setFont(void 0, italicStyle);
 	doc.text("Note: Please kindly attach files Needed.", 12, rowY);
 	rowY += 2;
-	const body = (rce.checklistItems || []).map((it) => [
+	// ---- Checklist: green tick for YES / N/A, red X for NO, italic wrapped remarks ----
+	const items = rce.checklistItems || [];
+	const body = items.map((it) => [
 		it.num,
 		it.desc,
-		it.complete === "YES" ? "X" : "",
-		it.complete === "NO" ? "X" : "",
-		it.complete === "N/A" ? "X" : "",
+		"",
+		"",
+		"",
 		it.remarks || ""
 	]);
 	autoTable(doc, {
@@ -1384,56 +1496,40 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		]],
 		body,
 		styles: {
-			font: doc.getFont()?.fontName || "helvetica",
+			font: fontName,
 			fontSize: 7.5,
 			cellPadding: 1.2,
+			minCellHeight: 5.6,
 			lineWidth: .25,
-			lineColor: [
-				0,
-				0,
-				0
-			],
-			textColor: [
-				0,
-				0,
-				0
-			],
-			valign: "middle"
+			lineColor: [0, 0, 0],
+			textColor: [0, 0, 0],
+			valign: "middle",
+			overflow: "linebreak"
 		},
 		headStyles: {
-			font: doc.getFont()?.fontName || "helvetica",
-			fillColor: [
-				240,
-				240,
-				240
-			],
-			textColor: [
-				0,
-				0,
-				0
-			],
+			font: fontName,
+			fillColor: [173, 216, 230],
+			textColor: [0, 0, 0],
 			fontStyle: "bold",
 			halign: "center"
 		},
 		columnStyles: {
-			0: {
-				cellWidth: 16,
-				halign: "center"
-			},
-			1: { cellWidth: 88 },
-			2: {
-				cellWidth: 12,
-				halign: "center"
-			},
-			3: {
-				cellWidth: 12,
-				halign: "center"
-			},
-			4: {
-				cellWidth: 12,
-				halign: "center"
-			},
-			5: { cellWidth: "auto" }
+			0: { cellWidth: 16, halign: "center" },
+			1: { cellWidth: 86 },
+			2: { cellWidth: 12, halign: "center" },
+			3: { cellWidth: 12, halign: "center" },
+			4: { cellWidth: 12, halign: "center" },
+			5: { cellWidth: "auto", fontStyle: italicStyle }
+		},
+		didDrawCell: (data) => {
+			if (data.section !== "body" || data.column.index < 2 || data.column.index > 4) return;
+			const mark = String(items[data.row.index]?.complete || "").toUpperCase();
+			const col = { YES: 2, NO: 3, "N/A": 4 }[mark];
+			if (col !== data.column.index) return;
+			const cx = data.cell.x + data.cell.width / 2;
+			const cy = data.cell.y + data.cell.height / 2;
+			if (mark === "NO") rceDrawCross(doc, cx, cy);
+			else rceDrawTick(doc, cx, cy);
 		}
 	});
 	let y2 = (doc.lastAutoTable?.finalY || rowY) + 4;
@@ -1447,65 +1543,38 @@ function exportRceToPDF(rce = {}, hostDoc) {
 	const remarks = doc.splitTextToSize(String(rce.otherRemarks || ""), innerW - 6);
 	doc.text(remarks, 12, y2 + 8);
 	y2 += remarksH;
-	box(m, y2, innerW, remarksH);
+	// Top line only: no horizontal rule between this box and the signatories.
+	doc.setLineWidth(.25);
+	doc.line(m, y2, pageW - m, y2);
 	doc.setFont(void 0, "bold");
 	doc.text("REASON TO DECLINE / NO QUOTE:", 12, y2 + 4);
 	doc.setFont(void 0, "normal");
 	const decline = doc.splitTextToSize(String(rce.declineReason || ""), innerW - 6);
 	doc.text(decline, 12, y2 + 8);
 	y2 += remarksH;
-	const sigW = innerW / 3;
-	const sigNames = [
-		rce.preparedBy,
-		rce.reviewedBy,
-		rce.approvedBy
-	];
-	const sigTitles = [
-		rce.preparedTitle,
-		rce.reviewedTitle,
-		rce.approvedTitle
-	];
-	const sigStamps = [
-		rce.preparedStamp,
-		rce.reviewedStamp,
-		rce.approvedStamp
-	];
-	const hasSigStamp = sigStamps.some(Boolean);
-	const sigH = hasSigStamp ? 20 : 16;
-	[
-		"Prepared by:",
-		"Reviewed by:",
-		"Approved by:"
-	].forEach((label, i) => {
-		box(m + i * sigW, y2, sigW, sigH);
-		doc.setFontSize(7);
-		doc.setFont(void 0, "bold");
-		doc.text(label, m + i * sigW + 2, y2 + 4);
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(8);
-		const sigImage = exportEngineOn ? cachedSignature({ name: sigNames[i] }) : "";
-		if (sigImage) {
-			try {
-				doc.addImage(sigImage, "PNG", m + i * sigW + 2, y2 + (hasSigStamp ? 5 : 6), 28, 8);
-			} catch {
-				doc.text(String(sigNames[i] || ""), m + i * sigW + 2, y2 + (hasSigStamp ? 8.2 : 10));
-			}
-		} else doc.text(String(sigNames[i] || ""), m + i * sigW + 2, y2 + (hasSigStamp ? 8.2 : 10));
-		if (!hasSigStamp) return;
-		if (sigTitles[i]) {
-			doc.setFontSize(6.5);
-			doc.text(String(sigTitles[i]), m + i * sigW + 2, y2 + 11.6);
-		}
-		if (sigStamps[i]) {
-			doc.setTextColor(155, 28, 28);
-			doc.setFont(void 0, "italic");
-			doc.setFontSize(6.5);
-			const stampLines = doc.splitTextToSize(String(sigStamps[i]), sigW - 5);
-			doc.text(stampLines.slice(0, 2), m + i * sigW + 2, y2 + 15);
-			doc.setTextColor(0, 0, 0);
-			doc.setFont(void 0, "normal");
-		}
-	});
+	// ---- Signatories: same drawing as the Cost Estimate; one outer box, no column dividers ----
+	const sigH = 25;
+	if (y2 + sigH > pageH - m) {
+		doc.addPage();
+		doc.setLineWidth(.5);
+		doc.rect(m, m, innerW, pageH - 20);
+		y2 = m + 4;
+	}
+	// No box: only the page border's left/right edges frame the signatories.
+	drawExportSigns(doc, [
+		{ label: "Prepared by:", name: rce.preparedBy, title: rce.preparedTitle, stamp: rce.preparedStamp },
+		{ label: "Reviewed by:", name: rce.reviewedBy, title: rce.reviewedTitle, stamp: rce.reviewedStamp },
+		{ label: "Approved by:", name: rce.approvedBy, title: rce.approvedTitle, stamp: rce.approvedStamp }
+	], y2 + 1, m, { cols: 3 });
+	// ---- PAGE X OF Y in the document control block (RCE pages only) ----
+	const endPage = doc.getNumberOfPages();
+	const total = endPage - startPage + 1;
+	doc.setPage(startPage);
+	doc.setTextColor(0, 0, 0);
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(7.5);
+	doc.text(`PAGE 1 OF ${total}`, dcX + (dcLabelW + dcValueW) / 2, pageRowY, { align: "center" });
+	doc.setPage(endPage);
 	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: rce.status, approvalStatus: rce.approval?.status })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`${rce.rceNo || rce.id || "RCE"}_Checklist.pdf`);
 	return doc;
@@ -2403,6 +2472,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		patch({
 			customerName: value,
 			customerAddress: match && match.address ? match.address : form.customerAddress || "",
+			clientAddress: match && match.address ? match.address : form.clientAddress || form.customerAddress || "",
 			contactNo: contact || form.contactNo || ""
 		});
 	}
@@ -2411,7 +2481,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		if (!String(form.customerName || "").trim()) misses.push("Customer is required.");
 		if (!String(form.projectDescription || "").trim()) misses.push("Project description is required.");
 		if (!form.date) misses.push("Date is required.");
-		if (!String(form.onsiteInspector || "").trim()) misses.push("Inspector is required.");
+		if (!String(form.onsiteInspector || currentUserName || "").trim()) misses.push("Inspector is required.");
 		const svc = form.serviceType || {};
 		if (!Object.entries(svc).some(([key, value]) => key !== "othersText" && value)) misses.push("Tick at least one service type.");
 		setOifErrors(misses);
@@ -2427,7 +2497,14 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		try {
 			localStorage.removeItem(oifDraftKey(initial));
 		} catch {}
-		onSave(form, opts);
+		onSave({
+			...form,
+			dateInspected: form.dateInspected || form.date,
+			rceNo: form.rceNo || form.rfqNo || "",
+			clientAddress: form.clientAddress || form.customerAddress || "",
+			onsiteInspector: form.onsiteInspector || currentUserName || "",
+			inspectedBy: form.inspectedBy || form.onsiteInspector || currentUserName || ""
+		}, opts);
 	}
 	function copyFromLast() {
 		const tag = String(form.equipmentTag || "").trim().toLowerCase();
@@ -2519,7 +2596,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 			if (!saved?.form) return;
 			const fresh = !initial?.customerName && !initial?.projectDescription && !(initial?.checklist || []).length;
 			if (!fresh) return;
-			const { photos, inspectorSignature, ...textFields } = saved.form || {};
+			const { photos: _photos, inspectorSignature, ...textFields } = saved.form || {};
 			setForm((prev) => ({
 				...prev,
 				...textFields,
@@ -2636,11 +2713,11 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							style: { padding: "0.45rem 0.7rem" },
 							children: oifErrors.join(" ")
 						}) : null,
-						/* @__PURE__ */ jsxs("label", { children: ["DATE", /* @__PURE__ */ jsx("input", {
+						/* @__PURE__ */ jsxs("label", { children: ["DATE INSPECTED", /* @__PURE__ */ jsx("input", {
 							className: "ce-input" + (oifBad((m) => m.startsWith("Date")) ? " rce-invalid" : ""),
 							type: "date",
-							value: form.date,
-							onChange: (e) => patch({ date: e.target.value })
+							value: form.dateInspected || form.date,
+							onChange: (e) => patch({ date: e.target.value, dateInspected: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["OIF NO.", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
@@ -2673,10 +2750,10 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 								onChange: (e) => patch({ projectDescription: e.target.value })
 							})]
 						}),
-						/* @__PURE__ */ jsxs("label", { children: ["RFQ NO.", /* @__PURE__ */ jsx("input", {
+						/* @__PURE__ */ jsxs("label", { children: ["RCE NO.", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
-							value: form.rfqNo,
-							onChange: (e) => patch({ rfqNo: e.target.value })
+							value: form.rceNo || form.rfqNo || "",
+							onChange: (e) => patch({ rceNo: e.target.value, rfqNo: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CUSTOMER NAME", /* @__PURE__ */ jsx("input", {
 							className: "ce-input" + (oifBad((m) => m.startsWith("Customer")) ? " rce-invalid" : ""),
@@ -2690,10 +2767,10 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 								children: [c.clientCode, c.fullName].filter(Boolean).join(" — ")
 							}, c.id))
 						})] }),
-						/* @__PURE__ */ jsxs("label", { children: ["ADDRESS", /* @__PURE__ */ jsx("input", {
+						/* @__PURE__ */ jsxs("label", { children: ["CLIENT ADDRESS", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
-							value: form.customerAddress || "",
-							onChange: (e) => patch({ customerAddress: e.target.value })
+							value: form.clientAddress || form.customerAddress || "",
+							onChange: (e) => patch({ clientAddress: e.target.value, customerAddress: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["EQUIPMENT TYPE", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
@@ -2722,11 +2799,6 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							value: form.customerRep,
 							onChange: (e) => patch({ customerRep: e.target.value })
 						})] }),
-						/* @__PURE__ */ jsxs("label", { children: ["ONSITE INSPECTOR", /* @__PURE__ */ jsx("input", {
-							className: "ce-input" + (oifBad((m) => m.startsWith("Inspector")) ? " rce-invalid" : ""),
-							value: form.onsiteInspector,
-							onChange: (e) => patch({ onsiteInspector: e.target.value })
-						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CONTACT NO.", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
 							value: form.contactNo,
@@ -2734,66 +2806,11 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						})] })
 					]
 				}),
-				/* @__PURE__ */ jsx("div", {
-					className: "oif-banner",
-					children: "A. PHOTOS"
-				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "oif-photos",
-					children: [
-						/* @__PURE__ */ jsx("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: () => photoRef.current?.click(),
-							children: "Upload photos"
-						}),
-						/* @__PURE__ */ jsx("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: () => cameraRef.current?.click(),
-							children: "Take photo"
-						}),
-						/* @__PURE__ */ jsx("input", {
-							ref: photoRef,
-							type: "file",
-							accept: "image/*",
-							multiple: true,
-							hidden: true,
-							onChange: addPhotos
-						}),
-						/* @__PURE__ */ jsx("input", {
-							ref: cameraRef,
-							type: "file",
-							accept: "image/*",
-							capture: "environment",
-							hidden: true,
-							onChange: addPhotos
-						}),
-						/* @__PURE__ */ jsx("div", {
-							className: "oif-photo-grid",
-							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
-								className: "oif-photo",
-								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
-									src: p.dataUrl,
-									alt: p.caption || p.name
-								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
-									className: "ce-input oif-caption",
-									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
-									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
-								}), /* @__PURE__ */ jsx("button", {
-									type: "button",
-									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
-									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
-								})]
-							}, p.id))
-						})
-					]
-				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
 					children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("div", {
 						className: "oif-banner",
-						children: "B. SCOPE OF WORK"
+						children: "A. JOB TYPE"
 					}), /* @__PURE__ */ jsxs("div", {
 						className: "oif-block",
 						children: [
@@ -2861,7 +2878,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						]
 					})] }), /* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("div", {
 						className: "oif-banner",
-						children: "C. WORKPIECE MEASUREMENTS"
+						children: "B. WORK PIECE MEASUREMENT"
 					}), /* @__PURE__ */ jsxs("div", {
 						className: "oif-block oif-meas",
 						children: [
@@ -2981,72 +2998,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 				}),
 				/* @__PURE__ */ jsx("div", {
 					className: "oif-banner",
-					children: "D. ONSITE ACTIVITY"
-				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "oif-block",
-					children: [
-						/* @__PURE__ */ jsxs("label", { children: ["A. Estimated project duration", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
-							value: form.duration,
-							onChange: (e) => patch({ duration: e.target.value }),
-							placeholder: "e.g. 12 days"
-						})] }),
-						/* @__PURE__ */ jsxs("table", {
-							className: "ce-table",
-							style: { marginTop: "0.6rem" },
-							children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
-								/* @__PURE__ */ jsx("th", { children: "Manpower designation" }),
-								/* @__PURE__ */ jsx("th", { children: "No. of pax" }),
-								/* @__PURE__ */ jsx("th", { children: "Manpower designation" }),
-								/* @__PURE__ */ jsx("th", { children: "No. of pax" })
-							] }) }), /* @__PURE__ */ jsx("tbody", { children: Array.from({ length: Math.ceil(form.manpower.length / 2) }).map((_, i) => {
-								const a = form.manpower[i * 2];
-								const b = form.manpower[i * 2 + 1];
-								return /* @__PURE__ */ jsxs("tr", { children: [
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
-										category: "BOL",
-										list: roles,
-										value: a.designation,
-										placeholder: "Role or free text",
-										inputClass: "ce-input",
-										onChange: (value) => updateManpower(a.id, "designation", value)
-									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										inputMode: "decimal",
-										value: a.pax,
-										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
-									}) }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
-										category: "BOL",
-										list: roles,
-										value: b.designation,
-										placeholder: "Role or free text",
-										inputClass: "ce-input",
-										onChange: (value) => updateManpower(b.id, "designation", value)
-									}) : null }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										inputMode: "decimal",
-										value: b.pax,
-										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
-									}) : null })
-								] }, a.id);
-							}) })]
-						}),
-						/* @__PURE__ */ jsxs("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: addManpower,
-							style: { marginTop: "0.5rem" },
-							children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manpower row"]
-						})
-					]
-				}),
-				/* @__PURE__ */ jsx("div", {
-					className: "oif-banner",
-					children: "E. SCOPE OF WORK"
+					children: "C. SCOPE OF WORK"
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
@@ -3064,18 +3016,26 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 				}),
 				/* @__PURE__ */ jsx("div", {
 					className: "oif-banner",
-					children: "F. ESTIMATED MATERIALS, CONSUMABLES, TOOLS AND EQUIPMENT"
+					children: "D. MATERIALS · E. CONSUMABLES · F. TOOLS AND EQUIPMENT"
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
 					children: [/* @__PURE__ */ jsx("textarea", {
 						className: "ce-input ce-notes-box",
-						rows: 10,
+						rows: 8,
+						placeholder: "D. Materials",
 						value: form.materialsLeft,
 						onChange: (e) => patch({ materialsLeft: e.target.value })
 					}), /* @__PURE__ */ jsx("textarea", {
 						className: "ce-input ce-notes-box",
-						rows: 10,
+						rows: 8,
+						placeholder: "E. Consumables",
+						value: form.consumablesText || "",
+						onChange: (e) => patch({ consumablesText: e.target.value })
+					}), /* @__PURE__ */ jsx("textarea", {
+						className: "ce-input ce-notes-box",
+						rows: 8,
+						placeholder: "F. Tools and equipment",
 						value: form.materialsRight,
 						onChange: (e) => patch({ materialsRight: e.target.value })
 					})]
@@ -3163,6 +3123,142 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						})]
 					}, row.id))]
 				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "G. ACTIVITY DURATION WITH MANPOWER"
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [
+						/* @__PURE__ */ jsxs("label", { children: ["A. Estimated project duration", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							value: form.duration,
+							onChange: (e) => patch({ duration: e.target.value }),
+							placeholder: "e.g. 12 days"
+						})] }),
+						/* @__PURE__ */ jsxs("table", {
+							className: "ce-table",
+							style: { marginTop: "0.6rem" },
+							children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+								/* @__PURE__ */ jsx("th", { children: "Designation" }),
+								/* @__PURE__ */ jsx("th", { children: "No. of Persons" }),
+								/* @__PURE__ */ jsx("th", { children: "Designation" }),
+								/* @__PURE__ */ jsx("th", { children: "No. of Persons" })
+							] }) }), /* @__PURE__ */ jsx("tbody", { children: Array.from({ length: Math.ceil(form.manpower.length / 2) }).map((_, i) => {
+								const a = form.manpower[i * 2];
+								const b = form.manpower[i * 2 + 1];
+								return /* @__PURE__ */ jsxs("tr", { children: [
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
+										value: a.designation,
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(a.id, "designation", value)
+									}) }),
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										inputMode: "decimal",
+										placeholder: "Persons",
+										value: a.pax,
+										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										placeholder: "Days / hours",
+										value: a.days || "",
+										onChange: (e) => updateManpower(a.id, "days", e.target.value)
+									})] }) }),
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
+										value: b.designation,
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(b.id, "designation", value)
+									}) : null }),
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										inputMode: "decimal",
+										placeholder: "Persons",
+										value: b.pax,
+										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										placeholder: "Days / hours",
+										value: b.days || "",
+										onChange: (e) => updateManpower(b.id, "days", e.target.value)
+									})] }) : null })
+								] }, a.id);
+							}) })]
+						}),
+						/* @__PURE__ */ jsxs("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: addManpower,
+							style: { marginTop: "0.5rem" },
+							children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manpower row"]
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "H. PHOTOS"
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-photos",
+					children: [
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => photoRef.current?.click(),
+							children: "Upload photos"
+						}),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => cameraRef.current?.click(),
+							children: "Take photo"
+						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: photoRef,
+							type: "file",
+							accept: "image/*",
+							multiple: true,
+							hidden: true,
+							onChange: addPhotos
+						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: cameraRef,
+							type: "file",
+							accept: "image/*",
+							capture: "environment",
+							hidden: true,
+							onChange: addPhotos
+						}),
+						/* @__PURE__ */ jsx("div", {
+							className: "oif-photo-grid",
+							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
+								className: "oif-photo",
+								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
+									src: p.dataUrl,
+									alt: p.caption || p.name
+								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input oif-caption",
+									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
+									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
+								}), /* @__PURE__ */ jsx("button", {
+									type: "button",
+									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
+									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
+								})]
+							}, p.id))
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "I. REMARKS AND NOTES"
+				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-block",
 					children: [/* @__PURE__ */ jsxs("div", {
@@ -3181,6 +3277,33 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						rows: 4,
 						value: form.remarks || "",
 						onChange: (e) => patch({ remarks: e.target.value })
+					}), /* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Notes"
+					}), /* @__PURE__ */ jsx("textarea", {
+						className: "ce-input ce-notes-box",
+						rows: 3,
+						placeholder: "One note per line",
+						value: Array.isArray(form.notes) ? form.notes.join("\n") : form.notes || "",
+						onChange: (e) => patch({ notes: e.target.value })
+					}), /* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Signatories"
+					}), /* @__PURE__ */ jsx("div", {
+						className: "oif-meas-row",
+						children: [
+							["preparedBy", "Prepared"],
+							["inspectedBy", "Inspected"],
+							["reviewedBy", "Reviewed"],
+							["checkedBy", "Checked"],
+							["notedBy", "Noted"],
+							["approvedBy", "Approved"]
+						].map(([key, label]) => /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: label,
+							value: form[key] || "",
+							onChange: (e) => patch({ [key]: e.target.value })
+						}, key))
 					}), /* @__PURE__ */ jsx("span", {
 						className: "ce-field-label",
 						children: "Inspector signature"
@@ -3336,7 +3459,7 @@ function costingMembers(users) {
 function ceAmountLabel(doc) {
 	const tasks = doc?.tasks;
 	if (!Array.isArray(tasks) || !tasks.length) return "—";
-	return fmt(projectTotal(tasks, doc?.pricing));
+	return fmt(projectTotal(tasks, doc?.pricing, doc?.mobSheets));
 }
 function combinedLabelFor(id, list, docs) {
 	if (!id) return "";
@@ -3536,54 +3659,15 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 	});
 	const bolSheet = buildBolExportSection(tasks, noteTexts(notes.BOL), src.pricing);
 	if (bolSheet) sections.push(bolSheet);
-	const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(notes.BOTE));
+	const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(notes.BOTE), src.pricing);
 	if (boteSheet) sections.push(boteSheet);
-	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM));
+	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM), src.pricing);
 	if (bocmSheet) sections.push(bocmSheet);
-	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "Bill of Personal Protective Equipment", noteTexts(notes.PPE));
+	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(notes.PPE), src.pricing);
 	if (ppeSheet) sections.push(ppeSheet);
-	const miscColumns = ["Work type", "Section", "Item No.", "Description", "QTY", "Days", "Unit cost", "Subtotal"];
-	const miscBlocks = [];
-	const miscRows = [];
-	const miscMeta = [];
-	let miscGrand = 0;
-	WORK_TYPES.forEach((w) => {
-		const part = [];
-		tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((st) => (st.items.MISC || []).forEach((it, i) => {
-			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
-			part.push([w.label, it.section || "", i + 1, it.description, it.qty, isDirectPricing(src.pricing) ? it.days == null || it.days === "" ? 1 : it.days : it.days || 1, fmt(it.unitCost), fmt(itemSubtotal("MISC", it, void 0, src.pricing))]);
-		})));
-		if (!part.length) return;
-		const partTotal = roundMoney(tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
-			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return s3;
-			return s3 + itemSubtotal("MISC", it, void 0, src.pricing);
-		}, 0), 0), 0));
-		miscGrand = roundMoney(miscGrand + partTotal);
-		miscBlocks.push({
-			banner: `${w.letter}. ${w.full}`,
-			bannerFill: BOL_LIGHT_BLUE,
-			columns: miscColumns,
-			rows: part,
-			rowMeta: part.map(() => ({ kind: "line" })),
-			headFill: BOL_LIGHT_BLUE
-		});
-		const sub = Array(miscColumns.length).fill("");
-		sub[0] = `Subtotal — ${w.label}`;
-		sub[miscColumns.length - 1] = fmt(partTotal);
-		miscBlocks.push({ columns: miscColumns, rows: [sub], rowMeta: [{ kind: "total" }], hideHead: true, totalFill: BOL_LIGHT_BLUE, gapAfter: 10 });
-		miscRows.push(...part, sub);
-		miscMeta.push(...part.map(() => ({ kind: "line" })), { kind: "total" });
-	});
-	if (miscBlocks.length) {
-		const total = Array(miscColumns.length).fill("");
-		total[0] = "GRAND TOTAL";
-		total[miscColumns.length - 1] = fmt(miscGrand);
-		miscBlocks.push({ columns: miscColumns, rows: [total], rowMeta: [{ kind: "total" }], hideHead: true, totalFill: BOL_LIGHT_BLUE });
-		miscRows.push(total);
-		miscMeta.push({ kind: "total" });
-		sections.push({ title: "MISC", exportTitle: "MISCELLANEOUS", columns: miscColumns, rows: miscRows, rowMeta: miscMeta, blocks: miscBlocks, notes: noteTexts(notes.MISC) });
-	}
-	const onsiteTasks = tasksOfType(tasks, "onsite");
+	const miscSheet = buildMiscExportSection(tasks, src.pricing, noteTexts(notes.MISC));
+	if (miscSheet) sections.push(miscSheet);
+		const onsiteTasks = tasksOfType(tasks, "onsite");
 	const supplyTasks = [...tasksOfType(tasks, "shop"), ...tasksOfType(tasks, "trading")];
 	if (onsiteTasks.length) {
 		sections.push(buildMobExportSection("Mobilization", onsiteTasks, null, noteTexts(notes.MOB), []));
@@ -3593,13 +3677,20 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		sections.push(buildMobExportSection("Pickup", supplyTasks, null, noteTexts(notes.PICKUP), []));
 		sections.push(buildMobExportSection("Delivery", supplyTasks, null, noteTexts(notes.DELIVERY), []));
 	}
-	const official = buildOfficialBaseRows(tasks, src.pricing);
+	const official = buildOfficialBaseRows(tasks, src.pricing, {
+		mobilization: sections.find((s) => s.title === "Mobilization")?.sheetTotal || 0,
+		demobilization: sections.find((s) => s.title === "Demobilization")?.sheetTotal || 0
+	});
 	const shown = (line) => shownOfficialAmount(line, src.summaryOverrides, src.pricing);
 	const bodyParts = official.rows.filter((line) => ["A", "B", "C", "D"].includes(line.key)).reduce((sum, line) => sum + shown(line), 0);
 	const benefitLine = official.rows.find((line) => line.key === "A1");
 	const benefitParts = benefitLine ? shown(benefitLine) : 0;
 	const miscParts = official.rows.filter((line) => line.sub && !line.breakdown && line.key !== "A1").reduce((sum, line) => sum + shown(line), 0);
-	const bodySum = isDirectPricing(src.pricing) ? screenOfficialTotal(tasks, src.pricing, src.summaryOverrides) : bodyParts + benefitParts + miscParts;
+	const mobParts = official.rows.filter((line) => line.key === "MOB" || line.key === "DEMOB").reduce((sum, line) => sum + shown(line), 0);
+	const bodySum = isDirectPricing(src.pricing) ? screenOfficialTotal(tasks, src.pricing, src.summaryOverrides, {
+		mobilization: sections.find((s) => s.title === "Mobilization")?.sheetTotal || 0,
+		demobilization: sections.find((s) => s.title === "Demobilization")?.sheetTotal || 0
+	}) : bodyParts + benefitParts + miscParts + mobParts;
 	const qty = num2(info.quantity);
 	const docNoOut = info.docNo || row?.ceDisplay || "";
 	const summaryRows = [];
@@ -3617,9 +3708,9 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		summaryMeta.push({ kind: "sum-custom" });
 	});
 	summaryRows.push(["", "UNIT PRICE:", qty ? fmt(bodySum / qty) : "—"]);
-	summaryMeta.push({ kind: "sum-blue" });
+	summaryMeta.push({ kind: "sum-final" });
 	summaryRows.push(["", "TOTAL AMOUNT:", fmt(bodySum)]);
-	summaryMeta.push({ kind: "sum-blue" });
+	summaryMeta.push({ kind: "sum-final" });
 	const signSlot = (label, name, title, stamp) => ({ label, name: honorificName(name, users), title: title || "", stamp: stamp || "" });
 	sections.unshift({
 		title: "CE Summary",
@@ -3641,10 +3732,11 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 			revNo: info.revNo || version?.rev || "",
 			revDate: info.revDate || ""
 		},
-		columns: ["ITEM", "DESCRIPTION", "TOTAL COST"],
+		columns: ["ITEM NO.", "DESCRIPTION", "TOTAL COST"],
 		rows: summaryRows,
 		rowMeta: summaryMeta,
-		columnStyles: { 0: { cellWidth: 22, halign: "center" }, 2: { cellWidth: 56, halign: "right" } },
+		keepWidths: true,
+		columnStyles: { 0: { cellWidth: 15, halign: "center" }, 2: { cellWidth: 56, halign: "right" } },
 		notes: noteTexts(notes.summary),
 		signs: [
 			signSlot("Prepared By:", info.preparedBy, info.preparedTitle, info.preparedStamp),
@@ -4356,7 +4448,7 @@ let activeCePricing = null;
 let bolLegendFlag = false;
 let bolLegendRates = null;
 function bolAssumptionText() {
-	if (!bolLegendFlag) return "Sun/Special ×1.30 · Holiday ×2.00 · Night differential +10% · OT premium ×1.25";
+	if (!bolLegendFlag) return "Sun/Special ×1.30 · Holiday ×2.00 · Night differential +10% · Regular OT ×1.25 · Rest/holiday OT ×1.30";
 	const f = directFormula(bolLegendRates || {});
 	return `Sun/Special ×${Number(f.sundayMultiplier).toFixed(2)} · Holiday ×${Number(f.holidayMultiplier).toFixed(2)} · Night differential +${f.nightDiffPct}% · OT ×${f.regularOtFactor} (rest/holiday ×${f.premiumDayOtFactor})`;
 }
@@ -4773,7 +4865,8 @@ function defaultAdminConfig() {
 			release1Markup: false,
 			release1Proposal: false,
 			release1JobOrder: false,
-			release1Monitor: false
+			release1Monitor: false,
+			joScreenV2: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -4895,7 +4988,8 @@ function normalizeAdminConfig(raw) {
 			release1Markup: src.features?.release1Markup === true,
 			release1Proposal: src.features?.release1Proposal === true,
 			release1JobOrder: src.features?.release1JobOrder === true,
-			release1Monitor: src.features?.release1Monitor === true
+			release1Monitor: src.features?.release1Monitor === true,
+			joScreenV2: src.features?.joScreenV2 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -6525,21 +6619,21 @@ var CE_FIELDS = {
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}],
 	PPE: [{
 		key: "qty",
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}],
 	MISC: [{
 		key: "qty",
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}]
 };
 var CAT_TAB = {
@@ -8639,6 +8733,10 @@ function reducer(state, action) {
 			...state,
 			schedule: action.schedule && typeof action.schedule === "object" ? action.schedule : {}
 		};
+		case "SET_MOB_SHEETS": return {
+			...state,
+			mobSheets: action.mobSheets && typeof action.mobSheets === "object" ? action.mobSheets : { mobilization: 0, demobilization: 0 }
+		};
 		default: return state;
 	}
 }
@@ -9770,7 +9868,7 @@ function lineRowName(category, row) {
 }
 function lineRequiredKeys(category) {
 	if (category === "BOL" || category === "BOTE") return [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]];
-	return [["qty", "Qty"], ["unitCost", "Unit cost"]];
+	return [["qty", "Qty"], ["unitCost", "Unit Price"]];
 }
 function lineFieldMissing(value) {
 	return value === "" || value == null || !(Number(value) > 0);
@@ -10586,7 +10684,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 								colKey: "role",
 								width: widths.role,
 								onResize: updateWidth,
-								children: "Role / Position"
+								children: "Designation"
 							}),
 							/* @__PURE__ */ jsx(ResizableTh, {
 								colKey: "dayType",
@@ -11486,7 +11584,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							colKey: "unitCost",
 							width: widths.unitCost,
 							onResize: updateWidth,
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx(ResizableTh, {
 							colKey: "subtotal",
@@ -11785,7 +11883,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							colKey: "unitCost",
 							width: widths.unitCost,
 							onResize: updateWidth,
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx(ResizableTh, {
 							colKey: "subtotal",
@@ -14677,9 +14775,9 @@ function getScheduledItemMap(tasks, category) {
 	return result;
 }
 var MOB_ALLOWANCE_RATES = {
-	"Project Manager": 500,
-	Skilled: 200,
-	Admin: 300
+	"Project Manager": 0,
+	Skilled: 0,
+	Admin: 0
 };
 var MOB_REQUIREMENT_ITEMS = [
 	"Medical",
@@ -14825,7 +14923,7 @@ function getMobManpowerRows(tasks) {
 function totalMobManpower(tasks) {
 	return getMobManpowerRows(tasks).reduce((s, r) => s + num2(r.qty), 0);
 }
-function SummaryView({ tasks, viewType, pricing }) {
+function SummaryView({ tasks, viewType, pricing, mobSheets }) {
 	const [expandedTaskId, setExpandedTaskId] = useState(null);
 	const noteRows = collectNotes(tasks);
 	const direct = isDirectPricing(pricing);
@@ -14841,7 +14939,7 @@ function SummaryView({ tasks, viewType, pricing }) {
 		if (index >= 2 && index <= 5 && tasks[index - 2]) return tasks[index - 2].title;
 		return stdLabel;
 	});
-	const grandTotal = direct ? projectTotal(tasks, pricing) : roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
+	const grandTotal = projectTotal(tasks, pricing, mobSheets);
 	const matrixCats = direct ? ["BOL", "A1", "BOTE", "BOCM", "PPE", "MISC"] : CATS;
 	const catTotals = CATS.map((c) => ({
 		cat: c,
@@ -14982,7 +15080,7 @@ function SummaryView({ tasks, viewType, pricing }) {
 								/* @__PURE__ */ jsx("td", { children: "Total" }),
 								WORK_TYPES.filter((w) => tasksOfType(tasks, w.id).length > 0).map((w) => /* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
-									children: fmt(direct ? projectTotal(tasksOfType(tasks, w.id), pricing) : tasksOfType(tasks, w.id).reduce((s, t) => s + taskTotal(t), 0))
+									children: fmt(projectTotal(tasksOfType(tasks, w.id), pricing, mobSheets))
 								}, w.id)),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
@@ -15110,13 +15208,8 @@ function buildBolGroups(tasks, pricing) {
 	DAY_TYPES.forEach((dt) => {
 		["Day", "Night"].forEach((shift) => {
 			Object.values(groups[dt][shift] || {}).forEach((r) => {
-				const f = formulaNow();
-				const dtMult = dayTypeMultiplier(dt);
-				const shiftAdd = shift === "Night" ? f.nightDiffPct / 100 : 0;
-				const hours = f.hoursPerDay || 8;
-				const effRate = r.rate * dtMult * (1 + shiftAdd);
-				const otRate = r.rate / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-				r.subtotal = roundMoney(r.qty * r.days * effRate + r.qty * r.days * r.otHrs * otRate);
+				const pay = dolePay(r.rate, dt, shift, formulaNow());
+				r.subtotal = roundMoney(r.qty * r.days * pay.dayRate + r.qty * r.days * r.otHrs * pay.otRate);
 			});
 		});
 	});
@@ -15180,13 +15273,8 @@ function bolLineAmount(row, dt, shift, pricing) {
 		const pay = dolePay(num2(row.rate), dt || "Regular", shift || "Day", pricing.formula || {});
 		return roundMoney(num2(row.qty) * num2(row.days) * pay.dayRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * pay.otRate);
 	}
-	const f = formulaNow();
-	const dtMult = dayTypeMultiplier(dt);
-	const shiftAdd = shift === "Night" ? f.nightDiffPct / 100 : 0;
-	const hours = f.hoursPerDay || 8;
-	const effRate = num2(row.rate) * dtMult * (1 + shiftAdd);
-	const otRate = num2(row.rate) / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-	return roundMoney(num2(row.qty) * num2(row.days) * effRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * otRate);
+	const pay = dolePay(num2(row.rate), dt || "Regular", shift || "Day", formulaNow());
+	return roundMoney(num2(row.qty) * num2(row.days) * pay.dayRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * pay.otRate);
 }
 function withBolEdit(row, edit, dt, shift, pricing) {
 	const next = {
@@ -16094,7 +16182,7 @@ function AggregatedCategoryTabImpl({ tasks, category, editsRef, dispatch }) {
 								width: widths.rate,
 								onResize: updateWidth,
 								className: "ce-sum-left",
-								children: "Rate / Unit Cost"
+								children: "Unit Price"
 							}),
 							showElec && /* @__PURE__ */ jsxs(Fragment, { children: [
 								/* @__PURE__ */ jsx(ResizableTh, {
@@ -17097,7 +17185,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -17260,7 +17348,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -17408,7 +17496,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					}) : null, /* @__PURE__ */ jsx("h4", {
 						className: "ce-serif ce-summary-subheading",
 						style: { margin: 0 },
-						children: "Part C: Line Items"
+						children: "Part C: Items"
 					}), isMobDemob || partCOpen ? /* @__PURE__ */ jsx("button", {
 						className: "ce-iconbtn",
 						onClick: () => setHideUnused(!hideUnused),
@@ -17422,7 +17510,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Line Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -17442,7 +17530,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-rate",
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-total",
@@ -17867,10 +17955,17 @@ var BOL_PARTS = [
 	{ dt: "Holiday", shift: "Day", label: "E. Holiday Day (Dayshift)" },
 	{ dt: "Holiday", shift: "Night", label: "F. Holiday Night (Nightshift)" }
 ];
+function appendGrandTotal(blocks, totalRow, meta = { kind: "total" }) {
+	const last = [...blocks].reverse().find((b) => b.columns?.length && Array.isArray(b.rows));
+	if (!last) return;
+	last.rows.push(totalRow);
+	last.rowMeta = [...(last.rowMeta || []), meta];
+	delete last.gapAfter;
+}
 function buildBolExportSection(tasks, notes, pricing) {
 	const columns = [
 		"Item No.",
-		"Role / Position",
+		"Designation",
 		"QTY",
 		"Days",
 		"Rate/Day",
@@ -17890,34 +17985,49 @@ function buildBolExportSection(tasks, notes, pricing) {
 		const model = buildBolGroups(tasksOfType(tasks, w.id), pricing);
 		if (!model.allBOL.length) return;
 		any = true;
-		grand = roundMoney(grand + model.grandTotal);
+		const perDiemBy = {};
+		if (isDirectPricing(pricing)) {
+			tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((sub) => (sub.items?.BOL || []).forEach((item) => {
+				const key = `${item.dayType || "Regular"}|${item.shift || "Day"}|${item.role || "Unnamed"}`;
+				perDiemBy[key] = roundMoney((perDiemBy[key] || 0) + calcBOL(item, pricing).perDiemAllow);
+			})));
+		}
+		const typeExtra = Object.values(perDiemBy).reduce((sum, n) => sum + n, 0);
+		const typeTotal = roundMoney(model.grandTotal + typeExtra);
+		grand = roundMoney(grand + typeTotal);
 		const banner = `${w.letter}. ${w.full}`;
 		blocks.push({
 			banner,
 			bannerFill: BOL_LIGHT_BLUE
 		});
 		pushFlat([banner], "group");
+		let lastPart = null;
 		BOL_PARTS.forEach((part) => {
 			const lines = summarySort(Object.values(model.groups[part.dt]?.[part.shift] || {}), "BOL", (r) => r.role);
 			if (!lines.length) return;
-			const partRows = lines.map((r, idx) => [
+			const partRows = lines.map((r, idx) => {
+				const extra = perDiemBy[`${part.dt}|${part.shift}|${r.role}`] || 0;
+				return [
 				idx + 1,
 				r.role,
 				r.qty,
 				r.days,
 				fmt(r.rate),
 				r.otHrs,
-				fmt(r.subtotal)
-			]);
-			blocks.push({
+				fmt(roundMoney(r.subtotal + extra))
+			];
+			});
+			lastPart = {
 				banner: part.label,
 				bannerFill: BOL_LIGHT_BLUE,
 				columns,
-				rows: partRows,
+				rows: partRows.slice(),
 				rowMeta: partRows.map(() => ({ kind: "line" })),
 				headFill: BOL_LIGHT_BLUE,
+				totalFill: BOL_LIGHT_BLUE,
 				afterTight: true
-			});
+			};
+			blocks.push(lastPart);
 			pushFlat([part.label], "group");
 			partRows.forEach((row) => pushFlat(row, "line"));
 		});
@@ -17928,7 +18038,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 			"",
 			"",
 			"",
-			fmt(model.grandTotal)
+			fmt(typeTotal)
 		];
 		blocks.push({
 			columns,
@@ -17937,7 +18047,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 			hideHead: true,
 			totalFill: BOL_LIGHT_BLUE,
 			afterTight: true,
-			gapAfter: 12
+			gapAfter: 0
 		});
 		pushFlat(subRow, "total");
 		for (let i = 0; i < 2; i++) pushFlat(["", "", "", "", "", "", ""], "line");
@@ -17952,13 +18062,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 		"",
 		fmt(grand)
 	];
-	blocks.push({
-		columns,
-		rows: [totalRow],
-		rowMeta: [{ kind: "total" }],
-		hideHead: true,
-		totalFill: BOL_LIGHT_BLUE
-	});
+	appendGrandTotal(blocks, totalRow);
 	pushFlat(totalRow, "total");
 	return {
 		title: "BOL",
@@ -17970,14 +18074,14 @@ function buildBolExportSection(tasks, notes, pricing) {
 		notes
 	};
 }
-function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
+function buildCategoryExportSection(tasks, cat, exportTitle, notes, pricing) {
 	const bote = cat === "BOTE";
 	const columns = bote ? [
 		"Item No.",
 		"Item Description",
 		"Qty",
 		"Days",
-		"Rate / Unit Cost",
+		"Unit Price",
 		"kW",
 		"Hrs/Day",
 		"₱/kWh",
@@ -17987,7 +18091,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		"Item No.",
 		"Item Description",
 		"Qty",
-		"Rate / Unit Cost",
+		"Unit Price",
 		"Subtotal"
 	];
 	const blocks = [];
@@ -18004,7 +18108,17 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		const auto = buildCategoryAutoRows(subset, cat, w.id);
 		if (!auto.length) return;
 		any = true;
-		const blockTotal = roundMoney(auto.reduce((s, r) => s + num2(r.subtotal), 0));
+		const lineAmount = (description) => {
+			let sum = 0;
+			subset.forEach((t) => flattenSubs(t).forEach((s) => (s.items[cat] || []).forEach((it) => {
+				const name = cat === "PPE" ? it.item || it.description : it.description;
+				if (String(name || "") !== String(description || "")) return;
+				sum += itemSubtotal(cat, it, w.id, pricing);
+			})));
+			return roundMoney(sum);
+		};
+		const amounts = auto.map((r) => lineAmount(r.description));
+		const blockTotal = roundMoney(amounts.reduce((s, n) => s + n, 0));
 		grand = roundMoney(grand + blockTotal);
 		const lineRows = [];
 		const lineMeta = [];
@@ -18031,14 +18145,14 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 					powered ? hoursPerDay || "—" : "—",
 					powered && kwhRate ? fmt(kwhRate) : "—",
 					powered ? fmt(r.electricity) : "—",
-					fmt(r.subtotal)
+					fmt(amounts[idx])
 				]);
 			} else lineRows.push([
 				idx + 1,
 				r.description,
 				r.totalQty,
 				fmt(r.rate),
-				fmt(r.subtotal)
+				fmt(amounts[idx])
 			]);
 			lineMeta.push({ kind: "line" });
 		});
@@ -18057,8 +18171,8 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 			banner,
 			bannerFill: BOL_LIGHT_BLUE,
 			columns,
-			rows: lineRows,
-			rowMeta: lineMeta,
+			rows: lineRows.slice(),
+			rowMeta: lineMeta.slice(),
 			headFill: BOL_LIGHT_BLUE,
 			afterTight: true
 		});
@@ -18074,7 +18188,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 			hideHead: true,
 			totalFill: BOL_LIGHT_BLUE,
 			afterTight: true,
-			gapAfter: 12
+			gapAfter: 0
 		});
 		pushFlat(sub, "total");
 	});
@@ -18100,6 +18214,81 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		notes
 	};
 }
+var MISC_EXPORT_GROUPS = [
+	{ section: "A", code: "E.1", title: "Accommodation" },
+	{ section: "B", code: "E.2", title: "Transportation" },
+	{ section: "C", code: "E.3", title: "Requirements" },
+	{ section: "D", code: "E.4", title: "Admin Cost" },
+	{ section: "I", code: "E.5", title: "Insurances" },
+	{ section: "E", code: "E.6", title: "Third Party Services" }
+];
+var MISC_HEAD = [238, 238, 238];
+function buildMiscExportSection(tasks, pricing, notes) {
+	// Light-blue banners (not green). SUB TOTAL and the sheet total sit on the
+	// table with unbroken borders and the same light-blue fill. Only rows with inputs.
+	const columns = ["ITEM NO.", "DESCRIPTION", "QTY", "UOM", "NO. OF DAYS", "UNIT PRICE", "TOTAL"];
+	const direct = isDirectPricing(pricing);
+	const blocks = [];
+	const rows = [];
+	const rowMeta = [];
+	let grand = 0;
+	const known = new Set(MISC_EXPORT_GROUPS.map((g) => g.section));
+	WORK_TYPES.forEach((w) => {
+		const items = [];
+		tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((st) => (st.items.MISC || []).forEach((it) => {
+			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
+			items.push(it);
+		})));
+		if (!items.length) return;
+		let typeTotal = 0;
+		let firstInType = true;
+		const groups = [...MISC_EXPORT_GROUPS, { section: "*", code: "E.7", title: "Other" }];
+		groups.forEach((g) => {
+			const list = items.filter((it) => g.section === "*" ? !known.has(String(it.section || "")) : String(it.section || "") === g.section);
+			if (!list.length) return;
+			let catTotal = 0;
+			const part = list.map((it, i) => {
+				const amount = itemSubtotal("MISC", it, void 0, pricing);
+				catTotal = roundMoney(catTotal + amount);
+				const days = direct ? it.days == null || it.days === "" ? 1 : it.days : it.days || 1;
+				return [i + 1, String(it.description || "").toUpperCase(), it.qty, it.unit || it.uom || "", days, fmt(num2(it.unitCost)), fmt(amount)];
+			});
+			const meta = part.map(() => ({ kind: "line" }));
+			part.push(["", "", "", "", "", "SUB TOTAL:", fmt(catTotal)]);
+			meta.push({ kind: "labelled-total", labelCol: 5, fill: BOL_LIGHT_BLUE });
+			typeTotal = roundMoney(typeTotal + catTotal);
+			blocks.push({
+				...(firstInType ? { banner: `${w.letter}. ${w.full}`, bannerFill: BOL_LIGHT_BLUE } : {}),
+				heading: `${g.code} ${g.title}`,
+				headingTight: true,
+				columns,
+				rows: part,
+				rowMeta: meta,
+				headFill: MISC_HEAD,
+				afterTight: true,
+				gapAfter: 1
+			});
+			firstInType = false;
+			rows.push([`${w.letter}. ${w.full}`], [`${g.code} ${g.title}`], ...part);
+			rowMeta.push({ kind: "group" }, { kind: "group" }, ...meta);
+		});
+		grand = roundMoney(grand + typeTotal);
+		const typeRow = ["", `TOTAL — ${w.full}:`, "", "", "", "", fmt(typeTotal)];
+		const last = blocks[blocks.length - 1];
+		last.rows.push(typeRow);
+		last.rowMeta.push({ kind: "labelled-total", labelCol: 1, labelSpan: 5, fill: BOL_LIGHT_BLUE });
+		last.gapAfter = 5;
+		rows.push(typeRow);
+		rowMeta.push({ kind: "labelled-total", labelCol: 1, labelSpan: 5 });
+	});
+	if (!blocks.length) return null;
+	blocks.unshift({ banner: "MISCELLANEOUS", bannerFill: BOL_LIGHT_BLUE });
+	const totalRow = ["", "MISCELLANEOUS TOTAL:", "", "", "", "", fmt(grand)];
+	appendGrandTotal(blocks, totalRow, { kind: "labelled-total", labelCol: 1, labelSpan: 5, fill: BOL_LIGHT_BLUE });
+	rows.push(totalRow);
+	rowMeta.push({ kind: "labelled-total", labelCol: 1, labelSpan: 5 });
+	return { title: "MISC", exportTitle: "MISCELLANEOUS", columns, rows, rowMeta, blocks, notes };
+}
 function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	const scheduleDays = scheduleSpanDays(tasks);
 	const isMobDemob = title === "Mobilization" || title === "Demobilization";
@@ -18124,9 +18313,9 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	const aMeta = [];
 	let partATotal = 0;
 	partA.forEach((r, idx) => {
-		const allowanceAmount = MOB_ALLOWANCE_RATES[r.category] || MOB_ALLOWANCE_RATES[r.role] || 0;
-		const subtotalA = roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate));
-		const subtotalB = roundMoney(num2(r.qty) * num2(r.days) * allowanceAmount);
+		const edited = overrideA || edits[r.role];
+		const subtotalA = edited ? roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate)) : 0;
+		const subtotalB = 0;
 		if (subtotalA === 0 && subtotalB === 0) return;
 		partATotal = roundMoney(partATotal + subtotalA);
 		aRows.push([
@@ -18138,7 +18327,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			fmt(r.rate),
 			fmt(subtotalA),
 			r.otHrs,
-			fmt(allowanceAmount),
+			fmt(0),
 			fmt(subtotalB),
 			fmt(roundMoney(subtotalA + subtotalB))
 		]);
@@ -18176,11 +18365,10 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"Skilled",
 		"Admin"
 	].map((cat) => {
-		const autoQty = partA.filter((r) => r.category === cat).reduce((s, r) => s + num2(r.qty), 0);
 		const patch = allowEdits[cat] || {};
-		const qty = patch.qty ?? autoQty;
-		const days = patch.days ?? dayDefault;
-		const rate = patch.rate ?? (MOB_ALLOWANCE_RATES[cat] || 0);
+		const qty = patch.qty ?? 0;
+		const days = patch.days ?? 0;
+		const rate = patch.rate ?? 0;
 		return {
 			category: cat,
 			qty,
@@ -18275,8 +18463,8 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			totalFill: BOL_LIGHT_BLUE,
 			totalQtyCol: isMobDemob ? 2 : void 0,
 			columns: [
-				"Item",
-				"Manpower Loading (Role)",
+				"Item No.",
+				"Manpower Loading (Designation)",
 				"Qty",
 				"UOM",
 				"No. of Days",
@@ -18288,20 +18476,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 				"Total"
 			],
 			rows: aRows,
-			rowMeta: aMeta,
-			columnStyles: {
-				0: { cellWidth: 11 },
-				1: { cellWidth: 32 },
-				2: { cellWidth: 11 },
-				3: { cellWidth: 12 },
-				4: { cellWidth: 14 },
-				5: { cellWidth: 20 },
-				6: { cellWidth: 20 },
-				7: { cellWidth: 13 },
-				8: { cellWidth: 16 },
-				9: { cellWidth: 20 },
-				10: { cellWidth: 21 }
-			}
+			rowMeta: aMeta
 		},
 		{
 			heading: "Part B: Allowance",
@@ -18330,16 +18505,16 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			}
 		},
 		{
-			heading: "Part C: Line Items",
+			heading: "Part C: Items",
 			headFill: BOL_LIGHT_BLUE,
 			totalFill: BOL_LIGHT_BLUE,
 			columns: [
-				"Line Item",
+				"Item No.",
 				"Description/Manpower",
 				"Qty",
 				"UOM",
 				"No. of Days / Trips",
-				"Unit Cost",
+				"Unit Price",
 				"Total"
 			],
 			rows: cRows,
@@ -18358,6 +18533,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	return {
 		title,
 		exportTitle: String(title || "MOBILIZATION").toUpperCase(),
+		sheetTotal: roundMoney(partATotal + partBTotal + partCTotal),
 		columns: blocks[0].columns,
 		rows: blocks.flatMap((b) => [[b.heading], ...b.rows]),
 		blocks,
@@ -18500,15 +18676,26 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [mobCopy, setMobCopy] = useState(null);
 	const mobSnaps = useRef({});
 	const mobManpower = useMasterlist().BOL || [];
+	const mobSheetTotals = (tasks, snaps) => {
+		const onsite = tasksOfType(tasks || [], "onsite");
+		return {
+			mobilization: buildMobExportSection("Mobilization", onsite, snaps?.Mobilization, [], mobManpower)?.sheetTotal || 0,
+			demobilization: buildMobExportSection("Demobilization", onsite, snaps?.Demobilization, [], mobManpower)?.sheetTotal || 0
+		};
+	};
 	const persistSkip = useRef(true);
 	useEffect(() => {
+		const snaps = mobSnaps.current || {};
+		const opened = snaps.Mobilization || snaps.Demobilization;
+		const mobSheets = opened ? mobSheetTotals(state.tasks, snaps) : state.mobSheets && typeof state.mobSheets === "object" ? state.mobSheets : mobSheetTotals(state.tasks, {});
 		const next = {
 			...state,
 			sowText,
 			ceStatus,
 			docNo,
 			revNo,
-			revDate
+			revDate,
+			mobSheets
 		};
 		if (persistSkip.current) {
 			persistSkip.current = false;
@@ -18559,7 +18746,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const sowOn = adminConfig?.features?.sowTagging === true;
 	const scheduleOn = adminConfig?.features?.schedule === true;
 	const [annexOff, setAnnexOff] = useState({});
-	const grand = projectTotal(state.tasks, state.pricing);
+	const grand = projectTotal(state.tasks, state.pricing, state.mobSheets);
 	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat, state.pricing), 0);
 	const benefitSum = directOn ? directColumnTotals(state.tasks, state.pricing).A1 : 0;
 	const contPct = num2(state.commercial?.contingencyPct);
@@ -18571,13 +18758,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		pricing: state.pricing,
 		readOnly: !!readOnly || !!isEditorLocked
 	});
-	const switchNext = switchOffer ? projectTotal(state.tasks, { model: "direct-v1", formula: directFormula(adminConfig?.directRates || {}) }) : grand;
+	const switchNext = switchOffer ? projectTotal(state.tasks, { model: "direct-v1", formula: directFormula(adminConfig?.directRates || {}) }, state.mobSheets) : grand;
 	const confirmDirectSwitch = () => {
 		if (!switchOffer) return;
 		const formula = directFormula(adminConfig?.directRates || {});
 		const next = { model: "direct-v1", formula };
-		const from = projectTotal(state.tasks);
-		const to = projectTotal(state.tasks, next);
+		const from = projectTotal(state.tasks, void 0, state.mobSheets);
+		const to = projectTotal(state.tasks, next, state.mobSheets);
 		dispatch({
 			type: "SET_PRICING",
 			pricing: next,
@@ -18648,101 +18835,15 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		});
 		const bolSheet = buildBolExportSection(tasks, noteTexts(state.sheetNotes?.BOL), state.pricing);
 		if (bolSheet) sections.push(bolSheet);
-		const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(state.sheetNotes?.BOTE));
+		const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(state.sheetNotes?.BOTE), state.pricing);
 		if (boteSheet) sections.push(boteSheet);
-		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM));
+		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM), state.pricing);
 		if (bocmSheet) sections.push(bocmSheet);
-		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "Bill of Personal Protective Equipment", noteTexts(state.sheetNotes?.PPE));
+		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(state.sheetNotes?.PPE), state.pricing);
 		if (ppeSheet) sections.push(ppeSheet);
-		const miscColumns = [
-			"Work type",
-			"Section",
-			"Item No.",
-			"Description",
-			"QTY",
-			"Days",
-			"Unit cost",
-			"Subtotal"
-		];
-		const miscBlocks = [];
-		const miscRows = [];
-		const miscMeta = [];
-		let miscGrand = 0;
-		WORK_TYPES.forEach((w) => {
-			const part = [];
-			tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((st) => (st.items.MISC || []).forEach((it, i) => {
-				if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
-				part.push([
-					w.label,
-					it.section || "",
-					i + 1,
-					it.description,
-					it.qty,
-					isDirectPricing(state.pricing) ? it.days == null || it.days === "" ? 1 : it.days : it.days || 1,
-					fmt(it.unitCost),
-					fmt(itemSubtotal("MISC", it, void 0, state.pricing))
-				]);
-			})));
-			if (!part.length) return;
-			const partTotal = roundMoney(tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
-				if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return s3;
-				return s3 + itemSubtotal("MISC", it, void 0, state.pricing);
-			}, 0), 0), 0));
-			miscGrand = roundMoney(miscGrand + partTotal);
-			const banner = `${w.letter}. ${w.full}`;
-			miscBlocks.push({
-				banner,
-				bannerFill: BOL_LIGHT_BLUE,
-				columns: miscColumns,
-				rows: part,
-				rowMeta: part.map(() => ({ kind: "line" })),
-				headFill: BOL_LIGHT_BLUE,
-				afterTight: true
-			});
-			miscRows.push([banner]);
-			miscMeta.push({ kind: "group" });
-			part.forEach((row) => {
-				miscRows.push(row);
-				miscMeta.push({ kind: "line" });
-			});
-			const sub = Array(miscColumns.length).fill("");
-			sub[0] = `Subtotal — ${w.label}`;
-			sub[miscColumns.length - 1] = fmt(partTotal);
-			miscBlocks.push({
-				columns: miscColumns,
-				rows: [sub],
-				rowMeta: [{ kind: "total" }],
-				hideHead: true,
-				totalFill: BOL_LIGHT_BLUE,
-				gapAfter: 10
-			});
-			miscRows.push(sub);
-			miscMeta.push({ kind: "total" });
-		});
-		if (miscBlocks.length) {
-			const total = Array(miscColumns.length).fill("");
-			total[0] = "GRAND TOTAL";
-			total[miscColumns.length - 1] = fmt(miscGrand);
-			miscBlocks.push({
-				columns: miscColumns,
-				rows: [total],
-				rowMeta: [{ kind: "total" }],
-				hideHead: true,
-				totalFill: BOL_LIGHT_BLUE
-			});
-			miscRows.push(total);
-			miscMeta.push({ kind: "total" });
-			sections.push({
-				title: "MISC",
-				exportTitle: "MISCELLANEOUS",
-				columns: miscColumns,
-				rows: miscRows,
-				rowMeta: miscMeta,
-				blocks: miscBlocks,
-				notes: noteTexts(state.sheetNotes?.MISC)
-			});
-		}
-		const onsiteTasks = tasksOfType(tasks, "onsite");
+		const miscSheet = buildMiscExportSection(tasks, state.pricing, noteTexts(state.sheetNotes?.MISC));
+		if (miscSheet) sections.push(miscSheet);
+				const onsiteTasks = tasksOfType(tasks, "onsite");
 		const supplyTasks = [...tasksOfType(tasks, "shop"), ...tasksOfType(tasks, "trading")];
 		if (onsiteTasks.length) {
 			sections.push(buildMobExportSection("Mobilization", onsiteTasks, mobSnaps.current.Mobilization, noteTexts(state.sheetNotes?.MOB), mobManpower));
@@ -18768,7 +18869,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			}
 		});
 		const info = state.projectInfo || {};
-		const official = buildOfficialBaseRows(tasks, state.pricing);
+		const official = buildOfficialBaseRows(tasks, state.pricing, state.mobSheets);
 		const shown = (row) => shownOfficialAmount(row, state.summaryOverrides, state.pricing);
 		const bodyParts = official.rows.filter((r) => [
 			"A",
@@ -18779,7 +18880,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const benefitRow = official.rows.find((r) => r.key === "A1");
 		const benefitParts = benefitRow ? shown(benefitRow) : 0;
 		const miscParts = official.rows.filter((r) => r.sub && !r.breakdown && r.key !== "A1").reduce((sum, r) => sum + shown(r), 0);
-		const bodySum = isDirectPricing(state.pricing) ? screenOfficialTotal(tasks, state.pricing, state.summaryOverrides) : bodyParts + benefitParts + miscParts;
+		const mobParts = official.rows.filter((r) => r.key === "MOB" || r.key === "DEMOB").reduce((sum, r) => sum + shown(r), 0);
+		const bodySum = isDirectPricing(state.pricing) ? screenOfficialTotal(tasks, state.pricing, state.summaryOverrides, state.mobSheets) : bodyParts + benefitParts + miscParts + mobParts;
 		const qty = num2(info.quantity);
 		const docNoOut = info.docNo || ceData?.id || docNo || "";
 		const summaryRows = [];
@@ -18804,18 +18906,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			]);
 			summaryMeta.push({ kind: "sum-custom" });
 		});
-		summaryRows.push([
-			"",
-			"UNIT PRICE:",
-			qty ? fmt(bodySum / qty) : "—"
-		]);
-		summaryMeta.push({ kind: "sum-blue" });
-		summaryRows.push([
-			"",
-			"TOTAL AMOUNT:",
-			fmt(bodySum)
-		]);
-		summaryMeta.push({ kind: "sum-blue" });
+		summaryRows.push(["", "UNIT PRICE:", qty ? fmt(bodySum / qty) : "—"]);
+		summaryMeta.push({ kind: "sum-final" });
+		summaryRows.push(["", "TOTAL AMOUNT:", fmt(bodySum)]);
+		summaryMeta.push({ kind: "sum-final" });
 		const signSlot = (label, name, title, stamp) => ({
 			label,
 			name: honorificName(name, users),
@@ -18843,15 +18937,16 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				revDate: info.revDate || ""
 			},
 			columns: [
-				"ITEM",
+				"ITEM NO.",
 				"DESCRIPTION",
 				"TOTAL COST"
 			],
 			rows: summaryRows,
 			rowMeta: summaryMeta,
+			keepWidths: true,
 			columnStyles: {
 				0: {
-					cellWidth: 22,
+					cellWidth: 15,
 					halign: "center"
 				},
 				2: {
@@ -18984,7 +19079,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const data = prepareExportData();
 		const cont = num2(state.commercial?.contingencyPct);
 		const disc = num2(state.commercial?.discountPct);
-		const grand2 = projectTotal(state.tasks, state.pricing);
+		const grand2 = projectTotal(state.tasks, state.pricing, state.mobSheets);
 		const net = directOn ? grand2 : commercialNet(grand2, cont, disc);
 		const typesInUse = [...new Set((state.enabledWorkTypes && state.enabledWorkTypes.length ? state.enabledWorkTypes : (state.tasks || []).map((t) => taskWorkType(t))).filter(Boolean))];
 		const tradingOnly = typesInUse.length === 1 && typesInUse[0] === "trading";
@@ -19050,7 +19145,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		state.tasks.forEach((t) => t.subtasks.forEach((s) => (s.items.BOL || []).forEach((it) => items.push(it))));
 		return items;
 	}, [state.tasks]);
-	const officialBase = buildOfficialBaseRows(state.tasks || [], state.pricing);
+	const officialBase = buildOfficialBaseRows(state.tasks || [], state.pricing, state.mobSheets);
 	const workTypesInUse = state.enabledWorkTypes?.length ? state.enabledWorkTypes : [...new Set((state.tasks || []).map((t) => taskWorkType(t)))];
 	const seededNotes = (sheet) => {
 		const stored = state.sheetNotes?.[sheet];
@@ -19133,7 +19228,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		num: `F.${i + 1}`
 	}));
 	const officialQty = num2(resolvedProject.quantity);
-	const officialTotal = directOn ? screenOfficialTotal(state.tasks || [], state.pricing, state.summaryOverrides) : roundMoney(officialBase.rows.filter((r) => [
+	const officialTotal = directOn ? screenOfficialTotal(state.tasks || [], state.pricing, state.summaryOverrides, state.mobSheets) : roundMoney(officialBase.rows.filter((r) => [
 		"A",
 		"B",
 		"C",
@@ -19262,7 +19357,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => {
-							const official = buildOfficialBaseRows(state.tasks || [], state.pricing);
+							const official = buildOfficialBaseRows(state.tasks || [], state.pricing, state.mobSheets);
 							const groups = (official.rows || []).filter((row) => row.main).map((row) => ({ key: row.key, label: row.label, direct: row.computed }));
 							onProposal("create", {
 								groups,
@@ -19310,14 +19405,18 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				canCancel: canCancelJobOrder(jobOrder, { byUserId: release1ActorId, admin: actingLevel === "admin", salesManager: isSalesManager(findAccount(users, { userId: release1ActorId }), release1DepartmentsOn) }),
 				createDefaults: {
 					ceId: ceData?.id || "",
+					ceLabel: ceData?.id || "",
 					client: ceData?.client || state.meta?.client || "",
 					project: ceData?.project || state.meta?.title || "",
 					prNo: proposal?.prNo || "",
 					controlNo: proposal?.controlNo || "",
 					year: phYear(),
 					ceQuantity: state.tasks || [],
-					salesPosition: "Sales Rep"
+					salesPosition: "Sales Rep",
+					salesperson: editingUser || ""
 				},
+				buildPackPdf: async (draft) => exportJobOrderPackPdf(draft, users, draft?.annexA === false ? null : prepareExportData(), { logo: documentControl?.logoDataUrl || "" }),
+				joScreenV2: adminConfig?.features?.joScreenV2 === true,
 				onJobOrder
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
@@ -20020,7 +20119,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								viewType !== "Summary" && /* @__PURE__ */ jsx(SummaryView, {
 									tasks: state.tasks,
 									viewType,
-									pricing: state.pricing
+									pricing: state.pricing,
+									mobSheets: state.mobSheets
 								})
 							] }),
 							tab === "BREAKDOWN" && /* @__PURE__ */ jsx(BreakdownView, {
@@ -20072,6 +20172,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								const activePair = mobView || (supplyTasks.length && !onsiteTasks.length ? "supply" : "mob");
 								const remember = (name) => (snap) => {
 									mobSnaps.current[name] = snap;
+									const onsite = tasksOfType(stateRef.current.tasks, "onsite");
+									const mobilization = buildMobExportSection("Mobilization", onsite, mobSnaps.current.Mobilization, [], mobManpower)?.sheetTotal || 0;
+									const demobilization = buildMobExportSection("Demobilization", onsite, mobSnaps.current.Demobilization, [], mobManpower)?.sheetTotal || 0;
+									dispatch({ type: "SET_MOB_SHEETS", mobSheets: { mobilization, demobilization } });
 								};
 								const sheet = (name, tasks, copyLabel, sourceName) => /* @__PURE__ */ jsx(MobDemobSection, {
 									title: name,
@@ -21055,9 +21159,27 @@ function plainSnapshot(value) {
 		return null;
 	}
 }
-function oifChecked(map, labels) {
-	const hits = Object.entries(labels).filter(([key]) => map?.[key]).map(([, label]) => label);
-	return hits.length ? hits.join(", ") : "—";
+// Onsite Inspection form document control (set once Document Control issues the numbers).
+const OIF_DOC_CONTROL = {
+	docControlNo: "SY3-F-EPD-000",
+	revisionNo: "00",
+	revisionDate: "02-16-2025"
+};
+// Bold black check mark for selected Job Type boxes (vector, no glyph needed).
+function oifDrawTick(doc, x, y) {
+	doc.setDrawColor(0, 0, 0);
+	doc.setLineWidth(.7);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("round");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("round");
+	doc.lines([[1.0, 1.25], [2.1, -2.9]], x + .55, y - 1.15, [1, 1], "S", false);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("butt");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("miter");
+	doc.setLineWidth(.25);
+}
+function oifListRows(list, text) {
+	const rows = (Array.isArray(list) ? list : []).filter((r) => String(r?.description || r?.item || "").trim());
+	if (rows.length) return rows.map((r) => ({ description: String(r.description || r.item || ""), qty: r.qty ?? "", unit: r.unit || "" }));
+	return String(text || "").split(/\n|,\s*(?![^()]*\))/).map((s) => s.trim()).filter(Boolean).map((s) => ({ description: s, qty: "", unit: "" }));
 }
 function exportOifToPDF(form = {}, hostDoc) {
 	const doc = hostDoc || new jsPDF({
@@ -21067,116 +21189,676 @@ function exportOifToPDF(form = {}, hostDoc) {
 	});
 	const pageW = doc.internal.pageSize.getWidth();
 	const pageH = doc.internal.pageSize.getHeight();
-	const m = 12;
-	const room = (y, need) => {
-		if (y + need <= pageH - 12) return y;
-		doc.addPage();
-		return 16;
+	const m = 10;
+	const innerW = pageW - m * 2;
+	const bottom = pageH - m;
+	const startPage = doc.getCurrentPageInfo?.().pageNumber || doc.getNumberOfPages();
+	const fontName = doc.getFont()?.fontName || "helvetica";
+	const fontStyles = (typeof doc.getFontList === "function" ? doc.getFontList()[fontName] : null) || ["normal", "bold", "italic"];
+	const italicStyle = fontStyles.includes("italic") ? "italic" : "normal";
+	const BLUE = [173, 216, 230];
+	const dcCfg = { ...OIF_DOC_CONTROL, ...(form.docControl || {}) };
+	const dcX = pageW - m - 46;
+	const headH = 22;
+	const pageRows = [];
+	const setText = (size, style = "normal") => {
+		doc.setFont(void 0, style);
+		doc.setFontSize(size);
+		doc.setTextColor(0, 0, 0);
 	};
-	let y = 16;
-	doc.setFont(void 0, "bold");
-	doc.setFontSize(14);
-	doc.text("ONSITE INSPECTION FORM", pageW / 2, y, { align: "center" });
-	y += 8;
-	const line = (label, value) => {
-		y = room(y, 6);
-		doc.setFontSize(9);
-		doc.setFont(void 0, "bold");
-		doc.text(label, m, y);
-		doc.setFont(void 0, "normal");
-		const lines = doc.splitTextToSize(String(value || "—"), pageW - m * 2 - 36);
-		doc.text(lines, m + 36, y);
-		y += Math.max(5, lines.length * 4);
+	const wrap = (text, width, size, style = "normal") => {
+		setText(size, style);
+		return String(text ?? "").split("\n").flatMap((part) => doc.splitTextToSize(part, width));
 	};
-	line("Date", form.date);
-	line("OIF No.", form.oifNo || form.id);
-	line("Project", form.projectDescription || form.project);
-	line("RFQ No.", form.rfqNo);
-	line("Customer", form.customerName || form.client);
-	line("Representative", form.customerRep);
-	line("Inspector", form.onsiteInspector || form.createdBy);
-	if (exportEngineOn) {
-		const inspectorImage = cachedSignature({ name: form.onsiteInspector || form.createdBy });
-		if (inspectorImage) {
-			y = room(y, 16);
+	const lh = (size) => size * .3528 * 1.18;
+	// ---- Page frame + header (logo cell, address, document control) + title band ----
+	const drawHeader = () => {
+		doc.setDrawColor(0, 0, 0);
+		doc.setLineWidth(.5);
+		doc.rect(m, m, innerW, pageH - m * 2);
+		doc.setLineWidth(.3);
+		const logoBoxW = 42;
+		const logo = form.companyLogo || form.logoDataUrl;
+		let drewLogo = false;
+		if (logo) try {
+			const pad = 1.2;
+			const boxW = logoBoxW - pad * 2;
+			const boxH = headH - pad * 2;
+			let drawW = boxW;
+			let drawH = boxH;
 			try {
-				doc.addImage(inspectorImage, "PNG", m + 36, y, 40, 12);
-				y += 16;
-			} catch { /* inspector name already printed */ }
+				const props = doc.getImageProperties(logo);
+				const ratio = props.width / props.height;
+				if (boxW / boxH > ratio) drawW = boxH * ratio;
+				else drawH = boxW / ratio;
+			} catch { /* use whole box */ }
+			doc.addImage(logo, logoFormat(logo), m + pad + (boxW - drawW) / 2, m + pad + (boxH - drawH) / 2, drawW, drawH);
+			drewLogo = true;
+		} catch { /* text placeholder */ }
+		if (!drewLogo) {
+			setText(11, "bold");
+			doc.text("LOGO", m + logoBoxW / 2, m + headH / 2 + 1.5, { align: "center" });
 		}
-	}
-	line("Contact", form.contactNo);
-	line("Activity", oifChecked(form.activity, {
-		onsite: "Onsite",
-		shopwork: "Shopwork",
-		supplyOnly: "Supply only"
-	}));
-	const service = oifChecked(form.serviceType, {
-		repair: "Repair",
-		electrical: "Electrical",
-		thermalSpray: "Thermal spray",
-		civilWorks: "Civil works",
-		ndt: "NDT",
-		protectiveCoating: "Protective coating",
-		fabrication: "Fabrication",
-		balancing: "Balancing",
-		mechanical: "Mechanical",
-		sandblasting: "Sandblasting",
-		others: "Others"
-	});
-	line("Service", [service !== "—" ? service : "", form.serviceType?.othersText || ""].filter(Boolean).join(", "));
-	line("Quantity", form.quantity);
-	line("Dimensions", [form.length && `L ${form.length}`, form.width && `W ${form.width}`, form.thk && `Thk ${form.thk}`].filter(Boolean).join(" · "));
-	line("Diameter", [form.outsideDia && `OD ${form.outsideDia}`, form.insideDia && `ID ${form.insideDia}`, form.dimLength && `L ${form.dimLength}`].filter(Boolean).join(" · "));
-	line("Weight", [form.weightValue, form.weightTons ? "tons" : "", form.weightKg ? "kg" : ""].filter(Boolean).join(" "));
-	line("Drawing", form.drawingAvailable);
-	line("Duration", form.duration);
-	const people = (form.manpower || []).filter((row) => String(row?.designation || "").trim() || String(row?.pax || "").trim());
-	if (people.length) {
-		y = room(y, 20);
-		autoTable(doc, {
-			startY: y,
-			margin: { left: m, right: m },
-			head: [["Manpower designation", "No. of pax"]],
-			body: people.map((row) => [row.designation || "", row.pax || ""]),
-			styles: { fontSize: 8, cellPadding: 1.2 },
-			headStyles: {
-				fillColor: [240, 240, 240],
-				textColor: [0, 0, 0]
-			}
-		});
-		y = (doc.lastAutoTable?.finalY || y) + 6;
-	}
-	const block = (title, text) => {
-		y = room(y, 16);
-		doc.setFont(void 0, "bold");
-		doc.setFontSize(10);
-		doc.text(title, m, y);
-		y += 5;
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(9);
-		doc.splitTextToSize(String(text || "—"), pageW - m * 2).forEach((part) => {
-			y = room(y, 5);
-			doc.text(part, m, y);
-			y += 4.2;
-		});
-		y += 2;
+		doc.line(m + logoBoxW, m, m + logoBoxW, m + headH);
+		doc.line(dcX, m, dcX, m + headH);
+		const rowH = headH / 3;
+		for (let i = 1; i < 3; i += 1) doc.line(dcX, m + rowH * i, pageW - m, m + rowH * i);
+		setText(7.5, "bold");
+		doc.text(String(dcCfg.docControlNo || ""), dcX + 23, m + rowH / 2 + 1.2, { align: "center" });
+		setText(7.5, "normal");
+		doc.text(`REV. ${dcCfg.revisionNo || "__"} / ${dcCfg.revisionDate || "__"}`, dcX + 23, m + rowH * 1.5 + 1.2, { align: "center" });
+		pageRows.push({ page: doc.getCurrentPageInfo?.().pageNumber || doc.getNumberOfPages(), y: m + rowH * 2.5 + 1.2 });
+		const addr = form.companyAddress || "353 Amadeo Highway, Barangay Santiago, General Trias, Cavite, Philippines";
+		const tel = form.companyContact || "Tel. No.: (046) 683-7500 • (046) 683-7783  Telefax No.: (046) 432-5533";
+		setText(6.5, "normal");
+		doc.setTextColor(90, 90, 90);
+		const midX = (m + logoBoxW + dcX) / 2;
+		doc.text(doc.splitTextToSize(addr, dcX - m - logoBoxW - 6), midX, m + headH - 7, { align: "center" });
+		doc.text(tel, midX, m + headH - 2.5, { align: "center" });
+		doc.setTextColor(0, 0, 0);
+		let y = m + headH;
+		doc.setFillColor(...BLUE);
+		doc.rect(m, y, innerW, 9, "F");
+		doc.line(m, y, pageW - m, y);
+		setText(13, "bold");
+		doc.text("ONSITE INSPECTION FORM", pageW / 2, y + 6.3, { align: "center" });
+		y += 9;
+		doc.line(m, y, pageW - m, y);
+		return y;
 	};
-	block("Scope of work", [form.scopeLeft, form.scopeRight].filter(Boolean).join("\n"));
-	block("Estimated materials, consumables, tools and equipment", [form.materialsLeft, form.materialsRight].filter(Boolean).join("\n"));
-	(form.photos || []).filter((photo) => photo?.dataUrl && /^data:image\//.test(photo.dataUrl)).forEach((photo) => {
-		y = room(y, 50);
-		try {
-			doc.addImage(photo.dataUrl, /png/i.test(photo.dataUrl.slice(0, 30)) ? "PNG" : "JPEG", m, y, 60, 40);
-			y += 44;
-			doc.setFontSize(8);
-			doc.text(String(photo.name || "Photo"), m, y);
-			y += 6;
-		} catch (err) {}
+	const band = (y, title, x = m, w = innerW, h = 6) => {
+		doc.setFillColor(...BLUE);
+		doc.setLineWidth(.25);
+		doc.rect(x, y, w, h, "FD");
+		setText(9, "bold");
+		doc.text(title, x + w / 2, y + h / 2 + 1.2, { align: "center" });
+		return y + h;
+	};
+	const cellText = (lines, x, top, h, size, style, align = "left", w = 0) => {
+		setText(size, style);
+		const total = lines.length * lh(size);
+		const ty = top + (h - total) / 2 + size * .3528 * .85;
+		doc.text(lines, align === "center" ? x + w / 2 : x, ty, { align, lineHeightFactor: 1.18 });
+	};
+	let y = drawHeader();
+	// ---- Info block ----
+	const LW = 33;
+	const RLW = 27;
+	const RVW = 36;
+	const LVW = innerW - LW - RLW - RVW;
+	const xLV = m + LW;
+	const xRL = xLV + LVW;
+	const xRV = xRL + RLW;
+	const PAD = 1.8;
+	const infoRows = [
+		["DATE INSPECTED:", form.dateInspected || form.date, "OIF NO.:", form.oifNo || form.id],
+		["PROJECT DESCRIPTION:", form.projectDescription || form.project, "RCE NO.:", form.rceNo || form.rfqNo],
+		["CUSTOMER NAME:", form.customerName || form.client, "CUSTOMER REPRESENTATIVE:", form.customerRep],
+		["CLIENT ADDRESS:", form.clientAddress || form.address, "CONTACT NO.:", form.contactNo]
+	];
+	doc.setLineWidth(.25);
+	infoRows.forEach(([l1, v1, l2, v2]) => {
+		const c = [wrap(l1, LW - PAD * 2, 7.5, "bold"), wrap(v1 || "", LVW - PAD * 2, 8), wrap(l2, RLW - PAD * 2, 7, "bold"), wrap(v2 || "", RVW - PAD * 2, 8)];
+		const h = Math.max(6.5, ...c.map((ln, i) => ln.length * lh(i % 2 ? 8 : 7.5) + 2.6));
+		[[m, LW], [xLV, LVW], [xRL, RLW], [xRV, RVW]].forEach(([x, w]) => doc.rect(x, y, w, h));
+		cellText(c[0], m + PAD, y, h, 7.5, "bold");
+		cellText(c[1], xLV + PAD, y, h, 8, "normal");
+		cellText(c[2], xRL + PAD, y, h, 7, "bold");
+		cellText(c[3], xRV + PAD, y, h, 8, "normal");
+		y += h;
 	});
+	// ---- A. Job Type | B. Work Piece Measurement ----
+	y += 2;
+	const JW = 116;
+	const MW = innerW - JW;
+	const mx = m + JW;
+	band(y, "A. JOB TYPE", m, JW);
+	band(y, "B. WORK PIECE MEASUREMENT", mx, MW);
+	y += 6;
+	const RH = 6;
+	const boxMark = (x, yy, on) => {
+		doc.setLineWidth(.3);
+		doc.setDrawColor(0, 0, 0);
+		doc.rect(x, yy - 3.4, 3.8, 3.8);
+		if (on) oifDrawTick(doc, x, yy - 1.5);
+		doc.setLineWidth(.25);
+	};
+	const opt = (x, yy, label, on, size = 7.5) => {
+		boxMark(x, yy, on);
+		setText(size, "normal");
+		doc.text(label, x + 5.2, yy);
+	};
+	const st = form.serviceType || {};
+	const othersLines = wrap(st.othersText || "", JW / 3 * 2 - 24 - PAD, 7, italicStyle).slice(0, 3);
+	const OTH_H = Math.max(9, othersLines.length * lh(7) + 3);
+	// Row heights shared by A (left) and B (right) so every boundary meets at the divider.
+	const rowHs = [RH, 5, RH, RH, RH, OTH_H, RH];
+	const jt = y;
+	doc.setLineWidth(.25);
+	// Activity row
+	doc.rect(m, y, JW, RH);
+	setText(7.5, "bold");
+	doc.text("ACTIVITY:", m + PAD, y + 4.1);
+	const act = form.activity || {};
+	opt(m + 24, y + 4.4, "ONSITE", !!act.onsite);
+	opt(m + 52, y + 4.4, "SHOPWORK", !!act.shopwork);
+	opt(m + 82, y + 4.4, "SUPPLY ONLY", !!act.supplyOnly);
+	y += RH;
+	doc.setFillColor(232, 244, 248);
+	doc.rect(m, y, JW, rowHs[1], "FD");
+	setText(7.5, "bold");
+	doc.text("SERVICE TYPE:", m + JW / 2, y + 3.6, { align: "center" });
+	y += rowHs[1];
+	const grid = [
+		[["repair", "REPAIR"], ["electrical", "ELECTRICAL"], ["thermalSpray", "THERMAL SPRAY"]],
+		[["civilWorks", "CIVIL WORKS"], ["ndt", "NDT"], ["protectiveCoating", "PROTECTIVE COATING"]],
+		[["fabrication", "FABRICATION"], ["balancing", "BALANCING"], ["sandblasting", "SANDBLASTING"]],
+		[["mechanical", "MECHANICAL"], ["others", "OTHERS:"]]
+	];
+	const cw = JW / 3;
+	grid.forEach((row, ri) => {
+		const h = rowHs[2 + ri];
+		row.forEach((cell, i) => {
+			const x = m + cw * i;
+			const w = cell[0] === "others" ? cw * 2 : cw;
+			doc.setLineWidth(.25);
+			doc.rect(x, y, w, h);
+			opt(x + PAD, y + h / 2 + 1.4, cell[1], !!st[cell[0]], 7);
+			if (cell[0] === "others") cellText(othersLines, x + 22, y, h, 7, italicStyle);
+		});
+		y += h;
+	});
+	// Drawing available row
+	doc.rect(m, y, JW, RH);
+	setText(7, "bold");
+	doc.text("CUSTOMER WORKING DRAWING AVAILABLE:", m + PAD, y + 4.1);
+	const dwg = String(form.drawingAvailable || "").trim().toLowerCase();
+	opt(m + 66, y + 4.4, "YES", /^y/.test(dwg));
+	opt(m + 84, y + 4.4, "NO", /^n/.test(dwg));
+	y += RH;
+	const jobEnd = y;
+	// Measurement column
+	let yy = jt;
+	const mRow = (h, cells) => {
+		let x = mx;
+		cells.forEach(([w, label, value, center]) => {
+			const cwid = w * MW;
+			doc.setLineWidth(.25);
+			doc.rect(x, yy, cwid, h);
+			const text = value === undefined ? label : `${label} ${value || "N/A"}`;
+			const lines = wrap(text, cwid - PAD * 2, 6.8, value === undefined ? "bold" : "normal");
+			cellText(lines, x + PAD, yy, h, 6.8, value === undefined ? "bold" : "normal", center ? "center" : "left", cwid - PAD * 2);
+			x += cwid;
+		});
+		yy += h;
+	};
+	mRow(rowHs[0], [[1, `QUANTITY: ${form.quantity || "N/A"}`, undefined, true]]);
+	mRow(rowHs[1], [[1, "GENERAL DIMENSIONS (APPROXIMATELY)", undefined, true]]);
+	mRow(rowHs[2], [[1 / 3, "LENGTH:", form.length], [1 / 3, "WIDTH:", form.width], [1 / 3, "THK:", form.thk]]);
+	mRow(rowHs[3], [[1 / 3, "OD:", form.outsideDia], [1 / 3, "ID:", form.insideDia], [1 / 3, "LENGTH:", form.dimLength]]);
+	mRow(rowHs[4], [[1, "ESTIMATED WEIGHT", undefined, true]]);
+	const wt = String(form.weightValue || "").trim();
+	mRow(rowHs[5], [[.5, "TONS:", form.weightTons ? wt : ""], [.5, "KG:", form.weightKg ? wt : ""]]);
+	mRow(rowHs[6], [[1, "DURATION:", form.duration]]);
+	y = jobEnd;
+	// ---- C. Scope of Work: main tasks bold, sub-tasks indented ----
+	y = band(y, "C. SCOPE OF WORK");
+	const scopeLines = (Array.isArray(form.scopeItems) && form.scopeItems.length
+		? form.scopeItems.map((s) => (typeof s === "string" ? s : `${s.no ? `${s.no} ` : ""}${s.text || ""}`))
+		: [form.scopeLeft, form.scopeRight].filter(Boolean).join("\n").split("\n")).map((s) => s.trim()).filter(Boolean);
+	const half = Math.ceil(scopeLines.length / 2);
+	const scopeCols = [scopeLines.slice(0, half), scopeLines.slice(half)];
+	const isSub = (s) => /^\d+\.\d+/.test(s) || /^[-•]/.test(s);
+	const colW2 = innerW / 2;
+	const scopeTop = y;
+	const colBottoms = scopeCols.map((list, ci) => {
+		let sy = scopeTop + 1.2;
+		list.forEach((s) => {
+			const sub = isSub(s);
+			const indent = sub ? 6 : 0;
+			const lines = wrap(s, colW2 - PAD * 2 - indent, 7.5, sub ? "normal" : "bold");
+			setText(7.5, sub ? "normal" : "bold");
+			doc.text(lines, m + ci * colW2 + PAD + indent, sy + 2.7, { lineHeightFactor: 1.18 });
+			sy += lines.length * lh(7.5) + .9;
+		});
+		return sy;
+	});
+	// No inner divider / bottom line: the page border frames the scope.
+	y = Math.max(...colBottoms) + 1;
+	// ---- D / E / F: three item tables side by side ----
+	y += 2;
+	const tables = [
+		["D. ESTIMATED MATERIALS", oifListRows(form.materials, form.materialsLeft)],
+		["E. CONSUMABLES", oifListRows(form.consumables, form.consumablesText)],
+		["F. TOOLS AND EQUIPMENT", oifListRows(form.tools, form.materialsRight)]
+	];
+	const gap = 2;
+	const INSET = 3; // tables stay clear of the page border
+	const tW = (innerW - INSET * 2 - gap * 2) / 3;
+	const tableStyles = {
+		font: fontName,
+		fontSize: 6.8,
+		cellPadding: { top: 1, bottom: 1, left: 1.4, right: 1.4 },
+		lineWidth: .25,
+		lineColor: [0, 0, 0],
+		textColor: [0, 0, 0],
+		valign: "middle",
+		overflow: "linebreak"
+	};
+	const headStyles = { font: fontName, fillColor: BLUE, textColor: [0, 0, 0], fontStyle: "bold", halign: "center", fontSize: 6.8 };
+	let tablesEnd = y;
+	tables.forEach(([title, rows], i) => {
+		const x = m + INSET + i * (tW + gap);
+		band(y, title, x, tW, 5.5);
+		autoTable(doc, {
+			startY: y + 5.5,
+			margin: { left: x, right: pageW - x - tW },
+			tableWidth: tW,
+			theme: "grid",
+			head: [["No.", "Description", "Qty", "Unit"]],
+			body: rows.length ? rows.map((r, k) => [k + 1, r.description, r.qty, r.unit]) : [["", "—", "", ""]],
+			styles: tableStyles,
+			headStyles,
+			columnStyles: { 0: { cellWidth: 7, halign: "center" }, 2: { cellWidth: 9, halign: "center" }, 3: { cellWidth: 10, halign: "center" } }
+		});
+		tablesEnd = Math.max(tablesEnd, doc.lastAutoTable?.finalY || y);
+	});
+	y = tablesEnd + 2;
+	// ---- G. Estimated activity duration with manpower ----
+	const people = (form.manpower || []).filter((row) => String(row?.designation || "").trim() || String(row?.pax || "").trim());
+	if (y + 24 > bottom) {
+		doc.addPage();
+		y = drawHeader() + 2;
+	}
+	y = band(y, `G. ESTIMATED ACTIVITY DURATION WITH MANPOWER${form.duration ? ` — ${String(form.duration).toUpperCase()}` : ""}`, m + 3, innerW - 6);
+	const halfP = Math.ceil(Math.max(people.length, 1) / 2);
+	const pRows = [];
+	for (let i = 0; i < halfP; i += 1) {
+		const a = people[i] || {};
+		const b = people[i + halfP] || {};
+		const bi = i + halfP;
+		pRows.push([a.designation ? i + 1 : "", a.designation || "", a.pax || "", a.days || "", b.designation ? bi + 1 : "", b.designation || "", b.pax || "", b.days || ""]);
+	}
+	autoTable(doc, {
+		startY: y,
+		margin: { left: m + 3, right: m + 3 },
+		theme: "grid",
+		head: [["NO.", "DESIGNATION", "NO. OF PERSONS", "DAYS / HOURS", "NO.", "DESIGNATION", "NO. OF PERSONS", "DAYS / HOURS"]],
+		body: pRows,
+		styles: tableStyles,
+		headStyles: { ...headStyles, fillColor: [232, 244, 248] },
+		columnStyles: { 0: { cellWidth: 9, halign: "center" }, 2: { cellWidth: 18, halign: "center" }, 3: { cellWidth: 18, halign: "center" }, 4: { cellWidth: 9, halign: "center" }, 6: { cellWidth: 18, halign: "center" }, 7: { cellWidth: 18, halign: "center" } }
+	});
+	// ---- Last page: photos (3 x 2), remarks and notes, signatories ----
+	doc.addPage();
+	y = drawHeader();
+	y = band(y, "H. PHOTOS");
+	const photos = (form.photos || []).filter((p) => p?.dataUrl && /^data:image\//.test(p.dataUrl)).slice(0, 6);
+	const pw = innerW / 3;
+	const ph = pw * 2 / 3; // photos fill their cells: no gutters
+	const capH = 7;
+	for (let r = 0; r < 2; r += 1) for (let c = 0; c < 3; c += 1) {
+		const x = m + c * pw;
+		const top = y + r * (ph + capH);
+		doc.setLineWidth(.25);
+		doc.rect(x, top, pw, ph + capH);
+		doc.line(x, top + ph, x + pw, top + ph);
+		const p = photos[r * 3 + c];
+		if (!p) continue;
+		try {
+			doc.addImage(p.dataUrl, /png/i.test(p.dataUrl.slice(0, 30)) ? "PNG" : "JPEG", x, top, pw, ph);
+			doc.setLineWidth(.25);
+			doc.rect(x, top, pw, ph + capH);
+		} catch { /* skip broken image */ }
+		const cap = wrap(p.name || "Photo", pw - PAD * 2, 6.8, "normal").slice(0, 2);
+		cellText(cap, x + PAD, top + ph, capH, 6.8, "normal", "center", pw - PAD * 2);
+	}
+	y += 2 * (ph + capH);
+	y = band(y, "I. REMARKS AND NOTES");
+	const remarks = wrap(form.remarks || "", innerW - PAD * 2 - 2, 8, "normal");
+	const notes = (Array.isArray(form.notes) ? form.notes : String(form.notes || "").split("\n")).map((s) => String(s).trim()).filter(Boolean);
+	const noteLines = notes.flatMap((n, i) => wrap(`${i + 1}. ${n}`, innerW - PAD * 2 - 2, 7.5, italicStyle));
+	const rmH = Math.max(18, (remarks.length + 1) * lh(8) + (noteLines.length + 1) * lh(7.5) + 6);
+	// Top edge only: no line between Remarks/Notes and the signatories.
+	let ry = y + 4;
+	setText(8, "bold");
+	doc.text("REMARKS:", m + PAD, ry);
+	ry += lh(8);
+	setText(8, "normal");
+	doc.text(remarks, m + PAD + 2, ry, { lineHeightFactor: 1.18 });
+	ry += remarks.length * lh(8) + 1.5;
+	if (noteLines.length) {
+		setText(8, "bold");
+		doc.text("NOTES:", m + PAD, ry);
+		ry += lh(8);
+		setText(7.5, italicStyle);
+		doc.setTextColor(180, 0, 0);
+		doc.text(noteLines, m + PAD + 2, ry, { lineHeightFactor: 1.18 });
+		doc.setTextColor(0, 0, 0);
+	}
+	y += rmH;
+	if (y + 56 > bottom) {
+		doc.addPage();
+		y = drawHeader() + 2;
+	}
+	// Signatories: same drawing as the RCE / Cost Estimate, 2 rows of 3, no box.
+	drawExportSigns(doc, [
+		{ label: "Prepared by:", name: form.preparedBy || form.createdBy, title: form.preparedTitle, stamp: form.preparedStamp },
+		{ label: "Inspected by:", name: form.inspectedBy || form.onsiteInspector, title: form.inspectedTitle, stamp: form.inspectedStamp },
+		{ label: "Reviewed by:", name: form.reviewedBy, title: form.reviewedTitle, stamp: form.reviewedStamp },
+		{ label: "Checked by:", name: form.checkedBy, title: form.checkedTitle, stamp: form.checkedStamp },
+		{ label: "Noted by:", name: form.notedBy, title: form.notedTitle, stamp: form.notedStamp },
+		{ label: "Approved by:", name: form.approvedBy, title: form.approvedTitle, stamp: form.approvedStamp }
+	], y + 2, m, { cols: 3 });
+	// ---- PAGE X OF Y ----
+	const endPage = doc.getNumberOfPages();
+	const total = endPage - startPage + 1;
+	pageRows.forEach(({ page, y: py }) => {
+		doc.setPage(page);
+		setText(7.5, "normal");
+		doc.text(`PAGE ${page - startPage + 1} OF ${total}`, dcX + 23, py, { align: "center" });
+	});
+	doc.setPage(endPage);
 	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: form.status, approvalStatus: form.approval?.status, docType: "oif" })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`Inspection_${form.oifNo || form.id || "report"}.pdf`);
 	return doc;
+}
+// ---- Job Order pack: SY3 JO form page(s) + the attached Cost Estimate with prices hidden ----
+// JO form document control (SY3 format). Set the official number once Document Control issues it.
+const JO_DOC_CONTROL = {
+	docControlNo: "F-SMD-____",
+	revisionNo: "00",
+	revisionDate: "N/A"
+};
+const CE_MONEY_HEADER = /price|rate|sub-?total|total|amount|cost|allowance|electricity|₱|markup/i;
+// Blank every price and amount in CE export data (keeps descriptions, qty, unit, days, labels such as "SUB TOTAL:").
+function hideCePrices(data = {}) {
+	const isMoneyText = (v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !/[A-Za-z]/.test(v.replace(/₱|PHP/gi, "")));
+	const blankRows = (columns, rows) => {
+		const money = (columns || []).map((c, i) => (CE_MONEY_HEADER.test(String(c)) ? i : -1)).filter((i) => i >= 0);
+		return (rows || []).map((row) => Array.isArray(row) ? row.map((cell, i) => {
+			const v = cell && typeof cell === "object" && "content" in cell ? cell.content : cell;
+			const hide = (money.includes(i) && isMoneyText(v)) || (typeof v === "string" && v.includes("₱"));
+			if (!hide) return cell;
+			return cell && typeof cell === "object" && "content" in cell ? { ...cell, content: "" } : "";
+		}) : row);
+	};
+	const sections = (data.sections || []).map((section) => {
+		const next = { ...section };
+		const dropValues = (meta) => (Array.isArray(meta) ? meta.map((mt) => (mt && "value" in mt ? { ...mt, value: null } : mt)) : meta);
+		if (Array.isArray(section.rows)) next.rows = blankRows(section.columns, section.rows);
+		next.rowMeta = dropValues(section.rowMeta);
+		if (Array.isArray(section.blocks)) next.blocks = section.blocks.map((block) => {
+			const b = { ...block };
+			delete b.planRows;
+			delete b.planMeta;
+			if (Array.isArray(block.rows)) b.rows = blankRows(block.columns, block.rows);
+			b.rowMeta = dropValues(block.rowMeta);
+			return b;
+		});
+		if (next.projectBlock) next.projectBlock = { ...next.projectBlock, ceLabel: "REF. CE NO." };
+		return next;
+	});
+	const cover = data.cover ? { ...data.cover, grandTotal: 0, netTotal: 0 } : data.cover;
+	return { ...data, sections, cover, pricing: undefined, pricesHidden: true, footerTag: "FOR JO — PRICES HIDDEN" };
+}
+function joLongDate(iso) {
+	const d = new Date(`${String(iso || "").slice(0, 10)}T00:00:00`);
+	if (Number.isNaN(d.getTime())) return String(iso || "");
+	return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+function joManilaStamp(name, at) {
+	if (!name || !at) return "";
+	const d = new Date(new Date(at).getTime() + 8 * 3600 * 1000);
+	if (Number.isNaN(d.getTime())) return "";
+	return `${name} ${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 16)}`;
+}
+function drawJobOrderForm(doc, jo = {}, users = [], opts = {}) {
+	const pageW = doc.internal.pageSize.getWidth();
+	const m = 12;
+	const innerW = pageW - m * 2;
+	const nameOf = (id) => {
+		const hit = (users || []).find((u) => u.userId === id || u.id === id);
+		return hit?.name || "";
+	};
+	const dc = { ...JO_DOC_CONTROL, ...(opts.docControl || {}) };
+	doc.setTextColor(0, 0, 0);
+	doc.setDrawColor(0, 0, 0);
+	// Header: logo, big title, doc-control text. No box or grid lines.
+	const headTop = 10;
+	const headH = 22;
+	const logo = opts.logo;
+	if (logo) try {
+		let w = 42;
+		let h = headH;
+		try {
+			const p = doc.getImageProperties(logo);
+			const r = p.width / p.height;
+			if (w / h > r) w = h * r;
+			else h = w / r;
+		} catch { /* box */ }
+		doc.addImage(logo, logoFormat(logo), m, headTop + (headH - h) / 2, w, h);
+	} catch { /* no logo */ }
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(22);
+	doc.text("JOB ORDER FORM", pageW / 2 - 4, headTop + headH / 2 + 3, { align: "center" });
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(7.5);
+	const dcX = pageW - m - 48;
+	[["Document No.:", dc.docControlNo], ["Revision No.:", dc.revisionNo], ["Revision Date:", dc.revisionDate]].forEach(([l, v], i) => {
+		const ty = headTop + 6 + i * 5;
+		doc.text(l, dcX, ty);
+		doc.text(String(v || ""), dcX + 21, ty);
+	});
+	// JO number + date, top right
+	let y = headTop + headH + 7;
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(12);
+	doc.text(String(jo.joNo || "—"), pageW - m, y, { align: "right" });
+	y += 5;
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(10);
+	doc.text(joLongDate(jo.dateIssued), pageW - m, y, { align: "right" });
+	y += 9;
+	// Date issued + REF. CE No. (plain text, no line or box)
+	const issued = jo.dateIssued ? `${joLongDate(jo.dateIssued).toUpperCase()} (${new Date(`${jo.dateIssued}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" }).toUpperCase()})` : "—";
+	doc.setFontSize(9);
+	doc.setFont(void 0, "bold");
+	doc.text("DATE ISSUED:", m + 2, y);
+	const diW = doc.getTextWidth("DATE ISSUED: ");
+	doc.setFont(void 0, "normal");
+	doc.text(issued, m + 2 + diW, y);
+	const ceRef = (Array.isArray(jo.ceIds) ? jo.ceIds : []).join(", ") || "—";
+	const ceW = doc.getTextWidth(ceRef);
+	doc.text(ceRef, pageW - m, y, { align: "right" });
+	doc.setFont(void 0, "bold");
+	doc.text("REF. CE NO.:", pageW - m - ceW - 2, y, { align: "right" });
+	y += 3;
+	// Client block: labelled values with underlined inputs, as on the company form.
+	const leftW = innerW * .62;
+	const rows = [
+		["CLIENT NAME:", jo.client, "PO REFERENCE NO.:", jo.poRef],
+		["PROJECT DESCRIPTION:", jo.projectDescription || jo.project, "PR REFERENCE NO.:", jo.prNo],
+		["SALESPERSON IN-CHARGE:", nameOf(jo.salesRepId), "DEPT./POSITION:", jo.salesPosition],
+		["PROJECT IN CHARGE:", jo.inCharge, "DEPT./POSITION:", jo.inChargePosition],
+		["CLIENT:", jo.clientContact, "DEPT./POSITION:", jo.clientContactPosition]
+	];
+	doc.setLineWidth(.3);
+	rows.forEach(([l1, v1, l2, v2]) => {
+		doc.setFontSize(8.5);
+		doc.setFont(void 0, "normal");
+		const lw1 = doc.getTextWidth(l1) + 1.5;
+		const lw2 = doc.getTextWidth(l2) + 1.5;
+		doc.setFont(void 0, "bold");
+		const val1 = doc.splitTextToSize(String(v1 || "—").toUpperCase(), leftW - lw1 - 5);
+		const val2 = doc.splitTextToSize(String(v2 || "—").toUpperCase(), innerW - leftW - lw2 - 5);
+		const lines = Math.max(val1.length, val2.length);
+		const h = Math.max(8.5, lines * 3.8 + 4.5);
+		doc.rect(m, y, leftW, h);
+		doc.rect(m + leftW, y, innerW - leftW, h);
+		const ty = y + (h - lines * 3.8) / 2 + 2.8;
+		doc.setFont(void 0, "normal");
+		doc.text(l1, m + 2, ty);
+		doc.text(l2, m + leftW + 2, ty);
+		doc.setFont(void 0, "bold");
+		doc.text(val1, m + 2 + lw1, ty, { lineHeightFactor: 1.27 });
+		doc.text(val2, m + leftW + 2 + lw2, ty, { lineHeightFactor: 1.27 });
+		y += h;
+	});
+	y += 9;
+	// Scope of work + lead time
+	doc.setFontSize(9);
+	doc.setFont(void 0, "normal");
+	doc.text("SCOPE OF WORK:", m, y);
+	doc.setFont(void 0, "bolditalic");
+	doc.text(String(jo.scopeRef || "**PLEASE SEE ANNEX A (ATTACHED COST ESTIMATE)**"), m + 28, y);
+	y += 5;
+	doc.setFont(void 0, "normal");
+	doc.text("PROJECT LEADTIME:", m + 4, y);
+	doc.setFont(void 0, "bold");
+	doc.text(String(jo.duration || ""), m + 37, y);
+	y += 5;
+	(jo.leadtime || []).forEach((item) => {
+		const bold = Array.isArray(item) ? String(item[0] || "") : String(item?.span || item?.days || "");
+		const rest = Array.isArray(item) ? String(item[1] || "") : String(item?.text || item?.note || (typeof item === "string" ? item : ""));
+		doc.circle(m + 32, y - 1, .6, "F");
+		doc.setFont(void 0, "bold");
+		doc.text(bold, m + 35, y);
+		const bw = doc.getTextWidth(bold);
+		doc.setFont(void 0, "normal");
+		if (rest) doc.text(doc.splitTextToSize(` – ${rest}`, innerW - 40 - bw)[0], m + 35 + bw, y);
+		y += 4.6;
+	});
+	y += 4;
+	doc.setFont(void 0, "normal");
+	doc.text("DATE OF MOBILIZATION:", m, y);
+	doc.setFont(void 0, "bold");
+	doc.text(String(jo.mobilization || "—"), m + 40, y);
+	y += 6;
+	// Signatories: CE / RCE style (e-sign, date/time stamp, name over line, designation).
+	const steps = Array.isArray(jo.steps) ? jo.steps : [];
+	const finalStep = steps.find((s) => s.isFinal) || steps[steps.length - 1] || {};
+	const submitted = (jo.timeline || []).find((t) => /submitted/i.test(t.action || ""));
+	const preparer = nameOf(jo.salesRepId);
+	const approver = nameOf(finalStep.byUserId || jo.approverId);
+	const forName = finalStep.forUserId && finalStep.forUserId !== finalStep.byUserId ? nameOf(finalStep.forUserId) : "";
+	y = drawExportSigns(doc, [
+		{ label: "Prepared by:", name: preparer, title: jo.salesPosition || "Sales Representative", stamp: joManilaStamp(preparer, submitted?.at) },
+		{ label: "Checked and Approved by:", name: approver, title: [jo.approverPosition || "Sales Manager", forName ? `for ${forName}` : ""].filter(Boolean).join(" — "), stamp: joManilaStamp(approver, finalStep.at) }
+	], y, m, { cols: 2 });
+	y += 4;
+	// JO reference guide: light-blue strip, type-of-project chips, then the JO number split into captioned chips.
+	const NAVY = [20, 40, 90];
+	const type = String(jo.type || "").toUpperCase();
+	y += 2;
+	doc.setFillColor(173, 216, 230);
+	doc.setDrawColor(...NAVY);
+	doc.setLineWidth(.3);
+	doc.rect(m, y, innerW, 6.5, "FD");
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(9.5);
+	doc.setTextColor(...NAVY);
+	doc.text("JO REFERENCE NO. GUIDE", pageW / 2, y + 4.6, { align: "center" });
+	y += 10.5;
+	// Type of project: a tidy chip row; the selected type is tinted, bold-bordered and ticked.
+	doc.setFontSize(7.5);
+	doc.setFont(void 0, "bold");
+	doc.text("TYPE OF PROJECT:", m + 1, y + 4);
+	const legend = [["SW", "SW: Shop Work"], ["F", "F: Field / On-Site"], ["T", "T: Trading / Supply"], ["O", "Others: ________"]];
+	const lgX0 = m + 30;
+	const lgGap = 2;
+	const lgW = (pageW - m - lgX0 - lgGap * 3) / 4;
+	legend.forEach(([code, label], i) => {
+		const x = lgX0 + i * (lgW + lgGap);
+		const on = code === type || (code === "F" && type === "OS");
+		if (on) doc.setFillColor(214, 234, 244);
+		else doc.setFillColor(255, 255, 255);
+		doc.setDrawColor(...(on ? NAVY : [150, 160, 175]));
+		doc.setLineWidth(on ? .6 : .25);
+		doc.roundedRect(x, y, lgW, 6, 1.6, 1.6, "FD");
+		doc.setLineWidth(.3);
+		doc.setDrawColor(...NAVY);
+		doc.setFillColor(255, 255, 255);
+		doc.rect(x + 1.8, y + 1.3, 3.4, 3.4, "FD");
+		if (on) {
+			oifDrawTick(doc, x + 1.8, y + 3.1);
+			doc.setDrawColor(...NAVY);
+		}
+		doc.setFont(void 0, on ? "bold" : "normal");
+		let fs = 7;
+		doc.setFontSize(fs);
+		while (fs > 5.5 && doc.getTextWidth(label) > lgW - 8) doc.setFontSize(fs -= .25);
+		doc.setTextColor(...NAVY);
+		doc.text(label, x + 6.6, y + 4.1);
+	});
+	y += 10;
+	// JO number: segments in rounded chips joined by dashes, caption under each chip.
+	const segs = String(jo.joNo || "").split("-");
+	while (segs.length < 6) segs.push("—");
+	const caps = ["Job Order", "JO Ref. #", "Type of Project", "Client's Code", "Year", "Proposal Control No."];
+	const fills = [[226, 238, 248], [214, 234, 244], [222, 240, 238], [232, 236, 246], [238, 242, 248], [220, 232, 246]];
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(13);
+	const chipH = 9;
+	const dashW = 5;
+	const widths = segs.slice(0, 6).map((sg, i) => {
+		doc.setFont(void 0, "bold");
+		doc.setFontSize(13);
+		const tw = doc.getTextWidth(sg) + 7;
+		doc.setFont(void 0, "normal");
+		doc.setFontSize(6.5);
+		return Math.max(tw, doc.getTextWidth(caps[i]) + 2, 15);
+	});
+	const totalW = widths.reduce((a, w) => a + w, 0) + dashW * 5;
+	let cx = pageW / 2 - totalW / 2;
+	segs.slice(0, 6).forEach((sg, i) => {
+		const w = widths[i];
+		doc.setFillColor(...fills[i]);
+		doc.setDrawColor(...NAVY);
+		doc.setLineWidth(.4);
+		doc.roundedRect(cx, y, w, chipH, 2.2, 2.2, "FD");
+		doc.setFont(void 0, "bold");
+		doc.setFontSize(13);
+		doc.setTextColor(...NAVY);
+		doc.text(sg, cx + w / 2, y + chipH / 2 + 1.7, { align: "center" });
+		doc.setFont(void 0, "normal");
+		doc.setFontSize(6.5);
+		doc.setTextColor(60, 70, 90);
+		doc.text(caps[i], cx + w / 2, y + chipH + 3.6, { align: "center" });
+		if (i < 5) {
+			doc.setDrawColor(...NAVY);
+			doc.setLineWidth(.5);
+			doc.line(cx + w + 1.2, y + chipH / 2, cx + w + dashW - 1.2, y + chipH / 2);
+		}
+		cx += w + dashW;
+	});
+	y += chipH + 6;
+	doc.setTextColor(0, 0, 0);
+	doc.setDrawColor(0, 0, 0);
+	doc.setLineWidth(.3);
+	doc.line(m, y, pageW - m, y);
+	return y;
+}
+async function exportJobOrderPackPdf(jo = {}, users = [], ceData = null, opts = {}) {
+	if (shouldLoadExportSignatures(exportEngineOn)) {
+		const names = (users || []).filter((u) => [jo.salesRepId, jo.approverId, ...(jo.steps || []).map((s) => s.byUserId)].includes(u.userId)).map((u) => u.name);
+		await warmExportSignatures(names, { approval: { status: jo.finalApproved ? "accepted" : "" } });
+	}
+	const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+	try {
+		await ensureExportFonts();
+		applyExportFonts(doc);
+	} catch { /* helvetica */ }
+	drawJobOrderForm(doc, jo, users, opts);
+	const out = await PDFDocument.create();
+	const joPdf = await PDFDocument.load(doc.output("arraybuffer"));
+	(await out.copyPages(joPdf, joPdf.getPageIndices())).forEach((p) => out.addPage(p));
+	if (ceData) {
+		const ceHandle = await renderCostEstimatePdf(hideCePrices(ceData));
+		const cePdf = await PDFDocument.load(await ceHandle.output("blob").arrayBuffer());
+		(await out.copyPages(cePdf, cePdf.getPageIndices())).forEach((p) => out.addPage(p));
+	}
+	return new Uint8Array(await out.save());
 }
 function exportOifExcel(form = {}) {
 	const rows = [
@@ -21231,7 +21913,7 @@ async function previewRcePdf(rce, documentControl) {
 	return doc.output("bloburl");
 }
 async function previewOifPdf(form) {
-	if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([form?.onsiteInspector, form?.createdBy, form?.notedBy], { approval: form?.approval });
+	if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([form?.preparedBy, form?.createdBy, form?.inspectedBy, form?.onsiteInspector, form?.reviewedBy, form?.checkedBy, form?.notedBy, form?.approvedBy], { approval: form?.approval });
 	const doc = exportOifToPDF(form, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
@@ -22588,7 +23270,7 @@ function buildDefaultSchemaConfig() {
 		manpower: sheetSchema([
 			{
 				key: "role",
-				label: "Role / Position",
+				label: "Designation",
 				type: "text",
 				visible: true,
 				isCustom: false
@@ -22711,7 +23393,7 @@ function buildDefaultSchemaConfig() {
 			},
 			{
 				key: "unitCost",
-				label: "Unit Cost",
+				label: "Unit Price",
 				type: "number",
 				visible: true,
 				isCustom: false
@@ -22748,7 +23430,7 @@ function buildDefaultSchemaConfig() {
 			},
 			{
 				key: "unitCost",
-				label: "Unit Cost",
+				label: "Unit Price",
 				type: "number",
 				visible: true,
 				isCustom: false
@@ -23364,7 +24046,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 			fields: [
 				{
 					key: "role",
-					label: "Role / Position",
+					label: "Designation",
 					type: "text"
 				},
 				{
@@ -23461,7 +24143,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 				},
 				{
 					key: "unitCost",
-					label: "Unit Cost",
+					label: "Unit Price",
 					type: "number"
 				},
 				{
@@ -23492,7 +24174,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 				},
 				{
 					key: "unitCost",
-					label: "Unit Cost",
+					label: "Unit Price",
 					type: "number"
 				},
 				{
@@ -24690,7 +25372,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	const moneyOf = (ce) => {
 		const doc = documents?.[ce.id] || {};
 		if (!Array.isArray(doc.tasks)) return "—";
-		return fmt(projectTotal(doc.tasks, doc.pricing));
+		return fmt(projectTotal(doc.tasks, doc.pricing, doc.mobSheets));
 	};
 	const mine = (ceList || []).filter((ce) => ceOnMyList(ce, {
 		me,
@@ -24722,7 +25404,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 		(async () => {
 			try {
 				const tasks = doc.tasks || [];
-				const official = tasks.length ? buildOfficialBaseRows(tasks, doc.pricing) : { rows: [], thirdLines: [] };
+				const official = tasks.length ? buildOfficialBaseRows(tasks, doc.pricing, doc.mobSheets) : { rows: [], thirdLines: [] };
 				const shown = (row) => num2(row.computed);
 				const body = official.rows.filter((r) => [
 					"A",
@@ -30260,7 +30942,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		const proposal = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled" && row.deleted !== true) || null;
 		const salesManager = isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 		let result = { ok: false, message: "Job order was not saved." };
-		if (action === "create") {
+		if (action === "create" || action === "create-submit") {
 			if (current) return;
 			let seq = 0;
 			try {
@@ -30323,7 +31005,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			}
 		} else if (action === "patch") result = patchJobOrder(current, payload, { byUserId: release1ActorId });
 		else if (action === "submit") result = submitJobOrder(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists });
-		else if (action === "approve" || action === "return") result = decideJobOrder(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
+		if (action === "create-submit" && result?.ok && result.jobOrder && result.jobOrder.status === "Draft") {
+			const submitted = submitJobOrder(result.jobOrder, { byUserId: release1ActorId, approverLists: adminConfig.approverLists });
+			if (submitted.ok) result = submitted;
+			else release1Note(submitted.message || "The draft was saved. It was not submitted.");
+		}
+		if (action === "approve" || action === "return") result = decideJobOrder(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
 		else if (action === "revise") {
 			result = reviseJobOrder(current, { byUserId: release1ActorId, registry: (jobOrders || []).map((row) => row.joNo) });
 			if (result.ok && result.jobOrder) {
@@ -31001,7 +31688,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 										fileAttachments: {},
 										approval: void 0
 									},
-									total: projectTotal(doc?.tasks || [], doc?.pricing),
+									total: projectTotal(doc?.tasks || [], doc?.pricing, doc?.mobSheets),
 									updatedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)
 								}));
 							},
@@ -31283,3 +31970,5 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 }
 //#endregion
 export default App;
+
+export const ceOutputApi = { renderCostEstimatePdf, buildMonitoringExportData, exportRceToPDF, exportOifToPDF, exportJobOrderPackPdf };
