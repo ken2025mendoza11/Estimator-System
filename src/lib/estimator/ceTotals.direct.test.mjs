@@ -20,17 +20,17 @@ const direct = { model: "direct-v1", formula: {} };
 
 const EXPECT = {
   shop: { A: 12800, A1: 2820.51, B: 4900, C: 1800, D: 342, E: 4700, total: 27362.51 },
-  onsite: { A: 57261.13, A1: 6721.15, B: 12000, C: 0, D: 2700, E: 17000, total: 107282.28 },
+  onsite: { A: 57261.13, A1: 6721.15, B: 12000, C: 0, D: 2700, E: 17000, total: 95682.28 },
   trading: { A: 0, A1: 0, B: 2500, C: 24692.31, D: 0, E: 4500, total: 31692.31 },
-  hybrid: { A: 70061.13, A1: 9541.66, B: 19400, C: 26492.31, D: 3042, E: 26200, total: 166337.1 },
+  hybrid: { A: 70061.13, A1: 9541.66, B: 19400, C: 26492.31, D: 3042, E: 26200, total: 154737.1 },
 };
 
 test("legacy totals stay today's numbers when the pricing model is missing", () => {
   assert.equal(projectTotal(examples.shop.tasks), 24542);
-  assert.equal(projectTotal(examples.onsite.tasks), 101161.13);
+  assert.equal(projectTotal(examples.onsite.tasks), 89561.13);
   assert.equal(projectTotal(examples.trading.tasks), 31692.31);
-  assert.equal(projectTotal(examples.hybrid.tasks), 157395.44);
-  assert.equal(projectTotal(legacy.tasks), 9211.01);
+  assert.equal(projectTotal(examples.hybrid.tasks), 145795.44);
+  assert.equal(projectTotal(legacy.tasks), 5611.01);
 });
 
 test("direct-v1 matches section D to the centavo", () => {
@@ -72,7 +72,7 @@ test("the screen total equals the export total, and an override is ignored", () 
     assert.equal(screen, projectTotal(ce.tasks, direct), name);
   }
   assert.equal(screenOfficialTotal(examples.shop.tasks, undefined, examples.shop.summaryOverrides), 23342);
-  assert.equal(screenOfficialTotal(examples.hybrid.tasks, undefined, examples.hybrid.summaryOverrides), 149703.13);
+  assert.equal(screenOfficialTotal(examples.hybrid.tasks, undefined, examples.hybrid.summaryOverrides), 138103.13);
 });
 
 test("the direct BOL sheet grand is row A minus per diem", () => {

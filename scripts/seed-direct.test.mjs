@@ -9,9 +9,9 @@ const examples = JSON.parse(readFileSync(new URL("../src/lib/estimator/__fixture
 const seed = readFileSync(new URL("./seed-test.mjs", import.meta.url), "utf8");
 const expect = {
 	shop: 27362.51,
-	onsite: 107282.28,
+	onsite: 95682.28,
 	trading: 31692.31,
-	hybrid: 166337.1,
+	hybrid: 154737.1,
 };
 
 test("the four direct seed estimates match the golden direct totals", () => {

@@ -419,11 +419,11 @@ const LOCK = {
     benefits: [welderBenefit],
   },
   onsite: {
-    grand: 101161.13,
-    official: 101161.13,
-    net: 101161.13,
+    grand: 89561.13,
+    official: 89561.13,
+    net: 89561.13,
     bol: 48511.13,
-    rows: { A: 57261.13, B: 12000, C: 0, D: 2700, MOB: 5800, DEMOB: 5800, E: 17600, E1: 12000, E2: 5600, E3: 0, E4: 0, E5: 0, E6: 0 },
+    rows: { A: 57261.13, B: 12000, C: 0, D: 2700, MOB: 0, DEMOB: 0, E: 17600, E1: 12000, E2: 5600, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: onsiteBol,
     benefits: [electricianBenefit, riggerBenefit],
   },
@@ -437,20 +437,20 @@ const LOCK = {
     benefits: [],
   },
   hybrid: {
-    grand: 157395.44,
-    official: 149703.13,
-    net: 165265.21,
+    grand: 145795.44,
+    official: 138103.13,
+    net: 153085.21,
     bol: 61311.13,
-    rows: { A: 70061.13, B: 19400, C: 20000, D: 3042, MOB: 5800, DEMOB: 5800, E: 25600, E1: 12000, E2: 13600, E3: 0, E4: 0, E5: 0, E6: 0 },
+    rows: { A: 70061.13, B: 19400, C: 20000, D: 3042, MOB: 0, DEMOB: 0, E: 25600, E1: 12000, E2: 13600, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: [...onsiteBol, ...shopBol],
     benefits: [electricianBenefit, riggerBenefit, welderBenefit],
   },
   legacy: {
-    grand: 9211.01,
-    official: 28010,
-    net: 9478.13,
+    grand: 5611.01,
+    official: 24410,
+    net: 5773.73,
     bol: 3710,
-    rows: { A: 4410, B: 0, C: 20000, D: 0, MOB: 1800, DEMOB: 1800, E: 0, E1: 0, E2: 0, E3: 0, E4: 0, E5: 0, E6: 0 },
+    rows: { A: 4410, B: 0, C: 20000, D: 0, MOB: 0, DEMOB: 0, E: 0, E1: 0, E2: 0, E3: 0, E4: 0, E5: 0, E6: 0 },
     bolRows: [
       { workType: "onsite", dayType: "Holiday", shift: "Day", role: "Rigger", qty: 2, days: 1, rate: 700, otHrs: 2, subtotal: 3710 },
     ],
@@ -521,7 +521,7 @@ test("hybrid official uses the C override and the grand does not", () => {
   const official = api.exportOfficial(examples.hybrid);
   assert.equal(roundMoney(official.computedC), 26492.31);
   assert.equal(official.rows.C, 20000);
-  assert.equal(api.netOf(examples.hybrid).grand, 157395.44);
+  assert.equal(api.netOf(examples.hybrid).grand, 145795.44);
 });
 
 test("the four examples and the legacy fixture are still legacy pricing", () => {

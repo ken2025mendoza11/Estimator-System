@@ -34,9 +34,9 @@ const access = readFileSync(new URL("../src/components/AccessScreens.jsx", impor
 const picker = readFileSync(new URL("../src/lib/auth/test-login.ts", import.meta.url), "utf8");
 const directTotals = {
 	shop: 27362.51,
-	onsite: 107282.28,
+	onsite: 95682.28,
 	trading: 31692.31,
-	hybrid: 166337.1,
+	hybrid: 154737.1,
 };
 
 function idsOf(docs) {

@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { calcBOCM, calcBOTE, calcPPE, dolePay, mobDemobPair, projectTotal, resolveDoleDay } from "./ceTotals.js";
-import { fillCeTemplate } from "./ceExcelTemplate.js";
+import { calcBOCM, calcBOTE, calcPPE, categoryOnTask, buildOfficialBaseRows, dolePay, mobDemobPair, projectTotal } from "./ceTotals.js";
+import { createJobOrder, normalizeLeadtime, patchJobOrder } from "./jobOrder.js";
+import { buildCeExcelModel, fillCeTemplate } from "./ceExcelTemplate.js";
 
 const examples = JSON.parse(readFileSync(new URL("./__fixtures__/ce-examples.json", import.meta.url), "utf8"));
 const direct = { model: "direct-v1", formula: {} };
+const template = readFileSync(new URL("../../../public/templates/ce-template.xlsx", import.meta.url));
 
 test("DOLE multipliers cover each day type and shift", () => {
   const rows = [
@@ -35,14 +37,22 @@ test("DOLE multipliers cover each day type and shift", () => {
   });
 });
 
-test("mobilization and demobilization are in the onsite total only", () => {
+test("mobilization and demobilization follow the sheet, or zero", () => {
   assert.equal(mobDemobPair(examples.shop.tasks).total, 0);
   assert.equal(mobDemobPair(examples.trading.tasks).total, 0);
-  assert.equal(mobDemobPair(examples.onsite.tasks).total, 11600);
-  assert.equal(projectTotal(examples.onsite.tasks, direct), 107282.28);
+  assert.equal(mobDemobPair(examples.onsite.tasks).total, 0);
+  assert.equal(projectTotal(examples.onsite.tasks, direct), 95682.28);
   assert.equal(projectTotal(examples.shop.tasks, direct), 27362.51);
   assert.equal(projectTotal(examples.trading.tasks, direct), 31692.31);
-  assert.equal(projectTotal(examples.hybrid.tasks, direct), 166337.1);
+  assert.equal(projectTotal(examples.hybrid.tasks, direct), 154737.1);
+  const typed = mobDemobPair(examples.onsite.tasks, {
+    mobilization: { lines: [{ qty: 2, days: 3, rate: 100 }] },
+    demobilization: { total: 40 },
+  });
+  assert.equal(typed.mobilization, 600);
+  assert.equal(typed.demobilization, 40);
+  assert.equal(mobDemobPair(examples.onsite.tasks, { mobilization: 80 }).demobilization, 0);
+  assert.equal(projectTotal(examples.onsite.tasks, direct, { mobilization: 10, demobilization: 5 }), 95697.28);
 });
 
 test("BOTE, BOCM, and PPE row totals", () => {
@@ -60,39 +70,103 @@ test("old column names are gone from the screens and the outputs", () => {
   });
 });
 
-test("excel template has no unresolved names, no blank item rows, and the same total", async () => {
-  const total = projectTotal(examples.onsite.tasks, direct);
-  const boteAmount = 2 * 4 * 50 + 1 * 8 * 4 * 10 * 2;
-  const filled = await fillCeTemplate({
-    total,
-    summary: [
-      { item: "B.", label: "TOOLS AND EQUIPMENTS", amount: boteAmount },
-      { item: "", label: "MOBILIZATION", amount: 5800 },
-      { item: "", label: "DEMOBILIZATION", amount: 5800 },
-    ],
-    pages: {
-      BOL: [{ designation: "Rigger", qty: 4, days: 8, unitPrice: 700, amount: 22400 }],
-      BOTE: [{ description: "Machine", qty: 2, days: 4, unitPrice: 50, electricity: 640, amount: boteAmount }],
-      BOCM: [{ description: "Rod", qty: 4, unitPrice: 12.5, amount: 50 }],
-      PPE: [{ description: "Gloves", qty: 3, unitPrice: 10, amount: 30 }],
-      MISC: [{ description: "Fare", qty: 1, days: 1, unitPrice: 200, amount: 200 }],
-    },
-  });
+test("excel page totals match the summary, with no blank item rows", async () => {
+  const tasks = examples.onsite.tasks;
+  const total = projectTotal(tasks, direct);
+  const filled = await fillCeTemplate(ExcelJS, template, buildCeExcelModel({
+    tasks,
+    pricing: direct,
+    ceNumber: "SY3-CE-TEST",
+    sections: [{ title: "CE Summary", projectBlock: { client: "Client", description: "Job", quantity: 1 } }],
+  }));
   assert.deepEqual(filled.unresolved, []);
   assert.equal(filled.total, total);
-  assert.equal(filled.pageTotals.BOTE, boteAmount);
-  assert.equal(filled.pageTotals["BOCM"], 50);
-  assert.equal(filled.pageTotals["PPE"], 30);
+  assert.equal(filled.pageTotals.BOL + filled.pageTotals.BOTE + filled.pageTotals.BOCM + filled.pageTotals.PPE + filled.pageTotals.MISC + filled.pageTotals.MOB + filled.pageTotals.DEMOB + 6721.15, total);
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(/** @type {any} */ (filled.buffer));
+  await wb.xlsx.load(filled.buffer);
+  assert.equal(wb.getWorksheet("Summary"), undefined);
+  for (const name of ["CE SUMMARY", "SOW Breakdown", "SCOPE", "MOB & DEMOB", "BOL", "BOTE", "BOCM", "PPE", "MISC."]) {
+    assert.ok(wb.getWorksheet(name), name);
+  }
   const bote = wb.getWorksheet("BOTE");
-  const summary = wb.getWorksheet("Summary");
-  if (!bote || !summary) throw new Error("missing sheet");
-  assert.equal(bote.getRow(3).getCell(7).value, boteAmount);
-  assert.equal(bote.getRow(4).hidden, true);
-  assert.equal(bote.getRow(3).hidden, false);
-  const totalCell = summary.getRow(14).getCell(3).value;
-  if (!totalCell || typeof totalCell !== "object" || !("result" in totalCell)) throw new Error("missing total");
-  assert.equal(totalCell.result, total);
-  assert.equal(typeof totalCell.result, "number");
+  if (!bote) throw new Error("BOTE sheet missing");
+  assert.equal(bote.getRow(12).hidden, true);
+  const summary = wb.getWorksheet("CE SUMMARY");
+  if (!summary) throw new Error("CE SUMMARY missing");
+  /** @param {string} addr */
+  const cell = (addr) => {
+    const value = summary.getCell(addr).value;
+    if (value && typeof value === "object" && "formula" in value) {
+      if (value.result == null || value.result === "") return 0;
+      return value.result;
+    }
+    return value;
+  };
+  assert.equal(cell("L15"), filled.pageTotals.MOB);
+  assert.equal(cell("L16"), filled.pageTotals.DEMOB);
+  assert.equal(cell("L17"), filled.pageTotals.BOL);
+  assert.equal(cell("L25"), filled.pageTotals.BOTE);
+  assert.equal(cell("L26"), filled.pageTotals.BOCM);
+  assert.equal(cell("L27"), filled.pageTotals.PPE);
+  assert.equal(cell("L36"), total);
+});
+
+test("each CE page total equals its summary line", () => {
+  const tasks = examples.onsite.tasks;
+  const sheets = {
+    mobilization: { lines: [{ qty: 2, days: 1, rate: 150 }] },
+    demobilization: { lines: [{ amount: 80 }] },
+  };
+  const official = buildOfficialBaseRows(tasks, direct, sheets);
+  /** @param {string} key */
+  const line = (key) => {
+    const row = official.rows.find((item) => item.key === key);
+    if (!row) throw new Error(key);
+    return row.computed;
+  };
+  /** @param {string} cat */
+  const sumCat = (cat) => tasks.reduce((/** @type {number} */ sum, /** @type {any} */ task) => sum + categoryOnTask(task, cat, direct), 0);
+  assert.equal(line("B"), sumCat("BOTE"));
+  assert.equal(line("C"), sumCat("BOCM"));
+  assert.equal(line("D"), sumCat("PPE"));
+  assert.equal(line("E"), sumCat("MISC"));
+  assert.equal(line("MOB"), 300);
+  assert.equal(line("DEMOB"), 80);
+  const manpower = official.rows.find((row) => row.key === "A");
+  if (!manpower) throw new Error("A");
+  assert.equal(line("A"), manpower.computed);
+  const pair = mobDemobPair(tasks, sheets);
+  assert.equal(projectTotal(tasks, direct, sheets), official.total);
+  assert.equal(pair.mobilization, line("MOB"));
+  assert.equal(pair.demobilization, line("DEMOB"));
+});
+
+test("job order keeps lead time, mobilization, and annex A", () => {
+  const created = createJobOrder({
+    byUserId: "sales-1",
+    seq: 1,
+    type: "SW",
+    clientCode: "ABC",
+    year: 2026,
+    controlNo: "0137",
+    ceIds: ["CE-1"],
+    poStoragePath: "job-order/draft/po.pdf",
+    poFileName: "po.pdf",
+    leadtime: [{ span: "One (1) Day", text: "Mobilization" }, ["Two (2) Days", "Pull-out"]],
+    mobilization: "2026-11-16",
+    mobilizationNote: "As per client's advice",
+    annexA: true,
+  });
+  assert.equal(created.ok, true);
+  assert.equal(created.jobOrder.annexA, true);
+  assert.equal(created.jobOrder.mobilization, "2026-11-16");
+  assert.deepEqual(normalizeLeadtime(created.jobOrder.leadtime), [
+    { span: "One (1) Day", text: "Mobilization" },
+    { span: "Two (2) Days", text: "Pull-out" },
+  ]);
+  const patched = patchJobOrder(created.jobOrder, { annexA: false, mobilizationNote: "Hold" });
+  assert.equal(patched.ok, true);
+  assert.equal(patched.jobOrder.annexA, false);
+  assert.equal(patched.jobOrder.mobilizationNote, "Hold");
+  assert.equal(patched.jobOrder.joNo, created.jobOrder.joNo);
 });

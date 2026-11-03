@@ -218,7 +218,7 @@ function benefitPerPersonDay(rate, formula) {
  * @param {unknown[]} tasks
  * @param {{ formula?: Record<string, number> }} pricing
  */
-function directStatement(tasks, pricing) {
+function directStatement(tasks, pricing, sheets) {
   const formula = directFormula(pricing.formula);
   let manpower = 0;
   let perDiem = 0;
@@ -258,7 +258,7 @@ function directStatement(tasks, pricing) {
       });
     });
   });
-  const pair = mobDemobPair(tasks);
+  const pair = mobDemobPair(tasks, sheets);
   const miscTotal = roundMoney(misc.A + misc.B + misc.C + misc.D + misc.E + misc.I + misc.other);
   const total = roundMoney(manpower + benefits + tools + materials + ppe + miscTotal + pair.total);
   return { manpower, benefits, tools, materials, ppe, misc, miscTotal, perDiem, total, mobilization: pair.mobilization, demobilization: pair.demobilization };
@@ -327,9 +327,9 @@ function miscBucket(tasks, section) {
   };
 }
 
-function buildOfficialBaseRows(tasks, pricing) {
+function buildOfficialBaseRows(tasks, pricing, sheets) {
   if (pricing && pricing.model === "direct-v1") {
-    const statement = directStatement(tasks, pricing);
+    const statement = directStatement(tasks, pricing, sheets);
     const rows = [
       { key: "A", item: "A.", label: "MANPOWER COST", computed: statement.manpower, main: true },
       { key: "A1", item: "", label: "A.1 Benefits", computed: statement.benefits, sub: true },
@@ -357,7 +357,7 @@ function buildOfficialBaseRows(tasks, pricing) {
   const third = miscBucket(tasks, "E");
   const ins = miscBucket(tasks, "I");
   const miscSum = acc.total + trans.total + req.total + admin.total + ins.total + third.total;
-  const pair = mobDemobPair(tasks);
+  const pair = mobDemobPair(tasks, sheets);
   const rows = [
     { key: "A", item: "A.", label: "MANPOWER COST", computed: sumCat("BOL"), main: true },
     { key: "B", item: "B.", label: "TOOLS AND EQUIPMENTS", computed: sumCat("BOTE"), main: true },
@@ -427,7 +427,7 @@ function taskTotal(task2, pricing) {
   return roundMoney((task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt, pricing), 0));
 }
 
-const MOB_ALLOWANCE_RATES = { "Project Manager": 500, Skilled: 200, Admin: 300 };
+const MOB_ALLOWANCE_RATES = { "Project Manager": 0, Skilled: 0, Admin: 0 };
 
 function classifyMobRole(role) {
   const r = String(role || "").toLowerCase();
@@ -436,102 +436,55 @@ function classifyMobRole(role) {
   return "Skilled";
 }
 
-/** Peak manpower per role, same waves as the Mobilization sheet (top-level subtasks only). */
-function mobManpowerRows(tasks) {
-  const roleMeta = {};
-  const perTaskPeaks = [];
-  (tasks || []).forEach((t) => {
-    const waves = [];
-    let current = {};
-    let waveOpen = false;
-    (t.subtasks || []).forEach((st) => {
-      const contrib = {};
-      (st.items?.BOL || []).forEach((it) => {
-        const role = String(it.role || "").trim() || "Unnamed";
-        contrib[role] = (contrib[role] || 0) + num2(it.qty);
-        if (!roleMeta[role]) roleMeta[role] = { rate: num2(it.rate), category: classifyMobRole(role) };
-        else if (!roleMeta[role].rate) roleMeta[role].rate = num2(it.rate);
-      });
-      if (!(st.type === "Parallel" && waveOpen)) {
-        if (waveOpen) waves.push(current);
-        current = { ...contrib };
-        waveOpen = true;
-      } else Object.entries(contrib).forEach(([role, q]) => {
-        current[role] = (current[role] || 0) + q;
-      });
-    });
-    if (waveOpen) waves.push(current);
-    const peaks = {};
-    waves.forEach((w) => {
-      Object.entries(w).forEach(([role, q]) => {
-        peaks[role] = Math.max(peaks[role] || 0, q);
-      });
-    });
-    perTaskPeaks.push({ taskId: t.id, predecessor: t.predecessor || null, peaks });
-  });
-  const byId = {};
-  perTaskPeaks.forEach((row) => { byId[row.taskId] = row; });
-  const memo = {};
-  function chainPeak(id, visiting) {
-    if (memo[id]) return memo[id];
-    const row = byId[id];
-    if (!row) return {};
-    if (visiting.has(id)) return row.peaks;
-    visiting.add(id);
-    const own = { ...row.peaks };
-    if (row.predecessor && byId[row.predecessor]) {
-      const pred = chainPeak(row.predecessor, visiting);
-      Object.keys({ ...own, ...pred }).forEach((role) => {
-        own[role] = Math.max(own[role] || 0, pred[role] || 0);
-      });
-    }
-    memo[id] = own;
-    return own;
+/** A typed mob/demob line. A blank qty, days, or rate is 0. Nothing is invented. */
+function mobLineAmount(row) {
+  if (!row || typeof row !== "object") return 0;
+  if (row.amount != null && row.amount !== "") return num2(row.amount);
+  if (row.total != null && row.total !== "") return num2(row.total);
+  const qty = row.qty == null || row.qty === "" ? 0 : num2(row.qty);
+  const hasDays = Object.prototype.hasOwnProperty.call(row, "days");
+  const days = !hasDays || row.days == null || row.days === "" ? 0 : num2(row.days);
+  const rateRaw = row.rate != null ? row.rate : row.unitCost != null ? row.unitCost : row.price;
+  const rate = rateRaw == null || rateRaw === "" ? 0 : num2(rateRaw);
+  if (!hasDays) return qty * rate;
+  return qty * days * rate;
+}
+
+/** One sheet total. A missing sheet is 0. User lines are summed. Allowance rates are not filled in. */
+function mobSheetAmount(tasks, sheet) {
+  if (sheet == null || sheet === "") return 0;
+  if (typeof sheet === "number" || typeof sheet === "string") return roundMoney(num2(sheet));
+  if (typeof sheet !== "object") return 0;
+  if (!Array.isArray(sheet) && sheet.total != null && sheet.total !== "" && !sheet.manpower && !sheet.lines && !sheet.items && !sheet.allowance) {
+    return roundMoney(num2(sheet.total));
   }
-  const totals = {};
-  const isPredecessor = new Set(perTaskPeaks.map((r) => r.predecessor).filter(Boolean));
-  perTaskPeaks.forEach((row) => {
-    if (isPredecessor.has(row.taskId)) return;
-    const peaks = chainPeak(row.taskId, new Set());
-    Object.entries(peaks).forEach(([role, q]) => { totals[role] = (totals[role] || 0) + q; });
-  });
-  return Object.keys(totals).map((role) => ({
-    role,
-    qty: totals[role],
-    rate: roleMeta[role]?.rate || 0,
-    category: roleMeta[role]?.category || classifyMobRole(role),
-  }));
+  const lines = []
+    .concat(sheet.manpower || [])
+    .concat(sheet.allowance || [])
+    .concat(sheet.lines || [])
+    .concat(sheet.items || []);
+  if (!lines.length && sheet.amount != null) return roundMoney(num2(sheet.amount));
+  return roundMoney(lines.reduce((sum, row) => sum + mobLineAmount(row), 0));
 }
 
-/** One Mobilization or Demobilization sheet with empty edits: 1 day of labour plus the category allowance. Part C stays 0 until a quantity is typed. */
-function mobSheetAmount(tasks) {
-  const rows = mobManpowerRows(tasks);
-  let labor = 0;
-  const byCat = { "Project Manager": 0, Skilled: 0, Admin: 0 };
-  rows.forEach((r) => {
-    const qty = num2(r.qty);
-    labor = roundMoney(labor + roundMoney(qty * num2(r.rate)));
-    const cat = byCat[r.category] == null ? "Skilled" : r.category;
-    byCat[cat] += qty;
-  });
-  let allow = 0;
-  Object.entries(byCat).forEach(([cat, qty]) => {
-    allow = roundMoney(allow + roundMoney(qty * (MOB_ALLOWANCE_RATES[cat] || 0)));
-  });
-  return roundMoney(labor + allow);
-}
-
-/** Mobilization and Demobilization for onsite work. Shop and trading keep Pickup and Delivery off this total. */
-function mobDemobPair(tasks) {
+/** Mobilization and demobilization stay separate. No copy from one sheet to the other. Shop and trading stay 0. */
+function mobDemobPair(tasks, sheets) {
   const onsite = (tasks || []).filter((t) => normalizeWorkType(t?.workType) === "onsite");
   if (!onsite.length) return { mobilization: 0, demobilization: 0, total: 0 };
-  const one = mobSheetAmount(onsite);
-  return { mobilization: one, demobilization: one, total: roundMoney(one + one) };
+  const src = sheets && typeof sheets === "object" ? sheets : {};
+  const mobilization = mobSheetAmount(onsite, src.mobilization != null ? src.mobilization : src.mob);
+  const demobilization = mobSheetAmount(onsite, src.demobilization != null ? src.demobilization : src.demob);
+  return { mobilization, demobilization, total: roundMoney(mobilization + demobilization) };
 }
 
-function projectTotal(tasks, pricing) {
-  if (pricing && pricing.model === "direct-v1") return directStatement(tasks, pricing).total;
-  return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0) + mobDemobPair(tasks).total);
+/** Kept for the golden loader. The sheet no longer invents a manpower list or an allowance. */
+function mobManpowerRows() {
+  return [];
+}
+
+function projectTotal(tasks, pricing, sheets) {
+  if (pricing && pricing.model === "direct-v1") return directStatement(tasks, pricing, sheets).total;
+  return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0) + mobDemobPair(tasks, sheets).total);
 }
 
 /** BOL sheet for direct-v1 is the line labour, which is row A minus per diem. */
@@ -618,8 +571,8 @@ export function shownOfficialAmount(row, overrides, pricing) {
 }
 
 /** Same number the screen official total and the export total use. */
-export function screenOfficialTotal(tasks, pricing, overrides) {
-  const official = buildOfficialBaseRows(tasks, pricing);
+export function screenOfficialTotal(tasks, pricing, overrides, sheets) {
+  const official = buildOfficialBaseRows(tasks, pricing, sheets);
   const shown = (row) => shownOfficialAmount(row, overrides, pricing);
   const miscShown = roundMoney(official.rows.filter((row) => row.sub && !row.breakdown && row.key !== "A1").reduce((sum, row) => sum + roundMoney(shown(row)), 0));
   const benefitRow = official.rows.find((row) => row.key === "A1");
@@ -674,6 +627,9 @@ export {
   itemSubtotal,
   miscBucket,
   mobDemobPair,
+  MOB_ALLOWANCE_RATES,
+  classifyMobRole,
+  mobManpowerRows,
   projectTotal,
   resolveDoleDay,
   subtaskTotal,

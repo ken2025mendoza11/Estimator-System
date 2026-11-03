@@ -73,22 +73,22 @@ const FIELDS = {
 	],
 	BOCM: [
 		{ key: "qty", label: "Qty" },
-		{ key: "unitCost", label: "Unit Cost" }
+		{ key: "unitCost", label: "Unit Price" }
 	],
 	PPE: [
 		{ key: "qty", label: "Qty" },
-		{ key: "unitCost", label: "Unit Cost" }
+		{ key: "unitCost", label: "Unit Price" }
 	],
 	MISC: [
 		{ key: "qty", label: "Qty" },
-		{ key: "unitCost", label: "Unit Cost" }
+		{ key: "unitCost", label: "Unit Price" }
 	]
 };
 const GAP_KEYS = {
 	BOL: [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]],
 	BOTE: [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]],
-	BOCM: [["qty", "Qty"], ["unitCost", "Unit cost"]],
-	PPE: [["qty", "Qty"], ["unitCost", "Unit cost"]]
+	BOCM: [["qty", "Qty"], ["unitCost", "Unit Price"]],
+	PPE: [["qty", "Qty"], ["unitCost", "Unit Price"]]
 };
 
 function num(value) {
