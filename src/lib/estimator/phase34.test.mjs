@@ -13,7 +13,7 @@ import { monitorDashboard, runServerEscalation } from "./release1Monitor.js";
 
 const NOW = "2026-10-28T12:00:00.000Z";
 const examples = JSON.parse(readFileSync(new URL("./__fixtures__/ce-examples.json", import.meta.url), "utf8"));
-const expected = /** @type {Record<string, number>} */ ({ shop: 27362.51, onsite: 95682.28, trading: 31692.31, hybrid: 154737.1 });
+const expected = /** @type {Record<string, number>} */ ({ shop: 27362.51, onsite: 107282.28, trading: 31692.31, hybrid: 166337.1 });
 const pricing = { model: "direct-v1" };
 const root = new URL("../../../", import.meta.url);
 /** @param {string} path */

@@ -62,7 +62,7 @@ function chargesPower(workTypeOrTask) {
 }
 
 /** 2025 employer defaults. A direct-v1 estimate snapshots these onto pricing.formula. */
-export const DIRECT_RATES = {
+const DIRECT_RATES = {
   hoursPerDay: 8,
   nightDiffPct: 10,
   regularOtFactor: 1.25,
@@ -98,7 +98,7 @@ function bounded(value, fallback, min, max) {
 }
 
 /** @param {unknown} src */
-export function directFormula(src) {
+function directFormula(src) {
   const raw = src && typeof src === "object" ? /** @type {Record<string, unknown>} */ (src) : {};
   const hours = bounded(raw.hoursPerDay, DIRECT_RATES.hoursPerDay, 0.000001, 24);
   return {
@@ -146,20 +146,47 @@ export function offerDirectSwitch(opts) {
 }
 
 /**
- * One DOLE pay helper. OT on a rest day or holiday uses premiumDayOtFactor, not the regular factor.
+ * Map a stored day type onto the DOLE rows. Existing values stay: Regular,
+ * Sun/Special (rest day / Sunday / special day), Holiday (regular holiday).
+ * Compound types are recognized when already stored. No new field is added.
+ * @param {unknown} dayType
+ */
+function resolveDoleDay(dayType) {
+  const t = String(dayType || "Regular").trim().toLowerCase().replace(/[_/]+/g, " ").replace(/\s+/g, " ");
+  if (!t || t === "regular" || t === "ordinary" || t === "regular day" || t === "ordinary day") return "regular";
+  if (/holiday/.test(t) && /rest|sunday/.test(t)) return "holiday-rest";
+  if (/special/.test(t) && /rest/.test(t) && !/sun/.test(t)) return "special-rest";
+  if (t === "special rest" || t === "special on rest" || t === "special day on rest day" || t === "specialrest") return "special-rest";
+  if (t === "holiday" || t === "regular holiday" || t === "legal holiday") return "holiday";
+  if (t.includes("sun") || t.includes("special") || t.includes("rest")) return "rest";
+  return "regular";
+}
+
+/**
+ * One DOLE pay helper. Regular OT is 1.25. Rest day, special day, and holiday OT are 1.30 of that day's rate.
+ * Night differential is +10% on the day rate and on OT. Compound rest-day rows use the handbook premiums.
  * @param {number} rate
  * @param {string} dayType
  * @param {string} shift
  * @param {Record<string, number>} formula
  */
-export function dolePay(rate, dayType, shift, formula) {
+function dolePay(rate, dayType, shift, formula) {
   const f = directFormula(formula);
-  const premium = dayType === "Holiday" ? f.holidayMultiplier : dayType === "Sun/Special" ? f.sundayMultiplier : 1;
-  const night = shift === "Night" ? f.nightDiffPct / 100 : 0;
+  const kind = resolveDoleDay(dayType);
+  let premium = 1;
+  if (kind === "rest") premium = f.sundayMultiplier;
+  else if (kind === "holiday") premium = f.holidayMultiplier;
+  else if (kind === "special-rest") premium = 1.5;
+  else if (kind === "holiday-rest") premium = 2.6;
+  const night = /^night/i.test(String(shift || "")) ? f.nightDiffPct / 100 : 0;
   const hourly = rate / f.hoursPerDay;
-  const otFactor = !dayType || dayType === "Regular" ? f.regularOtFactor : f.premiumDayOtFactor;
+  const otFactor = kind === "regular" ? f.regularOtFactor : f.premiumDayOtFactor;
   const scale = premium * (1 + night);
   return {
+    kind,
+    premium,
+    otFactor,
+    night,
     dayRate: rate * scale,
     otRate: hourly * scale * otFactor,
   };
@@ -244,9 +271,10 @@ function directStatement(tasks, pricing) {
       });
     });
   });
+  const pair = mobDemobPair(tasks);
   const miscTotal = roundMoney(misc.A + misc.B + misc.C + misc.D + misc.E + misc.I + misc.other);
-  const total = roundMoney(manpower + benefits + tools + materials + ppe + miscTotal);
-  return { manpower, benefits, tools, materials, ppe, misc, miscTotal, perDiem, total };
+  const total = roundMoney(manpower + benefits + tools + materials + ppe + miscTotal + pair.total);
+  return { manpower, benefits, tools, materials, ppe, misc, miscTotal, perDiem, total, mobilization: pair.mobilization, demobilization: pair.demobilization };
 }
 
 function calcBOL(item, pricing) {
@@ -262,19 +290,14 @@ function calcBOL(item, pricing) {
       subtotal: line.subtotal,
     };
   }
-  const f = formulaNow();
-  const dt = dayTypeMultiplier(item.dayType);
-  const shiftAdd = item.shift === "Night" ? f.nightDiffPct / 100 : 0;
-  const hours = f.hoursPerDay || 8;
-  const effRate = num2(item.rate) * dt * (1 + shiftAdd);
-  const otRate = num2(item.rate) / hours * f.otMultiplier * dt * (1 + shiftAdd);
-  const base = num2(item.qty) * num2(item.days) * effRate;
-  const ot = num2(item.qty) * num2(item.days) * num2(item.otHrs) * otRate;
+  const pay = dolePay(num2(item.rate), String(item.dayType || "Regular"), String(item.shift || "Day"), formulaNow());
+  const base = num2(item.qty) * num2(item.days) * pay.dayRate;
+  const ot = num2(item.qty) * num2(item.days) * num2(item.otHrs) * pay.otRate;
   const perDiemAllow = num2(item.qty) * num2(item.days) * (num2(item.perDiem) + num2(item.allowance));
   return {
     base,
     ot,
-    otRate,
+    otRate: pay.otRate,
     perDiemAllow,
     labor: base + ot,
     benefits: perDiemAllow,
@@ -326,6 +349,8 @@ function buildOfficialBaseRows(tasks, pricing) {
       { key: "B", item: "B.", label: "TOOLS AND EQUIPMENTS", computed: statement.tools, main: true },
       { key: "C", item: "C.", label: "MATERIALS AND CONSUMABLES", computed: statement.materials, main: true },
       { key: "D", item: "D.", label: "PERSONAL PROTECTIVE EQUIPMENT", computed: statement.ppe, main: true },
+      { key: "MOB", item: "", label: "MOBILIZATION", computed: statement.mobilization, main: true },
+      { key: "DEMOB", item: "", label: "DEMOBILIZATION", computed: statement.demobilization, main: true },
       { key: "E", item: "E.", label: "MISCELLANEOUS:", computed: statement.miscTotal, group: true, main: true },
       { key: "E1", item: "", label: "E.1 ACCOMMODATION", computed: statement.misc.A, sub: true },
       { key: "E2", item: "", label: "E.2 TRANSPORTATION", computed: statement.misc.B, sub: true },
@@ -345,11 +370,14 @@ function buildOfficialBaseRows(tasks, pricing) {
   const third = miscBucket(tasks, "E");
   const ins = miscBucket(tasks, "I");
   const miscSum = acc.total + trans.total + req.total + admin.total + ins.total + third.total;
+  const pair = mobDemobPair(tasks);
   const rows = [
     { key: "A", item: "A.", label: "MANPOWER COST", computed: sumCat("BOL"), main: true },
     { key: "B", item: "B.", label: "TOOLS AND EQUIPMENTS", computed: sumCat("BOTE"), main: true },
     { key: "C", item: "C.", label: "MATERIALS AND CONSUMABLES", computed: sumCat("BOCM"), main: true },
     { key: "D", item: "D.", label: "PERSONAL PROTECTIVE EQUIPMENT", computed: sumCat("PPE"), main: true },
+    { key: "MOB", item: "", label: "MOBILIZATION", computed: pair.mobilization, main: true },
+    { key: "DEMOB", item: "", label: "DEMOBILIZATION", computed: pair.demobilization, main: true },
     { key: "E", item: "E.", label: "MISCELLANEOUS:", computed: miscSum, group: true, main: true },
     { key: "E1", item: "", label: "E.1 ACCOMMODATION", computed: acc.total, sub: true },
     { key: "E2", item: "", label: "E.2 TRANSPORTATION", computed: trans.total, sub: true },
@@ -412,9 +440,111 @@ function taskTotal(task2, pricing) {
   return roundMoney((task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt, pricing), 0));
 }
 
+const MOB_ALLOWANCE_RATES = { "Project Manager": 500, Skilled: 200, Admin: 300 };
+
+function classifyMobRole(role) {
+  const r = String(role || "").toLowerCase();
+  if (/(project\s*manager|\bproj(?:ect)?\s*mgr\b|\bpm\b)/.test(r)) return "Project Manager";
+  if (/(admin|secretary|clerk|accountant|document\s*control|\bhr\b|office)/.test(r)) return "Admin";
+  return "Skilled";
+}
+
+/** Peak manpower per role, same waves as the Mobilization sheet (top-level subtasks only). */
+function mobManpowerRows(tasks) {
+  const roleMeta = {};
+  const perTaskPeaks = [];
+  (tasks || []).forEach((t) => {
+    const waves = [];
+    let current = {};
+    let waveOpen = false;
+    (t.subtasks || []).forEach((st) => {
+      const contrib = {};
+      (st.items?.BOL || []).forEach((it) => {
+        const role = String(it.role || "").trim() || "Unnamed";
+        contrib[role] = (contrib[role] || 0) + num2(it.qty);
+        if (!roleMeta[role]) roleMeta[role] = { rate: num2(it.rate), category: classifyMobRole(role) };
+        else if (!roleMeta[role].rate) roleMeta[role].rate = num2(it.rate);
+      });
+      if (!(st.type === "Parallel" && waveOpen)) {
+        if (waveOpen) waves.push(current);
+        current = { ...contrib };
+        waveOpen = true;
+      } else Object.entries(contrib).forEach(([role, q]) => {
+        current[role] = (current[role] || 0) + q;
+      });
+    });
+    if (waveOpen) waves.push(current);
+    const peaks = {};
+    waves.forEach((w) => {
+      Object.entries(w).forEach(([role, q]) => {
+        peaks[role] = Math.max(peaks[role] || 0, q);
+      });
+    });
+    perTaskPeaks.push({ taskId: t.id, predecessor: t.predecessor || null, peaks });
+  });
+  const byId = {};
+  perTaskPeaks.forEach((row) => { byId[row.taskId] = row; });
+  const memo = {};
+  function chainPeak(id, visiting) {
+    if (memo[id]) return memo[id];
+    const row = byId[id];
+    if (!row) return {};
+    if (visiting.has(id)) return row.peaks;
+    visiting.add(id);
+    const own = { ...row.peaks };
+    if (row.predecessor && byId[row.predecessor]) {
+      const pred = chainPeak(row.predecessor, visiting);
+      Object.keys({ ...own, ...pred }).forEach((role) => {
+        own[role] = Math.max(own[role] || 0, pred[role] || 0);
+      });
+    }
+    memo[id] = own;
+    return own;
+  }
+  const totals = {};
+  const isPredecessor = new Set(perTaskPeaks.map((r) => r.predecessor).filter(Boolean));
+  perTaskPeaks.forEach((row) => {
+    if (isPredecessor.has(row.taskId)) return;
+    const peaks = chainPeak(row.taskId, new Set());
+    Object.entries(peaks).forEach(([role, q]) => { totals[role] = (totals[role] || 0) + q; });
+  });
+  return Object.keys(totals).map((role) => ({
+    role,
+    qty: totals[role],
+    rate: roleMeta[role]?.rate || 0,
+    category: roleMeta[role]?.category || classifyMobRole(role),
+  }));
+}
+
+/** One Mobilization or Demobilization sheet with empty edits: 1 day of labour plus the category allowance. Part C stays 0 until a quantity is typed. */
+function mobSheetAmount(tasks) {
+  const rows = mobManpowerRows(tasks);
+  let labor = 0;
+  const byCat = { "Project Manager": 0, Skilled: 0, Admin: 0 };
+  rows.forEach((r) => {
+    const qty = num2(r.qty);
+    labor = roundMoney(labor + roundMoney(qty * num2(r.rate)));
+    const cat = byCat[r.category] == null ? "Skilled" : r.category;
+    byCat[cat] += qty;
+  });
+  let allow = 0;
+  Object.entries(byCat).forEach(([cat, qty]) => {
+    allow = roundMoney(allow + roundMoney(qty * (MOB_ALLOWANCE_RATES[cat] || 0)));
+  });
+  return roundMoney(labor + allow);
+}
+
+/** Mobilization and Demobilization for onsite work. Shop and trading keep Pickup and Delivery off this total. */
+function mobDemobPair(tasks) {
+  const onsite = (tasks || []).filter((t) => normalizeWorkType(t?.workType) === "onsite");
+  if (!onsite.length) return { mobilization: 0, demobilization: 0, total: 0 };
+  const one = mobSheetAmount(onsite);
+  return { mobilization: one, demobilization: one, total: roundMoney(one + one) };
+}
+
 function projectTotal(tasks, pricing) {
   if (pricing && pricing.model === "direct-v1") return directStatement(tasks, pricing).total;
-  return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
+  return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0) + mobDemobPair(tasks).total);
 }
 
 /** BOL sheet for direct-v1 is the line labour, which is row A minus per diem. */
@@ -507,8 +637,9 @@ export function screenOfficialTotal(tasks, pricing, overrides) {
   const miscShown = roundMoney(official.rows.filter((row) => row.sub && !row.breakdown && row.key !== "A1").reduce((sum, row) => sum + roundMoney(shown(row)), 0));
   const benefitRow = official.rows.find((row) => row.key === "A1");
   const benefitShown = benefitRow ? roundMoney(shown(benefitRow)) : 0;
+  const mobShown = roundMoney(official.rows.filter((row) => row.key === "MOB" || row.key === "DEMOB").reduce((sum, row) => sum + roundMoney(shown(row)), 0));
   const mains = official.rows.filter((row) => ["A", "B", "C", "D"].includes(row.key)).reduce((sum, row) => sum + roundMoney(shown(row)), 0);
-  return roundMoney(mains + benefitShown + miscShown);
+  return roundMoney(mains + benefitShown + miscShown + mobShown);
 }
 
 /** Warnings Step 13 will list. Not a checker screen. */
@@ -549,10 +680,15 @@ export {
   calcPPE,
   categoryOnTask,
   categoryTotal,
+  DIRECT_RATES,
+  directFormula,
+  dolePay,
   flattenSubs,
   itemSubtotal,
   miscBucket,
+  mobDemobPair,
   projectTotal,
+  resolveDoleDay,
   subtaskTotal,
   taskTotal,
 };

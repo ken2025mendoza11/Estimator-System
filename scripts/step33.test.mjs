@@ -14,9 +14,9 @@ const golden = readFileSync(new URL("../src/lib/estimator/ceTotals.golden.test.m
 const directLock = readFileSync(new URL("../src/lib/estimator/ceTotals.direct.test.mjs", import.meta.url), "utf8");
 const directTotals = {
 	shop: 27362.51,
-	onsite: 95682.28,
+	onsite: 107282.28,
 	trading: 31692.31,
-	hybrid: 154737.1,
+	hybrid: 166337.1,
 };
 
 const lists = {
@@ -212,6 +212,6 @@ test("the four direct-v1 totals are unchanged", () => {
 	}
 	assert.equal(golden.includes("31692.31"), true);
 	assert.equal(directLock.includes("27362.51"), true);
-	assert.equal(directLock.includes("95682.28"), true);
-	assert.equal(directLock.includes("154737.1"), true);
+	assert.equal(directLock.includes("107282.28"), true);
+	assert.equal(directLock.includes("166337.1"), true);
 });

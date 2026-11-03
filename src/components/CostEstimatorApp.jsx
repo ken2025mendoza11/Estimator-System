@@ -353,7 +353,7 @@ function exportHeadSpec(doc, title) {
 	const logoW = 42;
 	const infoW = 62;
 	const midW = pageWidth - 16 - logoW - infoW;
-	const lines = doc.splitTextToSize(String(title || "COST ESTIMATE SUMMARY"), Math.max(20, midW - 8)).slice(0, 3);
+	const lines = doc.splitTextToSize(String(title || "COST ESTIMATE SUMMARY").toUpperCase(), Math.max(20, midW - 8)).slice(0, 3);
 	return {
 		pageWidth,
 		m,
@@ -770,6 +770,11 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 			if ((meta.kind === "sum-sub" || meta.kind === "sum-break" || meta.kind === "sum-custom" || meta.kind === "sum-line") && hook.column.index === last) hook.cell.styles.fontStyle = "bold";
 			if (meta.kind === "sum-blue") {
 				hook.cell.styles.fillColor = [173, 216, 230];
+				hook.cell.styles.textColor = [0, 0, 0];
+				if (hook.column.index === 1) {
+					hook.cell.styles.halign = "right";
+					hook.cell.styles.fontStyle = "bold";
+				}
 				if (hook.column.index === last && String(hook.cell.text || "").trim()) hook.cell.styles.fontStyle = "bold";
 			}
 			if (descIdx >= 0 && hook.column.index === descIdx && meta.kind !== "total" && meta.kind !== "group") hook.cell.styles.halign = "left";
@@ -3540,9 +3545,9 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 	if (boteSheet) sections.push(boteSheet);
 	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM));
 	if (bocmSheet) sections.push(bocmSheet);
-	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "Bill of Personal Protective Equipment", noteTexts(notes.PPE));
+	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(notes.PPE));
 	if (ppeSheet) sections.push(ppeSheet);
-	const miscColumns = ["Work type", "Section", "Item No.", "Description", "QTY", "Days", "Unit cost", "Subtotal"];
+	const miscColumns = ["Work type", "Section", "Item No.", "Description", "QTY", "NO. OF DAYS", "Unit Price", "Subtotal"];
 	const miscBlocks = [];
 	const miscRows = [];
 	const miscMeta = [];
@@ -3565,12 +3570,13 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 			columns: miscColumns,
 			rows: part,
 			rowMeta: part.map(() => ({ kind: "line" })),
-			headFill: BOL_LIGHT_BLUE
+			headFill: BOL_LIGHT_BLUE,
+			columnStyles: { 5: { cellWidth: 16 } }
 		});
 		const sub = Array(miscColumns.length).fill("");
 		sub[0] = `Subtotal — ${w.label}`;
 		sub[miscColumns.length - 1] = fmt(partTotal);
-		miscBlocks.push({ columns: miscColumns, rows: [sub], rowMeta: [{ kind: "total" }], hideHead: true, totalFill: BOL_LIGHT_BLUE, gapAfter: 10 });
+		miscBlocks.push({ columns: miscColumns, rows: [sub], rowMeta: [{ kind: "total" }], hideHead: true, totalFill: BOL_LIGHT_BLUE, afterTight: true, gapAfter: 0, columnStyles: { 5: { cellWidth: 16 } } });
 		miscRows.push(...part, sub);
 		miscMeta.push(...part.map(() => ({ kind: "line" })), { kind: "total" });
 	});
@@ -3599,7 +3605,8 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 	const benefitLine = official.rows.find((line) => line.key === "A1");
 	const benefitParts = benefitLine ? shown(benefitLine) : 0;
 	const miscParts = official.rows.filter((line) => line.sub && !line.breakdown && line.key !== "A1").reduce((sum, line) => sum + shown(line), 0);
-	const bodySum = isDirectPricing(src.pricing) ? screenOfficialTotal(tasks, src.pricing, src.summaryOverrides) : bodyParts + benefitParts + miscParts;
+	const mobParts = official.rows.filter((line) => line.key === "MOB" || line.key === "DEMOB").reduce((sum, line) => sum + shown(line), 0);
+	const bodySum = isDirectPricing(src.pricing) ? screenOfficialTotal(tasks, src.pricing, src.summaryOverrides) : bodyParts + benefitParts + miscParts + mobParts;
 	const qty = num2(info.quantity);
 	const docNoOut = info.docNo || row?.ceDisplay || "";
 	const summaryRows = [];
@@ -4356,7 +4363,7 @@ let activeCePricing = null;
 let bolLegendFlag = false;
 let bolLegendRates = null;
 function bolAssumptionText() {
-	if (!bolLegendFlag) return "Sun/Special ×1.30 · Holiday ×2.00 · Night differential +10% · OT premium ×1.25";
+	if (!bolLegendFlag) return "Sun/Special ×1.30 · Holiday ×2.00 · Night differential +10% · Regular OT ×1.25 · Rest/holiday OT ×1.30";
 	const f = directFormula(bolLegendRates || {});
 	return `Sun/Special ×${Number(f.sundayMultiplier).toFixed(2)} · Holiday ×${Number(f.holidayMultiplier).toFixed(2)} · Night differential +${f.nightDiffPct}% · OT ×${f.regularOtFactor} (rest/holiday ×${f.premiumDayOtFactor})`;
 }
@@ -6525,21 +6532,21 @@ var CE_FIELDS = {
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}],
 	PPE: [{
 		key: "qty",
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}],
 	MISC: [{
 		key: "qty",
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}]
 };
 var CAT_TAB = {
@@ -9770,7 +9777,7 @@ function lineRowName(category, row) {
 }
 function lineRequiredKeys(category) {
 	if (category === "BOL" || category === "BOTE") return [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]];
-	return [["qty", "Qty"], ["unitCost", "Unit cost"]];
+	return [["qty", "Qty"], ["unitCost", "Unit Price"]];
 }
 function lineFieldMissing(value) {
 	return value === "" || value == null || !(Number(value) > 0);
@@ -10586,7 +10593,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 								colKey: "role",
 								width: widths.role,
 								onResize: updateWidth,
-								children: "Role / Position"
+								children: "Designation"
 							}),
 							/* @__PURE__ */ jsx(ResizableTh, {
 								colKey: "dayType",
@@ -11486,7 +11493,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							colKey: "unitCost",
 							width: widths.unitCost,
 							onResize: updateWidth,
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx(ResizableTh, {
 							colKey: "subtotal",
@@ -11785,7 +11792,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							colKey: "unitCost",
 							width: widths.unitCost,
 							onResize: updateWidth,
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx(ResizableTh, {
 							colKey: "subtotal",
@@ -15110,13 +15117,8 @@ function buildBolGroups(tasks, pricing) {
 	DAY_TYPES.forEach((dt) => {
 		["Day", "Night"].forEach((shift) => {
 			Object.values(groups[dt][shift] || {}).forEach((r) => {
-				const f = formulaNow();
-				const dtMult = dayTypeMultiplier(dt);
-				const shiftAdd = shift === "Night" ? f.nightDiffPct / 100 : 0;
-				const hours = f.hoursPerDay || 8;
-				const effRate = r.rate * dtMult * (1 + shiftAdd);
-				const otRate = r.rate / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-				r.subtotal = roundMoney(r.qty * r.days * effRate + r.qty * r.days * r.otHrs * otRate);
+				const pay = dolePay(r.rate, dt, shift, formulaNow());
+				r.subtotal = roundMoney(r.qty * r.days * pay.dayRate + r.qty * r.days * r.otHrs * pay.otRate);
 			});
 		});
 	});
@@ -15180,13 +15182,8 @@ function bolLineAmount(row, dt, shift, pricing) {
 		const pay = dolePay(num2(row.rate), dt || "Regular", shift || "Day", pricing.formula || {});
 		return roundMoney(num2(row.qty) * num2(row.days) * pay.dayRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * pay.otRate);
 	}
-	const f = formulaNow();
-	const dtMult = dayTypeMultiplier(dt);
-	const shiftAdd = shift === "Night" ? f.nightDiffPct / 100 : 0;
-	const hours = f.hoursPerDay || 8;
-	const effRate = num2(row.rate) * dtMult * (1 + shiftAdd);
-	const otRate = num2(row.rate) / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-	return roundMoney(num2(row.qty) * num2(row.days) * effRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * otRate);
+	const pay = dolePay(num2(row.rate), dt || "Regular", shift || "Day", formulaNow());
+	return roundMoney(num2(row.qty) * num2(row.days) * pay.dayRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * pay.otRate);
 }
 function withBolEdit(row, edit, dt, shift, pricing) {
 	const next = {
@@ -16094,7 +16091,7 @@ function AggregatedCategoryTabImpl({ tasks, category, editsRef, dispatch }) {
 								width: widths.rate,
 								onResize: updateWidth,
 								className: "ce-sum-left",
-								children: "Rate / Unit Cost"
+								children: "Unit Price"
 							}),
 							showElec && /* @__PURE__ */ jsxs(Fragment, { children: [
 								/* @__PURE__ */ jsx(ResizableTh, {
@@ -17408,7 +17405,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					}) : null, /* @__PURE__ */ jsx("h4", {
 						className: "ce-serif ce-summary-subheading",
 						style: { margin: 0 },
-						children: "Part C: Line Items"
+						children: "Part C: Items"
 					}), isMobDemob || partCOpen ? /* @__PURE__ */ jsx("button", {
 						className: "ce-iconbtn",
 						onClick: () => setHideUnused(!hideUnused),
@@ -17422,7 +17419,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Line Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -17442,7 +17439,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-rate",
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-total",
@@ -17870,7 +17867,7 @@ var BOL_PARTS = [
 function buildBolExportSection(tasks, notes, pricing) {
 	const columns = [
 		"Item No.",
-		"Role / Position",
+		"Designation",
 		"QTY",
 		"Days",
 		"Rate/Day",
@@ -17937,7 +17934,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 			hideHead: true,
 			totalFill: BOL_LIGHT_BLUE,
 			afterTight: true,
-			gapAfter: 12
+			gapAfter: 0
 		});
 		pushFlat(subRow, "total");
 		for (let i = 0; i < 2; i++) pushFlat(["", "", "", "", "", "", ""], "line");
@@ -17977,7 +17974,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		"Item Description",
 		"Qty",
 		"Days",
-		"Rate / Unit Cost",
+		"Unit Price",
 		"kW",
 		"Hrs/Day",
 		"₱/kWh",
@@ -17987,7 +17984,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		"Item No.",
 		"Item Description",
 		"Qty",
-		"Rate / Unit Cost",
+		"Unit Price",
 		"Subtotal"
 	];
 	const blocks = [];
@@ -18074,7 +18071,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 			hideHead: true,
 			totalFill: BOL_LIGHT_BLUE,
 			afterTight: true,
-			gapAfter: 12
+			gapAfter: 0
 		});
 		pushFlat(sub, "total");
 	});
@@ -18330,11 +18327,11 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			}
 		},
 		{
-			heading: "Part C: Line Items",
+			heading: "Part C: Items",
 			headFill: BOL_LIGHT_BLUE,
 			totalFill: BOL_LIGHT_BLUE,
 			columns: [
-				"Line Item",
+				"Item No.",
 				"Description/Manpower",
 				"Qty",
 				"UOM",
@@ -18652,7 +18649,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		if (boteSheet) sections.push(boteSheet);
 		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM));
 		if (bocmSheet) sections.push(bocmSheet);
-		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "Bill of Personal Protective Equipment", noteTexts(state.sheetNotes?.PPE));
+		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(state.sheetNotes?.PPE));
 		if (ppeSheet) sections.push(ppeSheet);
 		const miscColumns = [
 			"Work type",
@@ -18660,8 +18657,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			"Item No.",
 			"Description",
 			"QTY",
-			"Days",
-			"Unit cost",
+			"NO. OF DAYS",
+			"Unit Price",
 			"Subtotal"
 		];
 		const miscBlocks = [];
@@ -18697,7 +18694,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				rows: part,
 				rowMeta: part.map(() => ({ kind: "line" })),
 				headFill: BOL_LIGHT_BLUE,
-				afterTight: true
+				afterTight: true,
+				columnStyles: { 5: { cellWidth: 16 } }
 			});
 			miscRows.push([banner]);
 			miscMeta.push({ kind: "group" });
@@ -18714,7 +18712,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				rowMeta: [{ kind: "total" }],
 				hideHead: true,
 				totalFill: BOL_LIGHT_BLUE,
-				gapAfter: 10
+				gapAfter: 0
 			});
 			miscRows.push(sub);
 			miscMeta.push({ kind: "total" });
@@ -18779,7 +18777,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const benefitRow = official.rows.find((r) => r.key === "A1");
 		const benefitParts = benefitRow ? shown(benefitRow) : 0;
 		const miscParts = official.rows.filter((r) => r.sub && !r.breakdown && r.key !== "A1").reduce((sum, r) => sum + shown(r), 0);
-		const bodySum = isDirectPricing(state.pricing) ? screenOfficialTotal(tasks, state.pricing, state.summaryOverrides) : bodyParts + benefitParts + miscParts;
+		const mobParts = official.rows.filter((r) => r.key === "MOB" || r.key === "DEMOB").reduce((sum, r) => sum + shown(r), 0);
+		const bodySum = isDirectPricing(state.pricing) ? screenOfficialTotal(tasks, state.pricing, state.summaryOverrides) : bodyParts + benefitParts + miscParts + mobParts;
 		const qty = num2(info.quantity);
 		const docNoOut = info.docNo || ceData?.id || docNo || "";
 		const summaryRows = [];
@@ -22588,7 +22587,7 @@ function buildDefaultSchemaConfig() {
 		manpower: sheetSchema([
 			{
 				key: "role",
-				label: "Role / Position",
+				label: "Designation",
 				type: "text",
 				visible: true,
 				isCustom: false
@@ -22711,7 +22710,7 @@ function buildDefaultSchemaConfig() {
 			},
 			{
 				key: "unitCost",
-				label: "Unit Cost",
+				label: "Unit Price",
 				type: "number",
 				visible: true,
 				isCustom: false
@@ -22748,7 +22747,7 @@ function buildDefaultSchemaConfig() {
 			},
 			{
 				key: "unitCost",
-				label: "Unit Cost",
+				label: "Unit Price",
 				type: "number",
 				visible: true,
 				isCustom: false
@@ -23364,7 +23363,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 			fields: [
 				{
 					key: "role",
-					label: "Role / Position",
+					label: "Designation",
 					type: "text"
 				},
 				{
@@ -23461,7 +23460,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 				},
 				{
 					key: "unitCost",
-					label: "Unit Cost",
+					label: "Unit Price",
 					type: "number"
 				},
 				{
@@ -23492,7 +23491,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 				},
 				{
 					key: "unitCost",
-					label: "Unit Cost",
+					label: "Unit Price",
 					type: "number"
 				},
 				{
