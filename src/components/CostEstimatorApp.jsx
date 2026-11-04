@@ -79,7 +79,7 @@ import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/e
 import { orderExportSections, planSowSchedule, refreshSchedule, scheduleExportSection, sowGanttSchedule } from "../lib/estimator/phase10";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
-import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
+import { applyRouteSignatories, signatorySlots } from "../lib/estimator/ceSignatories";
 import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
@@ -28133,7 +28133,18 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							placeholder: "Leave blank unless this request will not be quoted"
 						})]
 					}),
-					/* @__PURE__ */ jsxs("div", {
+					rceTplOn === true ? /* @__PURE__ */ jsx("div", {
+						className: "rce-signatures rce-sign-slots",
+						children: signatorySlots(form, rceRouteNow, rceUsersNow).map((slot) => /* @__PURE__ */ jsxs("div", {
+							className: "ce-field rce-sign-slot",
+							children: [
+								/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: slot.label }),
+								/* @__PURE__ */ jsx("span", { className: "rce-sign-name", children: slot.name || "—" }),
+								/* @__PURE__ */ jsx("span", { className: "rce-sign-position", children: slot.position }),
+								slot.pending ? /* @__PURE__ */ jsx("span", { className: "rce-sign-pending", children: "Pending" }) : null
+							]
+						}, slot.id))
+					}) : /* @__PURE__ */ jsxs("div", {
 						className: "rce-signatures",
 						children: [
 							/* @__PURE__ */ jsxs("div", {

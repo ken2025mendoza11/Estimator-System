@@ -1,12 +1,14 @@
-const SLOTS = [
-	["preparedBy", "preparedTitle"],
-	["checkedBy", "checkedTitle"],
-	["notedBy", "notedTitle"],
-	["approvedBy", "approvedTitle"],
-	["reviewedBy", "reviewedTitle"],
-	["checkedBy2", "checkedTitle2"],
-	["concurredBy", "concurredTitle"],
+const SLOT_DEFS = [
+	{ id: "prepared", label: "Prepared by", name: "preparedBy", title: "preparedTitle", stamp: "preparedStamp" },
+	{ id: "checked", label: "Checked by", name: "checkedBy", title: "checkedTitle", stamp: "checkedStamp" },
+	{ id: "noted", label: "Noted by", name: "notedBy", title: "notedTitle", stamp: "notedStamp" },
+	{ id: "approved", label: "Approved by", name: "approvedBy", title: "approvedTitle", stamp: "approvedStamp" },
+	{ id: "reviewed", label: "Reviewed by", name: "reviewedBy", title: "reviewedTitle", stamp: "reviewedStamp" },
+	{ id: "checked2", label: "Checked by", name: "checkedBy2", title: "checkedTitle2", stamp: "checkedStamp2" },
+	{ id: "concurred", label: "Concurred by", name: "concurredBy", title: "concurredTitle", stamp: "concurredStamp" },
 ];
+
+const SLOTS = SLOT_DEFS.map((slot) => [slot.name, slot.title]);
 
 /**
  * Names and positions for the 7 CE signatory slots, from the approval route.
@@ -45,4 +47,21 @@ export function applyRouteSignatories(projectInfo, steps, users) {
 /** @param {string} [stamp] */
 export function signatoryPending(stamp) {
 	return !String(stamp || "").trim();
+}
+
+/**
+ * The seven CE slots, names and positions from the route. Pending until a stamp exists.
+ * @param {Record<string, unknown>} [record]
+ * @param {unknown[]} [steps]
+ * @param {unknown[]} [users]
+ */
+export function signatorySlots(record, steps, users) {
+	const filled = routeSignatories(steps, users);
+	const form = record && typeof record === "object" ? record : {};
+	return SLOT_DEFS.map((slot) => {
+		const name = String(form[slot.name] || filled[slot.name] || "");
+		const position = String(form[slot.title] || filled[slot.title] || "");
+		const pending = signatoryPending(String(form[slot.stamp] || ""));
+		return { id: slot.id, label: slot.label, name, position, pending, status: pending ? "Pending" : "Signed" };
+	});
 }

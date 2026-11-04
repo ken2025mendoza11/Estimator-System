@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { routeSignatories } from "./ceSignatories.js";
+import { routeSignatories, signatorySlots } from "./ceSignatories.js";
 import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, markAllYes, prefillRceSigns, remarkFont, remarkPlain, rceHeaderLayout, rowFilesInOrder } from "./rceTemplate.js";
 
 test("RCE template keeps remarks, drops the onsite day rule, and pages row files", () => {
@@ -45,4 +45,24 @@ test("RCE template keeps remarks, drops the onsite day rule, and pages row files
 	assert.equal(app.includes("rce-cell-customer"), true);
 	assert.equal(app.includes("rce-cell-rceNo"), true);
 	assert.equal(app.includes("rce-cell-inquiry"), true);
+	const route = [
+		{ assigneeName: "Ada", position: "Cost Estimator" },
+		{ assigneeName: "Ben", position: "Checker" },
+		{ assigneeName: "Cara", position: "Noter" },
+		{ assigneeName: "Dan", position: "Approver" },
+		{ assigneeName: "Eve", position: "Reviewer" },
+		{ assigneeName: "Finn", position: "Second checker" },
+		{ assigneeName: "Gia", position: "Concur" },
+	];
+	const slots = signatorySlots({}, route, []);
+	assert.equal(slots.length, 7);
+	assert.equal(slots.every((slot) => slot.status === "Pending"), true);
+	assert.equal(slots[0].name, "Ada");
+	assert.equal(slots[0].position, "Cost Estimator");
+	assert.equal(slots[6].name, "Gia");
+	const signed = signatorySlots({ preparedStamp: "04 Nov 2026 10:00" }, route, []);
+	assert.equal(signed[0].pending, false);
+	assert.equal(signed[1].status, "Pending");
+	assert.equal(app.includes("rce-sign-slots"), true);
+	assert.equal(app.includes("signatorySlots"), true);
 });
