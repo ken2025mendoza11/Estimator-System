@@ -1315,3 +1315,15 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
   min-width:10.5rem;
   white-space:nowrap;
 }
+
+.rce-tpl .rce-tri { display: flex; width: 165px; }
+.rce-tpl .rce-tri-btn { flex: 1 1 0; }
+.rce-tpl .rce-tri-btn.is-on[data-answer="YES"] { background: #15803d; color: #fff; }
+.rce-tpl .rce-tri-btn.is-on[data-answer="NO"] { background: #b91c1c; color: #fff; }
+.rce-tpl .rce-tri-btn.is-on[data-answer="N/A"] { background: #64748b; color: #fff; }
+.rce-tpl .rce-remark-cell textarea { width: 100%; min-height: 3.2rem; resize: vertical; white-space: pre-wrap; }
+.ce-user-card-btn { display: flex; gap: 0.5rem; align-items: center; width: 100%; text-align: left; background: transparent; border: 0; color: inherit; }
+.ce-user-avatar { width: 2rem; height: 2rem; border-radius: 999px; display: grid; place-items: center; background: #1f5c4c; color: #fff; font-size: 0.75rem; }
+.ce-user-menu, .ce-user-modal { background: #fff; color: #1c1917; border: 1px solid #d6d3d1; border-radius: 12px; padding: 0.75rem; display: grid; gap: 0.4rem; }
+.ce-user-test { border: 1px dashed #ca8a04; padding: 0.4rem; }
+.ce-user-out { color: #b91c1c; }

@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { routeSignatories } from "./ceSignatories.js";
+import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, markAllYes, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "./rceTemplate.js";
+
+test("RCE template keeps remarks, drops the onsite day rule, and pages row files", () => {
+	assert.equal(estDaysRequired({ onsite: true, estDurationDays: "" }, false), true);
+	assert.equal(estDaysRequired({ onsite: true, estDurationDays: "" }, true), false);
+	const before = { item1: { complete: "", remarks: "keep me", files: [{ name: "a.pdf", pages: 2 }] } };
+	const snap = copyAnswers(before);
+	const marked = markAllYes(before, ["item1"]);
+	assert.equal(marked.item1.complete, "YES");
+	assert.equal(marked.item1.remarks, "keep me");
+	const cleared = clearAnswers(marked, ["item1"]);
+	assert.equal(cleared.item1.complete, "");
+	assert.equal(cleared.item1.remarks, "keep me");
+	assert.equal(snap.item1.complete, "");
+	const styled = applyRemarkMark("note", { bold: true, italic: true, color: "red" });
+	assert.equal(remarkPlain(styled), "note");
+	assert.equal(remarkFont(styled).font, "bolditalic");
+	assert.equal(remarkFont(styled).color, "red");
+	const files = rowFilesInOrder({ item1: { files: [{ name: "a.pdf", pages: 2 }] }, item2: { files: [{ name: "b.png" }] } }, ["item1", "item2"]);
+	assert.equal(fileStartPage(files, 1), 3);
+	const signs = prefillRceSigns({}, [{ assigneeName: "Ada", position: "Cost Estimator" }], []);
+	assert.equal(signs.preparedBy, "Ada");
+	assert.equal(signs.preparedTitle, "Cost Estimator");
+	assert.equal(routeSignatories([{ assigneeName: "Ada" }]).preparedBy, "Ada");
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(app.includes("rceTpl: false"), true);
+	assert.equal(seed.includes("rceTpl: true"), true);
+});

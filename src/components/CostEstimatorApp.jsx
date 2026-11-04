@@ -65,6 +65,8 @@ import { StickyTable } from "./StickyTable";
 import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
 import { salesPipelineRows } from "../lib/estimator/salesStage";
 import { SalesUserCard } from "./SalesUserCard";
+import { RceRemarkCell } from "./RceRemarkCell";
+import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "../lib/estimator/rceTemplate";
 import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -113,6 +115,9 @@ let ceTpl8On = false;
 let ceTpl9On = false;
 let ceTpl10On = false;
 let salesProfileOn = false;
+let rceTplOn = false;
+let rceRouteNow = [];
+let rceUsersNow = [];
 let miscShowMemory = {};
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
@@ -1502,7 +1507,7 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		"",
 		"",
 		"",
-		it.remarks || ""
+		it.remarks ? remarkPlain(it.remarks) : ""
 	]);
 	autoTable(doc, {
 		startY: rowY,
@@ -1563,19 +1568,25 @@ function exportRceToPDF(rce = {}, hostDoc) {
 	doc.setFontSize(8);
 	doc.setFont(void 0, "bold");
 	doc.text("OTHER REMARKS:", 12, y2 + 4);
-	doc.setFont(void 0, "normal");
+	const otherStyle = remarkFont(rce.otherRemarks);
+	doc.setFont(void 0, otherStyle.font);
+	if (otherStyle.color === "red") doc.setTextColor(180, 30, 30);
 	doc.setFontSize(8);
-	const remarks = doc.splitTextToSize(String(rce.otherRemarks || ""), innerW - 6);
+	const remarks = doc.splitTextToSize(remarkPlain(rce.otherRemarks), innerW - 6);
 	doc.text(remarks, 12, y2 + 8);
+	doc.setTextColor(0, 0, 0);
 	y2 += remarksH;
 	// Top line only: no horizontal rule between this box and the signatories.
 	doc.setLineWidth(.25);
 	doc.line(m, y2, pageW - m, y2);
 	doc.setFont(void 0, "bold");
 	doc.text("REASON TO DECLINE / NO QUOTE:", 12, y2 + 4);
-	doc.setFont(void 0, "normal");
-	const decline = doc.splitTextToSize(String(rce.declineReason || ""), innerW - 6);
+	const declineStyle = remarkFont(rce.declineReason);
+	doc.setFont(void 0, declineStyle.font);
+	if (declineStyle.color === "red") doc.setTextColor(180, 30, 30);
+	const decline = doc.splitTextToSize(remarkPlain(rce.declineReason), innerW - 6);
 	doc.text(decline, 12, y2 + 8);
+	doc.setTextColor(0, 0, 0);
 	y2 += remarksH;
 	// ---- Signatories: same drawing as the Cost Estimate; one outer box, no column dividers ----
 	const sigH = 25;
@@ -1703,7 +1714,7 @@ async function addNotePage(pdf, font, file) {
 		color: rgb(.4, .38, .32)
 	});
 }
-async function compileAttachmentsToPdf(files, title = "Compiled Attachments", edits = null) {
+async function compileAttachmentsToPdf(files, title = "Compiled Attachments", edits = null, openPage = 0) {
 	const ordered = ceTpl7On === true ? applyAttachmentEdits(files, edits) : attachmentFilesInOrder(files);
 	const pdf = await PDFDocument.create();
 	const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -1755,6 +1766,11 @@ async function compileAttachmentsToPdf(files, title = "Compiled Attachments", ed
 	const a = document.createElement("a");
 	const slug = String(title || "attachments").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 	a.href = url;
+	if (openPage > 0) {
+		window.open(`${url}#page=${openPage}`, "_blank", "noopener");
+		window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+		return;
+	}
 	a.download = `${slug || "compiled-attachments"}.pdf`;
 	document.body.appendChild(a);
 	a.click();
@@ -4903,7 +4919,8 @@ function defaultAdminConfig() {
 			ceTpl8: false,
 			ceTpl9: false,
 			ceTpl10: false,
-			salesProfile: false
+			salesProfile: false,
+			rceTpl: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5037,7 +5054,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl8: src.features?.ceTpl8 === true,
 			ceTpl9: src.features?.ceTpl9 === true,
 			ceTpl10: src.features?.ceTpl10 === true,
-			salesProfile: src.features?.salesProfile === true
+			salesProfile: src.features?.salesProfile === true,
+			rceTpl: src.features?.rceTpl === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
@@ -6950,14 +6968,14 @@ function rceHardBlocks(form, company) {
 	if (!form?.shopwork && !form?.onsite && !form?.trading) fails.push("Tick at least one work type (Onsite, Shopwork, or Trading).");
 	if (!form?.ceDeadline) fails.push("CE deadline is required.");
 	if (!String(form?.priorityLevel || "").trim()) fails.push("Priority is required.");
-	if (form?.onsite && !(Number(form?.estDurationDays) > 0)) fails.push("Onsite is ticked — enter estimated duration in days.");
+	if (estDaysRequired(form, rceTplOn === true)) fails.push("Onsite is ticked — enter estimated duration in days.");
 	return fails;
 }
 function rceSoftWarns(form, checklist, attachments) {
 	const warns = [];
 	const drawing = checklist?.item8?.complete;
 	if (String(drawing).toUpperCase() === "NO") warns.push("Drawing / photos marked No.");
-	if (form?.onsite && !(Number(form?.estDurationDays) > 0)) warns.push("Duration is blank.");
+	if (rceTplOn !== true && form?.onsite && !(Number(form?.estDurationDays) > 0)) warns.push("Duration is blank.");
 	const emptyRows = Object.keys(checklist || {}).filter((k) => {
 		if (k.includes("_")) return false;
 		return !checklist[k]?.complete;
@@ -6973,7 +6991,7 @@ function rceIsFinalAccepted(rce) {
 	return st === "accepted" || st === "approved";
 }
 function rceCanWithdraw(rce) {
-	if (release1WithdrawRequestOn === true) return rceWithdrawAllowed(rce, true);
+	if (release1WithdrawRequestOn === true || rceTplOn === true) return rceWithdrawAllowed(rce, true);
 	if (!rce) return false;
 	const ap = rce.approval;
 	if (!ap || ap.status !== "in-progress") return rce.status === "Pending" || rce.status === "For approval";
@@ -22436,7 +22454,7 @@ function exportRceExcel(rce, documentControl) {
 		["Item", "Description", "Complete", "Remarks"],
 		...(src.checklistItems || []).map((it) => [it.num, it.desc, it.complete || "", it.remarks || ""])
 	];
-	if (src.otherRemarks) rows.push([], ["Other remarks", src.otherRemarks]);
+	if (remarkPlain(src.otherRemarks)) rows.push([], ["Other remarks", remarkPlain(src.otherRemarks)]);
 	const wb = XLSX.utils.book_new();
 	XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "RCE");
 	XLSX.writeFile(wb, `RCE_${src.rceNo || src.id || "export"}.xlsx`);
@@ -27206,7 +27224,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			customer: initialData.customer || initialData.client || "",
 			address: initialData.address || ""
 		};
-		return base;
+		return rceTplOn === true ? prefillRceSigns(base, rceRouteNow, rceUsersNow) : base;
 	});
 	const rceListRef = useRef(rceList);
 	rceListRef.current = rceList;
@@ -27227,6 +27245,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		...emptyRceChecklist(),
 		...initialData?.checklist || {}
 	}));
+	const [answerUndo, setAnswerUndo] = useState(null);
 	const [attachments, setAttachments] = useState(() => {
 		return (initialData?.attachmentFiles?.length ? initialData.attachmentFiles : initialData?.attachments || []).map((name) => typeof name === "string" ? {
 			name,
@@ -27428,6 +27447,8 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			localStorage.removeItem(draftKey);
 			localStorage.removeItem("ce-rce-draft:new");
 		} catch {}
+		const rowFiles = rceTplOn === true ? rowFilesInOrder(checklist, RCE_CHECKLIST_ITEMS.map((it) => it.key)) : [];
+		const savedFiles = [...attachments, ...rowFiles];
 		const rceData = {
 			...form,
 			company,
@@ -27437,8 +27458,8 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			id: form.rceNo,
 			rceNo: form.rceNo,
 			checklist,
-			attachments: attachments.map((a) => a.name || a),
-			attachmentFiles: attachments.map((a) => ({
+			attachments: savedFiles.map((a) => a.name || a),
+			attachmentFiles: savedFiles.map((a) => ({
 				...typeof a === "string" ? { name: a } : a,
 				...attachmentSourceTag("RCE", form.revNo || "0"),
 				sheet: "RCE"
@@ -27570,7 +27591,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				]
 			}),
 			/* @__PURE__ */ jsxs("div", {
-				className: "rce-form-sheet",
+				className: "rce-form-sheet" + (rceTplOn === true ? " rce-tpl" : ""),
 				children: [
 					/* @__PURE__ */ jsxs("div", {
 						className: "rce-sheet-head",
@@ -27699,7 +27720,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									onChange: (e) => patchForm({ address: e.target.value })
 								})]
 							}),
-							/* @__PURE__ */ jsxs("label", {
+							rceTplOn === true ? null : /* @__PURE__ */ jsxs("label", {
 								className: "ce-field rce-fl",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
@@ -27779,7 +27800,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 												onChange: (e) => patchForm({ trading: e.target.checked })
 											}), "Trading"]
 										}),
-										form.onsite ? /* @__PURE__ */ jsxs("label", {
+										form.onsite && rceTplOn !== true ? /* @__PURE__ */ jsxs("label", {
 											className: "ce-field",
 											style: { minWidth: 110 },
 											children: [/* @__PURE__ */ jsx("span", {
@@ -27863,11 +27884,11 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							})
 						]
 					}),
-					/* @__PURE__ */ jsx("p", {
+					rceTplOn === true ? null : /* @__PURE__ */ jsx("p", {
 						className: "rce-section-label",
 						children: "Attachments"
 					}),
-					/* @__PURE__ */ jsxs("div", {
+					rceTplOn === true ? null : /* @__PURE__ */ jsxs("div", {
 						className: "rce-upload",
 						children: [/* @__PURE__ */ jsx("input", {
 							type: "file",
@@ -27880,7 +27901,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							children: attachments.length ? `${attachments.length} file${attachments.length === 1 ? "" : "s"} attached` : "PDF or images. Optional, but drawings and specs help costing."
 						})]
 					}),
-					attachments.length > 0 && /* @__PURE__ */ jsx("ul", {
+					rceTplOn === true ? null : attachments.length > 0 && /* @__PURE__ */ jsx("ul", {
 						className: "rce-file-names",
 						children: attachments.map((att, idx) => {
 							const name = typeof att === "string" ? att : att.name || "Attachment";
@@ -27901,15 +27922,49 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							type: "button",
 							className: "ce-btn-ghost ce-btn-sm",
 							disabled: readOnly,
-							onClick: () => markAllChecklist("YES", false),
-							children: "Mark all Yes"
+							onClick: () => {
+								if (rceTplOn === true) setAnswerUndo(copyAnswers(checklist));
+								markAllChecklist("YES", false);
+							},
+							"aria-label": "Mark all Yes",
+							title: "Mark all Yes",
+							children: rceTplOn === true ? "Yes" : "Mark all Yes"
 						}), /* @__PURE__ */ jsx("button", {
 							type: "button",
 							className: "ce-btn-ghost ce-btn-sm",
 							disabled: readOnly,
-							onClick: () => markAllChecklist("N/A", true),
-							children: "Set remaining to N/A"
-						}), rceErr((m) => /work type/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Tick at least one work type (Onsite, Shopwork, or Trading)." }) : null]
+							onClick: () => {
+								if (rceTplOn === true) setAnswerUndo(copyAnswers(checklist));
+								markAllChecklist("N/A", true);
+							},
+							"aria-label": "Set remaining to N/A",
+							title: "Set remaining to N/A",
+							children: rceTplOn === true ? "N/A" : "Set remaining to N/A"
+						}), rceTplOn === true ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly || !answerUndo,
+							"aria-label": "Undo",
+							title: "Undo",
+							onClick: () => {
+								if (!answerUndo) return;
+								setChecklist(answerUndo);
+								setAnswerUndo(null);
+							},
+							children: "Undo"
+						}) : null, rceTplOn === true ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly,
+							"aria-label": "Clear all answers",
+							title: "Clear all answers",
+							onClick: () => {
+								if (!window.confirm("Clear all answers? Remarks and attachments stay.")) return;
+								setAnswerUndo(copyAnswers(checklist));
+								setChecklist((prev) => clearAnswers(prev, RCE_CHECKLIST_ITEMS.map((it) => it.key)));
+							},
+							children: "Clear"
+						}) : null, rceErr((m) => /work type/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Tick at least one work type (Onsite, Shopwork, or Trading)." }) : null]
 					}),
 					/* @__PURE__ */ jsx("p", {
 						className: "rce-section-label",
@@ -27958,8 +28013,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									indent: !!it.indent,
 									complete: checklist[it.key]?.complete || "",
 									remarks: checklist[it.key]?.remarks || "",
+									files: checklist[it.key]?.files || [],
 									onCompleteChange: (v) => handleChecklistChange(it.key, "complete", v),
-									onRemarksChange: (v) => handleChecklistChange(it.key, "remarks", v),
+									onRemarksChange: (v) => handleChecklistChange(it.key, "remarks", rceTplOn === true ? applyRemarkMark(checklist[it.key]?.remarks, { text: v }) : v),
+									onFiles: (files) => handleChecklistChange(it.key, "files", files),
+									onOpenFile: (index) => {
+										const files = rowFilesInOrder(checklist, RCE_CHECKLIST_ITEMS.map((row) => row.key));
+										const start = files.findIndex((file) => file.rowKey === it.key);
+										void compileAttachmentsToPdf(files, form.rceNo || "RCE", null, fileStartPage(files, Math.max(0, start) + index));
+									},
 									readOnly
 								}, it.key)) })
 							]
@@ -27970,11 +28032,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						children: [/* @__PURE__ */ jsx("label", {
 							className: "ce-field-label",
 							children: "Other remarks"
-						}), /* @__PURE__ */ jsx("textarea", {
+						}), rceTplOn === true ? /* @__PURE__ */ jsxs("span", { children: [
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Bold remarks", onClick: () => patchForm({ otherRemarks: applyRemarkMark(form.otherRemarks, { bold: !remarkFont(form.otherRemarks).bold }) }), children: "B" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Italic remarks", onClick: () => patchForm({ otherRemarks: applyRemarkMark(form.otherRemarks, { italic: !remarkFont(form.otherRemarks).italic }) }), children: "I" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Red remarks", onClick: () => patchForm({ otherRemarks: applyRemarkMark(form.otherRemarks, { color: remarkFont(form.otherRemarks).color === "red" ? "" : "red" }) }), children: "Red" })
+						] }) : null, /* @__PURE__ */ jsx("textarea", {
 							rows: "3",
 							className: "ce-input rce-area",
-							value: form.otherRemarks,
-							onChange: (e) => patchForm({ otherRemarks: e.target.value }),
+							value: rceTplOn === true ? remarkPlain(form.otherRemarks) : form.otherRemarks,
+							onChange: (e) => patchForm(rceTplOn === true ? { otherRemarks: applyRemarkMark(form.otherRemarks, { text: e.target.value }) } : { otherRemarks: e.target.value }),
 							disabled: readOnly,
 							placeholder: "Anything costing should know that is not on the checklist"
 						})]
@@ -27984,11 +28050,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						children: [/* @__PURE__ */ jsx("label", {
 							className: "ce-field-label",
 							children: "Reason to decline / no quote"
-						}), /* @__PURE__ */ jsx("textarea", {
+						}), rceTplOn === true ? /* @__PURE__ */ jsxs("span", { children: [
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Bold decline reason", onClick: () => patchForm({ declineReason: applyRemarkMark(form.declineReason, { bold: !remarkFont(form.declineReason).bold }) }), children: "B" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Italic decline reason", onClick: () => patchForm({ declineReason: applyRemarkMark(form.declineReason, { italic: !remarkFont(form.declineReason).italic }) }), children: "I" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Red decline reason", onClick: () => patchForm({ declineReason: applyRemarkMark(form.declineReason, { color: remarkFont(form.declineReason).color === "red" ? "" : "red" }) }), children: "Red" })
+						] }) : null, /* @__PURE__ */ jsx("textarea", {
 							rows: "3",
 							className: "ce-input rce-area",
-							value: form.declineReason,
-							onChange: (e) => patchForm({ declineReason: e.target.value }),
+							value: rceTplOn === true ? remarkPlain(form.declineReason) : form.declineReason,
+							onChange: (e) => patchForm(rceTplOn === true ? { declineReason: applyRemarkMark(form.declineReason, { text: e.target.value }) } : { declineReason: e.target.value }),
 							disabled: readOnly,
 							placeholder: "Leave blank unless this request will not be quoted"
 						})]
@@ -28128,7 +28198,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		]
 	});
 }
-function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, onRemarksChange, readOnly = false, indent = false }) {
+function ChecklistRow({ num: num3, desc, complete, remarks, files = [], onCompleteChange, onRemarksChange, onFiles, onOpenFile, readOnly = false, indent = false }) {
 	const setMark = (val) => {
 		if (readOnly) return;
 		onCompleteChange(complete === val ? "" : val);
@@ -28151,6 +28221,7 @@ function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, on
 				"aria-label": `Answer for item ${num3}`,
 				children: ["YES", "NO", "N/A"].map((val) => /* @__PURE__ */ jsx("button", {
 					type: "button",
+					"data-answer": val,
 					className: "rce-tri-btn" + (complete === val ? " is-on" : ""),
 					disabled: readOnly,
 					onClick: () => setMark(val),
@@ -28158,7 +28229,14 @@ function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, on
 				}, val))
 			})
 		}),
-		/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+		/* @__PURE__ */ jsx("td", { children: rceTplOn === true ? /* @__PURE__ */ jsx(RceRemarkCell, {
+			remarks,
+			files,
+			readOnly,
+			onRemarks: onRemarksChange,
+			onFiles,
+			onOpen: onOpenFile
+		}) : /* @__PURE__ */ jsx("input", {
 			className: "rce-cell-input",
 			type: "text",
 			value: remarks,
@@ -29215,6 +29293,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl9On = adminConfig.features?.ceTpl9 === true;
 	ceTpl10On = adminConfig.features?.ceTpl10 === true;
 	salesProfileOn = adminConfig.features?.salesProfile === true;
+	rceTplOn = adminConfig.features?.rceTpl === true;
+	rceRouteNow = adminConfig.approvalFlows?.rce || [];
+	rceUsersNow = adminConfig.users || [];
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {
