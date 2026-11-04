@@ -118,13 +118,43 @@ export function ceApprovedForMarkup(status) {
 }
 
 /**
- * @param {{ flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown }} input
+ * @param {{ flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown, ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown }} input
  * @returns {boolean}
  */
 export function canGenerateMarkup(input) {
 	if (input?.flagOn !== true || input?.sales !== true) return false;
 	if (!ceApprovedForMarkup(input.status)) return false;
-	return !input.existing;
+	if (input.existing) return false;
+	return salesActorAllowed(input);
+}
+
+/**
+ * Owner, Sales Manager, or admin. Callers that omit every actor field keep the old check.
+ * A missing owner is allowed only for a Sales Manager or an admin.
+ * @param {{ ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown, flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown }} input
+ * @returns {boolean}
+ */
+export function salesActorAllowed(input) {
+	const asked = input?.ownerUserId != null || input?.actorUserId != null || input?.isSalesManager != null || input?.isAdmin != null;
+	if (!asked) return true;
+	if (input?.isSalesManager === true || input?.isAdmin === true) return true;
+	const actor = String(input?.actorUserId || "");
+	const owner = String(input?.ownerUserId || "");
+	if (!owner) return false;
+	return !!actor && actor === owner;
+}
+
+/**
+ * Always pass these. An empty owner stays an empty string so the gate still runs.
+ * @param {{ ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown }} input
+ */
+export function salesGateFields(input) {
+	return {
+		actorUserId: String(input?.actorUserId || ""),
+		ownerUserId: String(input?.ownerUserId || ""),
+		isSalesManager: input?.isSalesManager === true,
+		isAdmin: input?.isAdmin === true,
+	};
 }
 
 /**
@@ -183,12 +213,47 @@ export function markupNumber(ceNo, revision) {
 }
 
 /**
- * @param {{ ceId?: unknown, ceNo?: unknown, revision?: unknown, byUserId?: unknown, directCost?: unknown, totals?: unknown, preset?: unknown, parts?: unknown, now?: unknown }} input
+ * Rows for the markup PDF and Excel. Totals match the screen.
+ * @param {any} markup
+ * @returns {(string | number)[][]}
+ */
+export function markupSheetRows(markup) {
+	const row = markup || {};
+	const parts = row.parts || { profit: 0, contingency: 0, markup: 0 };
+	const direct = Number(row.directCost) || 0;
+	const selling = row.selling != null ? Number(row.selling) : sellingFromDirect(direct, parts);
+	return [
+		["SY3", ""],
+		["REF. CE No.", String(row.ceNo || "")],
+		["Direct cost", direct],
+		["Profit %", Number(parts.profit) || 0],
+		["Contingency %", Number(parts.contingency) || 0],
+		["Markup %", Number(parts.markup) || 0],
+		["Selling price", selling],
+		["Signatory", String(row.approverId || "Pending")],
+	];
+}
+
+/**
+ * @param {{ ceId?: unknown, ceNo?: unknown, revision?: unknown, byUserId?: unknown, directCost?: unknown, totals?: unknown, preset?: unknown, parts?: unknown, now?: unknown, ownerUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown, status?: unknown }} input
  * @returns {{ ok: true, markup: any } | { ok: false, message: string, markup?: undefined }}
  */
 export function createMarkup(input) {
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId) return { ok: false, message: "An account id is required." };
+	if (input?.ownerUserId != null || input?.isSalesManager != null || input?.isAdmin != null) {
+		const allowed = canGenerateMarkup({
+			flagOn: true,
+			sales: true,
+			status: "Done",
+			existing: false,
+			actorUserId: byUserId,
+			ownerUserId: input.ownerUserId,
+			isSalesManager: input.isSalesManager === true,
+			isAdmin: input.isAdmin === true,
+		});
+		if (!allowed) return { ok: false, message: "Only the Sales owner or a Sales Manager can generate a markup." };
+	}
 	const directCost = readDirectCost(input?.directCost != null ? input.directCost : input?.totals);
 	if (!(directCost > 0)) return { ok: false, message: "Direct cost is missing." };
 	const fromPreset = presetParts(input?.preset || "100");

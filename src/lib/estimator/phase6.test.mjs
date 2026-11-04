@@ -55,7 +55,7 @@ test("manual override wins, and a new line stores a per-day snapshot", () => {
 	assert.equal(legacyBoteAmount(old), 600);
 });
 
-test("win rate is awarded divided by awarded plus not awarded", () => {
+test("win rate is awarded divided by awarded plus lost", () => {
 	const rows = [
 		{ awardStatus: "Awarded", status: "Done" },
 		{ awardStatus: "Awarded", status: "Done" },
@@ -63,7 +63,8 @@ test("win rate is awarded divided by awarded plus not awarded", () => {
 		{ awardStatus: "Not awarded", status: "Done" },
 		{ status: "Ongoing" }
 	];
-	assert.equal(winRate(rows), 0.5);
+	assert.equal(winRate(rows), 2 / 3);
+	assert.equal(winRate([{ awardStatus: "Awarded" }, { awardStatus: "Not awarded" }]), 1);
 	assert.equal(winRate([{ status: "Draft" }]), null);
 	const report = buildReport([
 		{ awardStatus: "Awarded", status: "Done", assignedTo: "Ada", received: "2026-10-01", done: "2026-10-11", amount: 1000, awardAmount: 900 },
@@ -82,6 +83,10 @@ test("win rate is awarded divided by awarded plus not awarded", () => {
 	const sheet = reportSheet(report);
 	assert.equal(sheet[0][0], "Report");
 	assert.equal(sheet.some((row) => row[0] === "Win rate" && row[1] === "50%"), true);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const copy = readFileSync(new URL("../../components/Phase6Reports.jsx", import.meta.url), "utf8");
+	assert.equal(app.includes("awardWinRate"), true);
+	assert.equal(copy.includes("Awarded ÷ (Awarded + Lost)"), true);
 });
 
 test("mobile approve uses the step 8 engine and stays read-only without it", () => {

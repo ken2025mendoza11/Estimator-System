@@ -6,6 +6,7 @@ import {
 	actorMayDecideMarkup,
 	applyMarkupPreset,
 	canGenerateMarkup,
+	salesActorAllowed,
 	createMarkup,
 	decideMarkup,
 	markupNumber,
@@ -14,6 +15,7 @@ import {
 	setMarkupParts,
 	submitMarkup,
 	totalPercent,
+	markupSheetRows,
 } from "./markup.js";
 
 const lists = {
@@ -120,4 +122,23 @@ test("generate shows only for Sales on an approved CE, and the flag defaults off
 	assert.equal(seed.includes("release1Markup: true"), true);
 	assert.equal(src.includes("ceTotals"), false);
 	assert.equal(src.includes("projectTotal"), false);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-1", ownerUserId: "sales-1" }), true);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-2", ownerUserId: "sales-1" }), false);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-2", ownerUserId: "sales-1", isSalesManager: true }), true);
+	assert.equal(salesActorAllowed({}), true);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-2", isSalesManager: false, ownerUserId: "" }), false);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "admin-1", isSalesManager: false, isAdmin: true, ownerUserId: "" }), true);
+	const noOwner = createMarkup({ ceId: "CE-1", byUserId: "sales-2", directCost: 1_000_000, preset: "100", ownerUserId: "", isSalesManager: false });
+	assert.equal(noOwner.ok, false);
+	const denied = createMarkup({ ceId: "CE-1", byUserId: "sales-2", directCost: 1_000_000, preset: "100", ownerUserId: "sales-1", isSalesManager: false });
+	assert.equal(denied.ok, false);
+	const owned = createMarkup({ ceId: "CE-1", byUserId: "sales-1", directCost: 1_000_000, preset: "100", ownerUserId: "sales-1" });
+	if (!owned.markup) throw new Error("missing owned markup");
+	assert.equal(owned.markup.selling, 2_000_000);
+	const sheet = markupSheetRows(owned.markup);
+	assert.equal(sheet[0][0], "SY3");
+	assert.equal(sheet[1][0], "REF. CE No.");
+	assert.equal(sheet[1][1], "CE-1");
+	const selling = sheet.find((row) => row[0] === "Selling price");
+	assert.equal(selling?.[1], 2_000_000);
 });

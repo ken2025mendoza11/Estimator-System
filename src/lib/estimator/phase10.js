@@ -189,3 +189,85 @@ export function orderExportSections(sections) {
 	});
 	return [...summary, ...sow, ...cost, ...schedule, ...annex];
 }
+
+/**
+ * Finish-to-start scope lines. Sundays and listed holidays are skipped.
+ * A cycle returns an error and no dates.
+ * @param {any[]} lines
+ * @param {any[]} holidays
+ */
+export function planSowSchedule(lines, holidays) {
+	const rows = (Array.isArray(lines) ? lines : []).map((line, index) => ({
+		id: String(line?.id || `sow-${index + 1}`),
+		title: String(line?.title || line?.name || line?.id || `Line ${index + 1}`),
+		start: String(line?.start || ""),
+		days: Math.max(1, Math.round(Number(line?.days) || 1)),
+		after: String(line?.after || "")
+	}));
+	const byId = new Map(rows.map((row) => [row.id, row]));
+	const visiting = new Set();
+	const done = new Set();
+	const visit = (id) => {
+		if (done.has(id)) return "";
+		if (visiting.has(id)) return "Cycle in SOW dependencies.";
+		const row = byId.get(id);
+		if (!row) return "";
+		visiting.add(id);
+		if (row.after) {
+			if (row.after === row.id || !byId.has(row.after)) return row.after === row.id ? "Cycle in SOW dependencies." : `Unknown SOW dependency “${row.after}”.`;
+			const err = visit(row.after);
+			if (err) return err;
+		}
+		visiting.delete(id);
+		done.add(id);
+		return "";
+	};
+	for (const row of rows) {
+		const err = visit(row.id);
+		if (err) return { ok: false, message: err, lines: [] };
+	}
+	/** @type {Record<string, any>} */
+	const dated = {};
+	const finish = (row) => {
+		if (dated[row.id]) return dated[row.id];
+		let startOn = "";
+		if (row.after) startOn = addWorkingDays(finish(byId.get(row.after)).endOn, 1, holidays);
+		else startOn = firstWorkingDay(row.start, holidays) || firstWorkingDay(phDate(), holidays);
+		const endOn = addWorkingDays(startOn, Math.max(0, row.days - 1), holidays);
+		dated[row.id] = { ...row, startOn, endOn };
+		return dated[row.id];
+	};
+	return { ok: true, message: "", lines: rows.map((row) => finish(row)) };
+}
+
+/** Bars the existing GanttChart can draw. */
+export function sowGanttSchedule(plan) {
+	const bars = {};
+	(plan?.lines || []).forEach((line) => {
+		bars[line.id] = {
+			taskId: line.id,
+			title: line.title || line.id,
+			start: 1,
+			end: Math.max(1, Number(line.days) || 1),
+			duration: Math.max(1, Number(line.days) || 1),
+			startOn: line.startOn || "",
+			endOn: line.endOn || "",
+			predecessor: line.after || ""
+		};
+	});
+	return bars;
+}
+
+/** Dragging a bar end changes Days. Inclusive working days. */
+export function resizeSowDays(startOn, endOn, holidays) {
+	if (!startOn || !endOn || endOn < startOn) return 1;
+	let days = 1;
+	let cursor = startOn;
+	while (cursor < endOn && days < 400) {
+		cursor = addWorkingDays(cursor, 1, holidays);
+		if (!cursor || cursor > endOn) break;
+		days += 1;
+	}
+	return days;
+}
+
