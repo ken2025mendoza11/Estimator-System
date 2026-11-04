@@ -1322,6 +1322,24 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .rce-tpl .rce-tri-btn.is-on[data-answer="NO"] { background: #b91c1c; color: #fff; }
 .rce-tpl .rce-tri-btn.is-on[data-answer="N/A"] { background: #64748b; color: #fff; }
 .rce-tpl .rce-remark-cell textarea { width: 100%; min-height: 3.2rem; resize: vertical; white-space: pre-wrap; }
+.rce-tpl .rce-head-ids { display: none; }
+.rce-tpl .rce-field-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rce-tpl .rce-span-2 { grid-column: span 2; }
+.rce-tpl .rce-cell-customer { order: 1; }
+.rce-tpl .rce-cell-rceNo { order: 2; }
+.rce-tpl .rce-cell-rceDate { order: 3; }
+.rce-tpl .rce-cell-address { order: 4; }
+.rce-tpl .rce-cell-priority { order: 5; }
+.rce-tpl .rce-cell-project { order: 6; }
+.rce-tpl .rce-cell-inquiry { order: 7; }
+.rce-tpl .rce-cell-projectType { order: 8; }
+.rce-tpl .rce-cell-department { order: 9; }
+.rce-tpl .rce-cell-ceDeadline { order: 10; }
+.rce-tpl .rce-cell-submission { order: 11; }
+@media (max-width: 390px) {
+  .rce-tpl .rce-field-grid { grid-template-columns: 1fr; }
+  .rce-tpl .rce-span-2 { grid-column: auto; }
+}
 .ce-user-card-btn { display: flex; gap: 0.5rem; align-items: center; width: 100%; text-align: left; background: transparent; border: 0; color: inherit; }
 .ce-user-avatar { width: 2rem; height: 2rem; border-radius: 999px; display: grid; place-items: center; background: #1f5c4c; color: #fff; font-size: 0.75rem; }
 .ce-user-menu, .ce-user-modal { background: #fff; color: #1c1917; border: 1px solid #d6d3d1; border-radius: 12px; padding: 0.75rem; display: grid; gap: 0.4rem; }

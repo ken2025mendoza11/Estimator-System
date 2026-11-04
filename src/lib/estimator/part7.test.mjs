@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { routeSignatories } from "./ceSignatories.js";
-import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, markAllYes, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "./rceTemplate.js";
+import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, markAllYes, prefillRceSigns, remarkFont, remarkPlain, rceHeaderLayout, rowFilesInOrder } from "./rceTemplate.js";
 
 test("RCE template keeps remarks, drops the onsite day rule, and pages row files", () => {
 	assert.equal(estDaysRequired({ onsite: true, estDurationDays: "" }, false), true);
@@ -30,4 +30,19 @@ test("RCE template keeps remarks, drops the onsite day rule, and pages row files
 	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
 	assert.equal(app.includes("rceTpl: false"), true);
 	assert.equal(seed.includes("rceTpl: true"), true);
+	const layout = rceHeaderLayout(true);
+	assert.equal(layout.columns, 4);
+	assert.equal(layout.mobileColumns, 1);
+	assert.equal(layout.mobileMaxPx, 390);
+	assert.equal(layout.cells[0].id, "customer");
+	assert.equal(layout.cells.filter((cell) => cell.span === 2).length, 5);
+	assert.equal(rceHeaderLayout(false).columns, 2);
+	const css = readFileSync(new URL("../../estimator.css", import.meta.url), "utf8");
+	assert.equal(css.includes(".rce-tpl .rce-field-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }"), true);
+	assert.equal(css.includes("@media (max-width: 390px)"), true);
+	assert.equal(css.includes(".rce-tpl .rce-cell-customer { order: 1; }"), true);
+	assert.equal(css.includes(".rce-tpl .rce-cell-submission { order: 11; }"), true);
+	assert.equal(app.includes("rce-cell-customer"), true);
+	assert.equal(app.includes("rce-cell-rceNo"), true);
+	assert.equal(app.includes("rce-cell-inquiry"), true);
 });

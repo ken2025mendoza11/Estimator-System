@@ -134,3 +134,29 @@ export function prefillRceSigns(form, steps, users) {
 	if (signatoryPending(next.preparedStamp)) next.preparedPending = true;
 	return next;
 }
+
+/**
+ * Four-column RCE header. One column at 390 px.
+ * @param {boolean} flagOn
+ */
+export function rceHeaderLayout(flagOn) {
+	if (flagOn !== true) return { columns: 2, mobileColumns: 2, cells: [] };
+	return {
+		columns: 4,
+		mobileColumns: 1,
+		mobileMaxPx: 390,
+		cells: [
+			{ id: "customer", span: 2 },
+			{ id: "rceNo", span: 1 },
+			{ id: "rceDate", span: 1 },
+			{ id: "address", span: 2 },
+			{ id: "priority", span: 2 },
+			{ id: "project", span: 2 },
+			{ id: "inquiry", span: 2 },
+			{ id: "projectType", span: 1 },
+			{ id: "department", span: 1 },
+			{ id: "ceDeadline", span: 1 },
+			{ id: "submission", span: 1 },
+		],
+	};
+}

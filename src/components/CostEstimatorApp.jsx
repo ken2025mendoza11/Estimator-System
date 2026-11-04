@@ -27712,8 +27712,26 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 					/* @__PURE__ */ jsxs("div", {
 						className: "rce-field-grid",
 						children: [
+							rceTplOn === true ? /* @__PURE__ */ jsxs("label", {
+								className: "ce-field rce-fl rce-cell-rceNo",
+								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "RCE no." }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									value: form.rceNo,
+									readOnly: true
+								})]
+							}) : null,
+							rceTplOn === true ? /* @__PURE__ */ jsxs("label", {
+								className: "ce-field rce-fl rce-cell-rceDate",
+								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "RCE date" }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									type: "date",
+									value: form.rceDate,
+									disabled: readOnly,
+									onChange: (e) => patchForm({ rceDate: e.target.value })
+								})]
+							}) : null,
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-customer",
 								children: [
 									/* @__PURE__ */ jsx("span", {
 										className: "ce-field-label",
@@ -27738,7 +27756,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-inquiry",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Inquiry number & date"
@@ -27760,7 +27778,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-address",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Address"
@@ -27786,7 +27804,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-priority",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Priority"
@@ -27805,7 +27823,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								}), rceErr((m) => m.startsWith("Priority")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Priority is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl rce-fl-span",
+								className: "ce-field rce-fl rce-fl-span rce-span-2 rce-cell-project",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Project title"
@@ -27818,7 +27836,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								}), rceErr((m) => m.startsWith("Project title")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Project title is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-projectType",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Project type"
@@ -27871,7 +27889,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-ceDeadline",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "CE deadline"
@@ -27887,7 +27905,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								}), rceErr((m) => m.startsWith("CE deadline")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "CE deadline is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-department",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Department"
@@ -27919,7 +27937,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-submission",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Submission deadline"
