@@ -55,7 +55,7 @@ import { ceApprovedNotice, salesOwnerAccountId } from "../lib/estimator/salesVie
 import { release1WriteAllowed } from "../lib/estimator/ceLock";
 import { askReason } from "../lib/estimator/reasonBox";
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
-import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
+import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, salesGateFields, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
 import { MarkupPanel } from "./MarkupPanel";
 import { canGenerateProposal, cancelProposal, claimProposalNumber, createProposal, decideProposal, deleteDraftProposal, markProposalExpired, markProposalLost, markProposalSent, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
 import { ProposalPanel } from "./ProposalPanel";
@@ -19783,13 +19783,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						onClick: () => onAcceptSalesCeRequest(),
 						children: "Take CE request"
 					}) : null,
-					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: markup, ...(ceData?.salesOwnerId ? { actorUserId: release1ActorId, ownerUserId: ceData.salesOwnerId, isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}) }) ? /* @__PURE__ */ jsx("button", {
+					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: markup, ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: ceData?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) }) ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => onMarkup("create", { directCost: officialTotal }),
 						children: "Generate Markup"
 					}) : null,
-					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: markup?.status, existing: proposal, ...(ceData?.salesOwnerId ? { actorUserId: release1ActorId, ownerUserId: ceData.salesOwnerId, isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}) }) ? /* @__PURE__ */ jsx("button", {
+					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: markup?.status, existing: proposal, ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: ceData?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) }) ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => {
@@ -31544,7 +31544,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (current) return;
 			const doc = documents[ceId] || {};
 			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || ceId;
-			result = createMarkup({ ceId, ceNo, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100", ...(activeCE?.salesOwnerId ? { ownerUserId: activeCE.salesOwnerId, isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}) });
+			result = createMarkup({ ceId, ceNo, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100", ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) });
 		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
 		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
 		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
@@ -31665,7 +31665,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				clauses: adminConfig.proposalClauses,
 				header: "Proposal",
 				prDate: todayLocal(),
-				...(activeCE?.salesOwnerId ? { ownerUserId: activeCE.salesOwnerId, isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}),
+				...(salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" })),
 				...payload || {},
 				markupNo: markup.markupNo || "",
 				ceNo: markup.ceNo || payload?.ceNo || ""

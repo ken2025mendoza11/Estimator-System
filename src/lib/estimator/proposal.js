@@ -199,7 +199,7 @@ export function proposalLines(proposal, users) {
 export function createProposal(input) {
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId) return { ok: false, message: "An account id is required." };
-	if (input?.ownerUserId != null || input?.isSalesManager != null) {
+	if (input?.ownerUserId != null || input?.isSalesManager != null || input?.isAdmin != null) {
 		const allowed = canGenerateProposal({
 			flagOn: true,
 			sales: true,
@@ -208,6 +208,7 @@ export function createProposal(input) {
 			actorUserId: byUserId,
 			ownerUserId: input.ownerUserId,
 			isSalesManager: input.isSalesManager === true,
+			isAdmin: input.isAdmin === true,
 		});
 		if (!allowed) return { ok: false, message: "Only the Sales owner or a Sales Manager can generate a proposal." };
 	}
@@ -548,7 +549,7 @@ export function noRevisionNeeded(proposal, input) {
 }
 
 /**
- * @param {{ flagOn?: boolean, sales?: boolean, markupStatus?: unknown, existing?: unknown, ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown }} input
+ * @param {{ flagOn?: boolean, sales?: boolean, markupStatus?: unknown, existing?: unknown, ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown }} input
  * @returns {boolean}
  */
 export function canGenerateProposal(input) {

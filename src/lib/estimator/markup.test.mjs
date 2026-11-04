@@ -126,6 +126,10 @@ test("generate shows only for Sales on an approved CE, and the flag defaults off
 	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-2", ownerUserId: "sales-1" }), false);
 	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-2", ownerUserId: "sales-1", isSalesManager: true }), true);
 	assert.equal(salesActorAllowed({}), true);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "sales-2", isSalesManager: false, ownerUserId: "" }), false);
+	assert.equal(canGenerateMarkup({ flagOn: true, sales: true, status: "Done", actorUserId: "admin-1", isSalesManager: false, isAdmin: true, ownerUserId: "" }), true);
+	const noOwner = createMarkup({ ceId: "CE-1", byUserId: "sales-2", directCost: 1_000_000, preset: "100", ownerUserId: "", isSalesManager: false });
+	assert.equal(noOwner.ok, false);
 	const denied = createMarkup({ ceId: "CE-1", byUserId: "sales-2", directCost: 1_000_000, preset: "100", ownerUserId: "sales-1", isSalesManager: false });
 	assert.equal(denied.ok, false);
 	const owned = createMarkup({ ceId: "CE-1", byUserId: "sales-1", directCost: 1_000_000, preset: "100", ownerUserId: "sales-1" });

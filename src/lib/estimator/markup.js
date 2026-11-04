@@ -129,16 +129,32 @@ export function canGenerateMarkup(input) {
 }
 
 /**
- * Owner or Sales Manager when those fields are passed. Older callers stay unchanged.
- * @param {{ ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown }} input
+ * Owner, Sales Manager, or admin. Callers that omit every actor field keep the old check.
+ * A missing owner is allowed only for a Sales Manager or an admin.
+ * @param {{ ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown, flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown }} input
  * @returns {boolean}
  */
 export function salesActorAllowed(input) {
-	if (input?.ownerUserId == null && input?.actorUserId == null && input?.isSalesManager == null) return true;
-	if (input?.isSalesManager === true) return true;
+	const asked = input?.ownerUserId != null || input?.actorUserId != null || input?.isSalesManager != null || input?.isAdmin != null;
+	if (!asked) return true;
+	if (input?.isSalesManager === true || input?.isAdmin === true) return true;
 	const actor = String(input?.actorUserId || "");
 	const owner = String(input?.ownerUserId || "");
-	return !!actor && !!owner && actor === owner;
+	if (!owner) return false;
+	return !!actor && actor === owner;
+}
+
+/**
+ * Always pass these. An empty owner stays an empty string so the gate still runs.
+ * @param {{ ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown }} input
+ */
+export function salesGateFields(input) {
+	return {
+		actorUserId: String(input?.actorUserId || ""),
+		ownerUserId: String(input?.ownerUserId || ""),
+		isSalesManager: input?.isSalesManager === true,
+		isAdmin: input?.isAdmin === true,
+	};
 }
 
 /**
@@ -219,13 +235,13 @@ export function markupSheetRows(markup) {
 }
 
 /**
- * @param {{ ceId?: unknown, ceNo?: unknown, revision?: unknown, byUserId?: unknown, directCost?: unknown, totals?: unknown, preset?: unknown, parts?: unknown, now?: unknown, ownerUserId?: unknown, isSalesManager?: unknown, status?: unknown }} input
+ * @param {{ ceId?: unknown, ceNo?: unknown, revision?: unknown, byUserId?: unknown, directCost?: unknown, totals?: unknown, preset?: unknown, parts?: unknown, now?: unknown, ownerUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown, status?: unknown }} input
  * @returns {{ ok: true, markup: any } | { ok: false, message: string, markup?: undefined }}
  */
 export function createMarkup(input) {
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId) return { ok: false, message: "An account id is required." };
-	if (input?.ownerUserId != null || input?.isSalesManager != null) {
+	if (input?.ownerUserId != null || input?.isSalesManager != null || input?.isAdmin != null) {
 		const allowed = canGenerateMarkup({
 			flagOn: true,
 			sales: true,
@@ -234,6 +250,7 @@ export function createMarkup(input) {
 			actorUserId: byUserId,
 			ownerUserId: input.ownerUserId,
 			isSalesManager: input.isSalesManager === true,
+			isAdmin: input.isAdmin === true,
 		});
 		if (!allowed) return { ok: false, message: "Only the Sales owner or a Sales Manager can generate a markup." };
 	}
