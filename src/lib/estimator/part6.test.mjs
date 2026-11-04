@@ -29,6 +29,14 @@ test("sales stage is derived for every stage and a Done CE is For markup for its
 	});
 	assert.equal(rows.length, 1);
 	assert.equal(rows[0].stage, "For markup");
+	const mixed = {
+		ces: [
+			{ id: "owned", status: "Done", salesOwnerId: "sales-1" },
+			{ id: "blank", status: "Done", salesOwnerId: "" },
+		],
+	};
+	assert.equal(salesPipelineRows({ ...mixed, ownerId: "sales-1" }).some((row) => row.id === "blank"), false);
+	assert.equal(salesPipelineRows({ ...mixed, ownerId: "" }).some((row) => row.id === "blank"), true);
 	assert.deepEqual(stageActions("For markup", { owner: true, sales: true }), ["Generate markup"]);
 	assert.deepEqual(stageActions("For markup", { sales: true }), []);
 	assert.deepEqual(stageActions("For proposal", { manager: true }), ["Generate proposal"]);

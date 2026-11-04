@@ -81,7 +81,7 @@ export function salesPipelineRows(input) {
 		const proposal = proposals.find((row) => row && (row.ceId === ce.id || row.ceNo === ce.ceNo || row.ceNo === ce.id));
 		const jobOrder = jobs.find((row) => row && (row.ceId === ce.id || row.ceNo === ce.ceNo));
 		const ownerId = String(ce.salesOwnerId || ce.ownerId || "");
-		if (ownerFilter && ownerId && ownerId !== ownerFilter) return;
+		if (ownerFilter && ownerId !== ownerFilter) return;
 		const parts = markup?.parts;
 		const markupPct = parts ? Number(parts.profit || 0) + Number(parts.contingency || 0) + Number(parts.markup || 0) : "";
 		rows.push({
@@ -105,7 +105,7 @@ export function salesPipelineRows(input) {
 		const linked = (input?.ces || []).some((ce) => ce.rceId === rce.id || ce.rceNo === rce.rceNo);
 		if (linked) return;
 		const ownerId = String(rce.salesOwnerId || rce.ownerId || "");
-		if (ownerFilter && ownerId && ownerId !== ownerFilter) return;
+		if (ownerFilter && ownerId !== ownerFilter) return;
 		rows.push({
 			id: String(rce.rceNo || rce.id || ""),
 			rceNo: String(rce.rceNo || rce.id || ""),
