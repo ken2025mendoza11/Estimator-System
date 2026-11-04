@@ -36,7 +36,7 @@ export function routeSignatories(steps, users = []) {
 
 /** @param {Record<string, string>} projectInfo @param {unknown[]} steps @param {unknown[]} [users] */
 export function applyRouteSignatories(projectInfo, steps, users) {
-	const filled = routeSignatories(steps, users);
+	const filled = routeSignatories(steps || [], users || []);
 	const next = { ...(projectInfo || {}) };
 	Object.entries(filled).forEach(([key, value]) => {
 		if (value && !next[key]) next[key] = value;
@@ -56,7 +56,7 @@ export function signatoryPending(stamp) {
  * @param {unknown[]} [users]
  */
 export function signatorySlots(record, steps, users) {
-	const filled = routeSignatories(steps, users);
+	const filled = routeSignatories(steps || [], users || []);
 	const form = record && typeof record === "object" ? record : {};
 	return SLOT_DEFS.map((slot) => {
 		const name = String(form[slot.name] || filled[slot.name] || "");

@@ -61,6 +61,7 @@ import { canGenerateProposal, cancelProposal, claimProposalNumber, createProposa
 import { ProposalPanel } from "./ProposalPanel";
 import { applyAward, applyCancel, canCancelJobOrder, canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
 import { JobOrderPanel } from "./JobOrderPanel";
+import { SalesUserCard } from "./SalesUserCard";
 import { StickyTable } from "./StickyTable";
 import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
 import { salesPipelineRows } from "../lib/estimator/salesStage";

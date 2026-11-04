@@ -118,7 +118,7 @@ export function ceApprovedForMarkup(status) {
 }
 
 /**
- * @param {{ flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown, ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown }} input
+ * @param {{ flagOn?: boolean, sales?: boolean, status?: unknown, existing?: unknown, ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown, isAdmin?: unknown }} input
  * @returns {boolean}
  */
 export function canGenerateMarkup(input) {
