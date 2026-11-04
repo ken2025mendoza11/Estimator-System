@@ -7,6 +7,7 @@ import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } f
 import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS, listHeaderValues } from "./ceHeaderEdit.js";
 import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet } from "./csvImport.js";
 import { approveMasterItem, buildNounName, lineDbState, persistPending, requestMasterItem } from "./ceLineDb.js";
+import { applyAttachmentEdits, compiledAttachmentNames, copyAttachmentVersion, removeAttachment, renameAttachment, reorderAttachments } from "./ceAttachOrder.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -285,5 +286,33 @@ test("a line noun is requested for approval and joins the database only after Ad
 	assert.equal(app.includes("+ Add to DB"), true);
 	assert.equal(app.includes("Link match"), true);
 });
+
+test("compiled attachments follow the saved order and keep the original extension on rename", () => {
+	const files = [
+		{ id: "a", name: "spec.pdf", source: "RCE", size: 12 },
+		{ id: "b", name: "photo.jpg", source: "Task", size: 40 },
+	];
+	assert.equal(renameAttachment(files[0], "drawing-final.docx").name, "drawing-final.pdf");
+	const ordered = reorderAttachments(files, 0, 1);
+	assert.deepEqual(compiledAttachmentNames(ordered), ["1. photo.jpg", "2. spec.pdf"]);
+	const blocked = removeAttachment(ordered, "b", "delete");
+	assert.equal(blocked.ok, false);
+	assert.equal(blocked.files.length, 2);
+	const gone = removeAttachment(ordered, "b", "REMOVE");
+	assert.deepEqual(gone.files.map((file) => file.id), ["a"]);
+	const saved = copyAttachmentVersion(ordered);
+	saved[0].name = "changed.jpg";
+	assert.equal(ordered[0].name, "photo.jpg");
+	const edited = applyAttachmentEdits(files, { order: ["b", "a"], names: { a: "ga-drawing.pdf" }, removed: [] });
+	assert.deepEqual(compiledAttachmentNames(edited), ["1. photo.jpg", "2. ga-drawing.pdf"]);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(app.includes("attachmentFilesInOrder"), true);
+	assert.equal(app.includes("ceTpl7: false"), true);
+	assert.equal(app.includes("ceTpl7: src.features?.ceTpl7 === true"), true);
+	assert.equal(seed.includes("ceTpl7: true"), true);
+	assert.equal(app.includes("Type REMOVE"), true);
+});
+
 
 

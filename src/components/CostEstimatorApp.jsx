@@ -79,6 +79,7 @@ import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
 import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
+import { applyAttachmentEdits, attachmentFilesInOrder, removeAttachment, renameAttachment, reorderAttachments, splitAttachmentName } from "../lib/estimator/ceAttachOrder";
 import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
 import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
@@ -104,6 +105,7 @@ let ceTpl3On = false;
 let ceTpl4On = false;
 let ceTpl5On = false;
 let ceTpl6On = false;
+let ceTpl7On = false;
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
 let applyPendingMaster = (_pending) => {};
@@ -1693,11 +1695,12 @@ async function addNotePage(pdf, font, file) {
 		color: rgb(.4, .38, .32)
 	});
 }
-async function compileAttachmentsToPdf(files, title = "Compiled Attachments") {
+async function compileAttachmentsToPdf(files, title = "Compiled Attachments", edits = null) {
+	const ordered = ceTpl7On === true ? applyAttachmentEdits(files, edits) : attachmentFilesInOrder(files);
 	const pdf = await PDFDocument.create();
 	const font = await pdf.embedFont(StandardFonts.Helvetica);
-	await addCoverPage(pdf, font, files, title);
-	for (const file of files) {
+	await addCoverPage(pdf, font, ordered, title);
+	for (const file of ordered) {
 		if (!file?.dataUrl) {
 			await addNotePage(pdf, font, file);
 			continue;
@@ -4887,7 +4890,8 @@ function defaultAdminConfig() {
 			ceTpl3: false,
 			ceTpl4: false,
 			ceTpl5: false,
-			ceTpl6: false
+			ceTpl6: false,
+			ceTpl7: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5016,7 +5020,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl3: src.features?.ceTpl3 === true,
 			ceTpl4: src.features?.ceTpl4 === true,
 			ceTpl5: src.features?.ceTpl5 === true,
-			ceTpl6: src.features?.ceTpl6 === true
+			ceTpl6: src.features?.ceTpl6 === true,
+			ceTpl7: src.features?.ceTpl7 === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
@@ -8725,6 +8730,10 @@ function reducer(state, action) {
 				...state.fileAttachments,
 				[action.sheetKey]: (state.fileAttachments[action.sheetKey] || []).filter((f) => f.id !== action.fileId)
 			}
+		};
+		case "SET_ATTACHMENT_EDITS": return {
+			...state,
+			attachmentEdits: action.edits || { order: [], names: {} }
 		};
 		case "SET_SUMMARY_SHOW_BREAKDOWN": {
 			const needsSeed = action.value && !state.summaryTaskFilters.showBreakdown && state.summaryTaskFilters.selectedTaskIds.length === 0;
@@ -19366,7 +19375,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const payload = {
 			...data,
 			sheetMode: tradingOnly ? "trading" : "full",
-			attachments: allAttachments,
+			attachments: ceTpl7On === true ? applyAttachmentEdits(allAttachments, state.attachmentEdits) : allAttachments,
 			cover: {
 				client: state.meta.client,
 				location: state.meta.location,
@@ -20705,6 +20714,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 							})(),
 							tab === "ATTCH" && /* @__PURE__ */ jsx(AttachmentsTab, {
 								attachments: allAttachments,
+								edits: state.attachmentEdits || null,
+								onEdits: (next) => dispatch({ type: "SET_ATTACHMENT_EDITS", edits: next }),
 								rce: (rceList || []).find((r) => (r.id || r.rceNo) === (ceData?.rceId || ceData?.rceNo || ""))
 							}),
 							tab === "RCE" && /* @__PURE__ */ jsx(CeRceSheet, {
@@ -28637,8 +28648,8 @@ function CeRceSheet({ rce, rceList = [], documentControl = {} }) {
 		})
 	});
 }
-function AttachmentsTab({ attachments, rce }) {
-	const list = attachments || [];
+function AttachmentsTab({ attachments, rce, edits = null, onEdits = null }) {
+	const list = ceTpl7On === true ? applyAttachmentEdits(attachments || [], edits) : attachments || [];
 	const evidence = RCE_EVIDENCE_ITEMS.map((ev) => {
 		const complete = rce?.checklist?.[ev.key]?.complete || "";
 		const needed = String(complete).toUpperCase() === "YES";
@@ -28695,7 +28706,7 @@ function AttachmentsTab({ attachments, rce }) {
 					type: "button",
 					className: "ce-btn-primary ce-btn-sm",
 					disabled: list.length === 0,
-					onClick: () => compileAttachmentsToPdf(list, "Compiled Attachments"),
+					onClick: () => compileAttachmentsToPdf(list, "Compiled Attachments", edits),
 					children: "Compile to one PDF"
 				})
 			}),
@@ -28704,22 +28715,75 @@ function AttachmentsTab({ attachments, rce }) {
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-table",
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+						ceTpl7On === true ? /* @__PURE__ */ jsx("th", { children: "No." }) : null,
 						/* @__PURE__ */ jsx("th", { children: "File Name" }),
 						/* @__PURE__ */ jsx("th", { children: "Source / tag" }),
-						/* @__PURE__ */ jsx("th", { children: "Sheet / Category" })
-					] }) }), /* @__PURE__ */ jsx("tbody", { children: list.map((file, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+						/* @__PURE__ */ jsx("th", { children: "Sheet / Category" }),
+						ceTpl7On === true ? /* @__PURE__ */ jsx("th", { children: "Size" }) : null,
+						ceTpl7On === true ? /* @__PURE__ */ jsx("th", { children: "Actions" }) : null
+					] }) }), /* @__PURE__ */ jsx("tbody", { children: list.map((file, idx) => /* @__PURE__ */ jsxs("tr", {
+						draggable: ceTpl7On === true,
+						onDragStart: ceTpl7On === true ? (event) => {
+							event.dataTransfer?.setData("text/plain", String(idx));
+						} : undefined,
+						onDragOver: ceTpl7On === true ? (event) => event.preventDefault() : undefined,
+						onDrop: ceTpl7On === true ? (event) => {
+							event.preventDefault();
+							const from = Number(event.dataTransfer?.getData("text/plain"));
+							const next = reorderAttachments(list, from, idx);
+							onEdits?.({ ...(edits || {}), order: next.map((row) => row.id), names: edits?.names || {}, removed: edits?.removed || [] });
+						} : undefined,
+						children: [
+						ceTpl7On === true ? /* @__PURE__ */ jsx("td", { children: idx + 1 }) : null,
 						/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("a", {
-							href: file.url || "#",
+							href: file.url || file.dataUrl || "#",
 							target: "_blank",
 							rel: "noreferrer",
 							className: "ce-attachment-link",
+							download: file.name,
 							children: [/* @__PURE__ */ jsx(FileText, {
 								size: 14,
 								style: { marginRight: "0.5rem" }
 							}), file.name]
 						}) }),
-						/* @__PURE__ */ jsx("td", { children: file.tag || file.source || "—" }),
-						/* @__PURE__ */ jsx("td", { children: file.sheet || "General" })
+						/* @__PURE__ */ jsx("td", { children: file.tag || file.source || file.sourceLabel || "—" }),
+						/* @__PURE__ */ jsx("td", { children: file.sheet || "General" }),
+						ceTpl7On === true ? /* @__PURE__ */ jsx("td", { children: file.size ? `${file.size}` : "—" }) : null,
+						ceTpl7On === true ? /* @__PURE__ */ jsxs("td", { children: [
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								"aria-label": "Drag reorder",
+								onClick: () => {
+									const next = reorderAttachments(list, idx, Math.min(list.length - 1, idx + 1));
+									onEdits?.({ ...(edits || {}), order: next.map((row) => row.id), names: edits?.names || {}, removed: edits?.removed || [] });
+								},
+								children: "Move"
+							}),
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									const typed = window.prompt("New file name", splitAttachmentName(file.name).base);
+									if (typed == null) return;
+									const named = renameAttachment(file, typed);
+									onEdits?.({ ...(edits || {}), order: (edits?.order || list.map((row) => row.id)), names: { ...(edits?.names || {}), [file.id]: named.name }, removed: edits?.removed || [] });
+								},
+								children: "Rename"
+							}),
+							/* @__PURE__ */ jsx("a", { href: file.url || file.dataUrl || "#", download: file.name, children: "Download" }),
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									const typed = window.prompt("Type REMOVE to remove this file. Saved versions keep their copy.");
+									const result = removeAttachment(list, file.id, typed);
+									if (!result.ok) return;
+									onEdits?.({ ...(edits || {}), order: result.files.map((row) => row.id), names: edits?.names || {}, removed: [...(edits?.removed || []), file.id] });
+								},
+								children: "Remove"
+							})
+						] }) : null
 					] }, file.id || idx)) })]
 				})
 			})
@@ -29040,6 +29104,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl4On = adminConfig.features?.ceTpl4 === true;
 	ceTpl5On = adminConfig.features?.ceTpl5 === true;
 	ceTpl6On = adminConfig.features?.ceTpl6 === true;
+	ceTpl7On = adminConfig.features?.ceTpl7 === true;
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {
