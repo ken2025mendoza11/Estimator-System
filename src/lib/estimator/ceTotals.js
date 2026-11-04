@@ -599,7 +599,11 @@ export function screenOfficialTotal(tasks, pricing, overrides, sheets) {
   return roundMoney(mains + benefitShown + miscShown + mobShown);
 }
 
-/** Warnings Step 13 will list. Not a checker screen. */
+/** Same priced lines as the official total, including task-level rows. Mob and demob stay out. */
+function excelSheetTotal(tasks, pricing) {
+  const cats = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
+  return roundMoney((tasks || []).reduce((sum, task) => sum + cats.reduce((inner, cat) => inner + categoryOnTask(task, cat, pricing), 0), 0));
+}
 export function directInputWarnings(tasks) {
   /** @type {{ code: string, taskId: string, itemId?: string, field?: string }[]} */
   const out = [];
@@ -650,6 +654,7 @@ export {
   classifyMobRole,
   mobManpowerRows,
   projectTotal,
+  excelSheetTotal,
   resolveDoleDay,
   subtaskTotal,
   taskTotal,

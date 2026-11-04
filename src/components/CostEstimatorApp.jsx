@@ -78,7 +78,7 @@ import { annexesForExport, availabilityKeysFrom, listMasterlistItems } from "../
 import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/estimator/routeFuel";
 import { orderExportSections, planSowSchedule, refreshSchedule, scheduleExportSection, sowGanttSchedule } from "../lib/estimator/phase10";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
-import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
+import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, costNodes, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories, signatorySlots } from "../lib/estimator/ceSignatories";
 import { winRate as awardWinRate } from "../lib/estimator/reports";
 import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
@@ -14997,12 +14997,14 @@ function computePeakByCategory(tasks, category) {
 }
 function getScheduledItemMap(tasks, category) {
 	const { subtaskSchedule } = computeSchedule(tasks);
-	const maxDay = Object.values(subtaskSchedule).reduce((max, s) => Math.max(max, s.end), 0);
+	const scheduledEnd = Object.values(subtaskSchedule).reduce((max, s) => Math.max(max, s.end), 0);
+	const maxDay = Math.max(scheduledEnd, 1);
 	const itemMap = {};
 	tasks.forEach((t) => {
-		flattenSubs(t).forEach((st) => {
+		costNodes(t).forEach((st) => {
 			const sched = subtaskSchedule[`${t.id}:${st.id}`];
-			if (!sched) return;
+			const taskHost = String(st.id || "").endsWith("::lines");
+			if (!sched && !taskHost) return;
 			(st.items[category] || []).forEach((it) => {
 				const key = category === "BOL" ? `${it.role}~${it.dayType || "Regular"}~${it.shift || "Day"}` : category === "PPE" ? it.item : it.description;
 				if (!key) return;
@@ -15011,6 +15013,11 @@ function getScheduledItemMap(tasks, category) {
 					days: /* @__PURE__ */ new Set()
 				};
 				const qty = num2(it.qty);
+				if (!sched) {
+					itemMap[key].dailyQty[0] += qty;
+					itemMap[key].days.add(1);
+					return;
+				}
 				for (let d = sched.start; d <= sched.end; d++) {
 					itemMap[key].dailyQty[d - 1] += qty;
 					itemMap[key].days.add(d);
@@ -15419,7 +15426,7 @@ function WorkTypeFilterBar({ value, onChange }) {
 function buildBolGroups(tasks, pricing) {
 	if (pricing && pricing.model === "direct-v1") return directBolGroups(tasks, pricing);
 	const allBOL = [];
-	(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => (s.items.BOL || []).forEach((it) => allBOL.push(it))));
+	(tasks || []).forEach((t) => costNodes(t).forEach((s) => (s.items.BOL || []).forEach((it) => allBOL.push(it))));
 	const scheduleMap = getScheduledItemMap(tasks || [], "BOL");
 	const groups = {};
 	DAY_TYPES.forEach((dt) => {
@@ -15542,7 +15549,7 @@ function withBolEdit(row, edit, dt, shift, pricing) {
 }
 function matchingItemIds(tasks, category, match) {
 	const ids = [];
-	(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => {
+	(tasks || []).forEach((t) => costNodes(t).forEach((s) => {
 		(s.items?.[category] || []).forEach((it) => {
 			if (match(it)) ids.push(it.id);
 		});
@@ -16217,7 +16224,7 @@ function buildCategoryAutoRows(tasks, category, workType) {
 		let powerKw = 0;
 		let hoursPerDay = 0;
 		let kwhRate = 0;
-		(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => (s.items[category] || []).forEach((it) => {
+		(tasks || []).forEach((t) => costNodes(t).forEach((s) => (s.items[category] || []).forEach((it) => {
 			if ((category === "PPE" ? it.item : it.description) === desc) {
 				rate = category === "BOTE" ? num2(it.rate) : num2(it.unitCost);
 				powerKw = num2(it.powerKw);
@@ -18355,7 +18362,7 @@ function buildBolExportSection(tasks, notes, pricing) {
 		any = true;
 		const perDiemBy = {};
 		if (isDirectPricing(pricing)) {
-			tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((sub) => (sub.items?.BOL || []).forEach((item) => {
+			tasksOfType(tasks, w.id).forEach((t) => costNodes(t).forEach((sub) => (sub.items?.BOL || []).forEach((item) => {
 				const key = `${item.dayType || "Regular"}|${item.shift || "Day"}|${item.role || "Unnamed"}`;
 				perDiemBy[key] = roundMoney((perDiemBy[key] || 0) + calcBOL(item, pricing).perDiemAllow);
 			})));
@@ -18478,7 +18485,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes, pricing) {
 		any = true;
 		const lineAmount = (description) => {
 			let sum = 0;
-			subset.forEach((t) => flattenSubs(t).forEach((s) => (s.items[cat] || []).forEach((it) => {
+			subset.forEach((t) => costNodes(t).forEach((s) => (s.items[cat] || []).forEach((it) => {
 				const name = cat === "PPE" ? it.item || it.description : it.description;
 				if (String(name || "") !== String(description || "")) return;
 				sum += itemSubtotal(cat, it, w.id, pricing);
@@ -18496,7 +18503,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes, pricing) {
 				let powerKw = 0;
 				let hoursPerDay = 0;
 				let kwhRate = 0;
-				if (powered) subset.forEach((t) => flattenSubs(t).forEach((s) => (s.items.BOTE || []).forEach((it) => {
+				if (powered) subset.forEach((t) => costNodes(t).forEach((s) => (s.items.BOTE || []).forEach((it) => {
 					if ((it.description || "") === r.description) {
 						powerKw = num2(it.powerKw);
 						hoursPerDay = num2(it.hoursPerDay);
@@ -18603,7 +18610,7 @@ function buildMiscExportSection(tasks, pricing, notes) {
 	const known = new Set(MISC_EXPORT_GROUPS.map((g) => g.section));
 	WORK_TYPES.forEach((w) => {
 		const items = [];
-		tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((st) => (st.items.MISC || []).forEach((it) => {
+		tasksOfType(tasks, w.id).forEach((t) => costNodes(t).forEach((st) => (st.items.MISC || []).forEach((it) => {
 			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
 			items.push(it);
 		})));

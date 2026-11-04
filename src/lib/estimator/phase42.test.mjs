@@ -8,7 +8,7 @@ import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS,
 import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet, monitoringExportRequest } from "./csvImport.js";
 import { approveMasterItem, buildNounName, lineDbState, persistPending, requestMasterItem } from "./ceLineDb.js";
 import { applyAttachmentEdits, compiledAttachmentNames, copyAttachmentVersion, removeAttachment, renameAttachment, reorderAttachments } from "./ceAttachOrder.js";
-import { projectTotal } from "./ceTotals.js";
+import { excelSheetTotal, projectTotal } from "./ceTotals.js";
 import { miscPartSubtotals, miscShowAllPref } from "./ceMiscView.js";
 import { planSowSchedule, resizeSowDays } from "./phase10.js";
 import { headerFit, headersReadable } from "./ceHeaderFit.js";
@@ -350,6 +350,23 @@ test("task-level rows add to the roll-up and samples without them stay the same"
 	assert.equal(app.includes('aria-label": "Task resources"') || app.includes('"aria-label": "Task resources"'), true);
 	assert.equal(totals.includes("function costNodes"), true);
 	assert.equal(seed.includes("ceTpl8: true"), true);
+});
+
+test("excel sheet totals include task-level rows and match the official total", () => {
+	const tasks = [{
+		id: "t1",
+		workType: "shop",
+		items: { BOCM: [{ qty: 1, unitCost: 5 }] },
+		subtasks: [{ id: "s1", items: { BOCM: [{ qty: 2, unitCost: 10 }] } }],
+	}];
+	assert.equal(excelSheetTotal(tasks), projectTotal(tasks));
+	const pricing = { model: "direct-v1", formula: {} };
+	assert.equal(excelSheetTotal(tasks, pricing), projectTotal(tasks, pricing));
+	assert.equal(excelSheetTotal(tasks), 25);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	assert.equal(app.includes("costNodes(t).forEach((s) => (s.items.BOL"), true);
+	assert.equal(app.includes("costNodes(t).forEach((st) => (st.items.MISC"), true);
+	assert.equal(app.includes("flattenSubs(t).forEach((s) => (s.items.BOL"), false);
 });
 
 test("SOW dates follow finish-to-start links and skip holidays", () => {
