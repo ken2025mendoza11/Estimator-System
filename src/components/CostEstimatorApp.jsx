@@ -74,7 +74,6 @@ import { documentTitle } from "../lib/estimator/notifyBell";
 import { threadParticipants, unreadCount } from "../lib/estimator/ceThread";
 import { followLabel } from "../lib/estimator/stageBui";
 import { CeThreadPanel } from "./CeThreadPanel";
-import { SalesUserCard } from "./SalesUserCard";
 import { MethodologiesPanel } from "./MethodologiesPanel";
 import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
