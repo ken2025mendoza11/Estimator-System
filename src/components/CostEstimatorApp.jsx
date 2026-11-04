@@ -71,7 +71,7 @@ import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartP
 import { libraryTabLabel, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate } from "../lib/estimator/libraryTemplates";
 import { markSeen, openStage, showNewForUser } from "../lib/estimator/personalNew";
 import { documentTitle } from "../lib/estimator/notifyBell";
-import { unreadCount } from "../lib/estimator/ceThread";
+import { threadParticipants, unreadCount } from "../lib/estimator/ceThread";
 import { followLabel } from "../lib/estimator/stageBui";
 import { CeThreadPanel } from "./CeThreadPanel";
 import { MethodologiesPanel } from "./MethodologiesPanel";
@@ -24017,7 +24017,15 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			}) : null,
 			ceThreadsOn === true && threadRow?.ceId ? /* @__PURE__ */ jsx(CeThreadPanel, {
 				ceId: threadRow.ceId,
-				thread: threadRow.thread || { participants: [personalActorId, threadRow.assigneeId].filter(Boolean), messages: [], seen: {} },
+				thread: (() => {
+					const stored = documents?.[threadRow.ceId] || {};
+					const ce = { ...(stored.projectInfo || {}), ...stored, ...threadRow, assigneeId: threadRow.assigneeId || stored.assigneeId || stored.assignedToId || "" };
+					const participants = threadParticipants(ce, users);
+					const saved = threadRow.thread || stored.thread;
+					return saved ? { ...saved, participants } : { participants, messages: [], seen: {} };
+				})(),
+				ce: { ...(documents?.[threadRow.ceId] || {}), ...threadRow },
+				users,
 				actorId: personalActorId,
 				label: followLabel({ status: threadRow.status, waitingInfo: threadRow.waitingInfo }, { estimator: release1SalesActor !== true, sales: release1SalesActor === true, owner: release1SalesActor === true }) || "Follow up",
 				onSave: (ceId, thread) => saveThreadNow(ceId, thread),

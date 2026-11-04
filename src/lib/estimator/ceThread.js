@@ -1,6 +1,42 @@
 /** In-app CE thread. Stored on the workspace until the SQL migration is applied. */
 
 /**
+ * @param {string[]} ids
+ * @param {unknown} value
+ */
+function addId(ids, value) {
+	const id = String(value || "").trim();
+	if (id && !ids.includes(id)) ids.push(id);
+}
+
+/**
+ * Assignee, Estimating Lead, Sales owner, approvers, and admins.
+ * @param {any} input
+ * @param {unknown[]} [users]
+ */
+export function threadParticipants(input, users) {
+	const ids = [];
+	const ce = input || {};
+	addId(ids, ce.assigneeId);
+	addId(ids, ce.assignedToId);
+	addId(ids, ce.leadId);
+	addId(ids, ce.estimatingLeadId);
+	(ce.leadIds || []).forEach((id) => addId(ids, id));
+	addId(ids, ce.salesOwnerId);
+	(ce.approverIds || []).forEach((id) => addId(ids, id));
+	(ce.approvers || []).forEach((step) => addId(ids, typeof step === "string" ? step : step?.userId || step?.id));
+	(ce.approval?.steps || []).forEach((step) => addId(ids, step?.userId || step?.id));
+	(ce.adminIds || []).forEach((id) => addId(ids, id));
+	(Array.isArray(users) ? users : []).forEach((user) => {
+		const role = String(user?.level || user?.role || user?.position || "").toLowerCase();
+		const id = user?.userId || user?.id || "";
+		if (role === "lead" || role === "head" || role.includes("estimating lead")) addId(ids, id);
+		if (role === "admin") addId(ids, id);
+	});
+	return ids;
+}
+
+/**
  * @param {unknown} userId
  * @param {unknown[]} participants
  */
@@ -17,9 +53,10 @@ export function postMessage(thread, input) {
 	const from = String(input?.from || "");
 	const text = String(input?.text || "").trim();
 	if (!from || !text) return { ok: false, message: "A message needs an author and text." };
-	if (!threadVisible(from, thread?.participants || [])) return { ok: false, message: "Only participants can post." };
+	const participants = input?.ce ? threadParticipants(input.ce, input.users) : (thread?.participants || []).map((row) => String(row || "")).filter(Boolean);
+	if (!threadVisible(from, participants)) return { ok: false, message: "Only participants can post." };
 	const message = { id: `${from}-${thread?.messages?.length || 0}`, from, text, at: String(input?.now || "") };
-	return { ok: true, thread: { ...(thread || {}), messages: [...(thread?.messages || []), message] } };
+	return { ok: true, thread: { ...(thread || {}), participants, messages: [...(thread?.messages || []), message] } };
 }
 
 /**

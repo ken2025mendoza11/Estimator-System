@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { markThreadRead, postMessage, threadVisible, unreadCount } from "./ceThread.js";
+import { markThreadRead, postMessage, threadParticipants, threadVisible, unreadCount } from "./ceThread.js";
 import { docxXmlToBlocks, libraryTabLabel, numberPlan, previewDocs, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, blocksToDocxXml, saveMethodology } from "./libraryTemplates.js";
 import { followLabel, salesChipMatch, teamNewRows, trackerSteps } from "./stageBui.js";
 import { documentTitle, markAllRead, unreadBell } from "./notifyBell.js";
@@ -36,6 +36,15 @@ test("threads, the bell, and library strips keep the current rules", () => {
 	assert.equal(unreadCount(posted.thread, "sales-1"), 1);
 	assert.equal(unreadCount(markThreadRead(posted.thread, "sales-1", "2026-11-04T02:00:00.000Z"), "sales-1"), 0);
 	assert.equal(unreadCount(posted.thread, "est-1"), 0);
+	const routeCe = { assigneeId: "est-1", salesOwnerId: "sales-1", leadId: "lead-1", approverIds: ["appr-1"], adminIds: ["admin-1"] };
+	const started = { participants: ["est-1"], messages: [], seen: {} };
+	const owner = postMessage(started, { from: "sales-1", text: "See the drawing", now: "2026-11-04T01:10:00.000Z", ce: routeCe });
+	assert.equal(owner.ok, true);
+	assert.deepEqual(threadParticipants(routeCe), ["est-1", "lead-1", "sales-1", "appr-1", "admin-1"]);
+	assert.equal(threadVisible("sales-1", owner.thread.participants), true);
+	const outsider = postMessage(owner.thread, { from: "other", text: "no", now: "2026-11-04T01:20:00.000Z", ce: routeCe });
+	assert.equal(outsider.ok, false);
+	assert.equal(outsider.message, "Only participants can post.");
 	const events = [{ toUserId: "sales-1", read: false }, { toUserId: "est-1", read: false }];
 	assert.equal(unreadBell(events), 2);
 	assert.equal(unreadBell(markAllRead(events, "2026-11-04T03:00:00.000Z")), 0);

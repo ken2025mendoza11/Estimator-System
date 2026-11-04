@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { markThreadRead, postMessage } from "../lib/estimator/ceThread";
+import { markThreadRead, postMessage, threadParticipants } from "../lib/estimator/ceThread";
 
 /**
  * @param {{
@@ -7,11 +7,13 @@ import { markThreadRead, postMessage } from "../lib/estimator/ceThread";
  *   thread: any,
  *   actorId: string,
  *   label?: string,
+ *   ce?: any,
+ *   users?: unknown[],
  *   onSave: (ceId: string, thread: any) => void,
  *   onClose: () => void,
  * }} props
  */
-export function CeThreadPanel({ ceId, thread, actorId, label = "Follow up", onSave, onClose }) {
+export function CeThreadPanel({ ceId, thread, actorId, ce, users = [], label = "Follow up", onSave, onClose }) {
 	const [text, setText] = useState("");
 	const [error, setError] = useState("");
 	useEffect(() => {
@@ -21,8 +23,9 @@ export function CeThreadPanel({ ceId, thread, actorId, label = "Follow up", onSa
 		if (latest && String(latest.at || "") > seen) onSave(ceId, markThreadRead(base, actorId, new Date().toISOString()));
 	}, [ceId, actorId, thread, onSave]);
 	function send(/** @type {any} */ nextText) {
-		const base = thread && typeof thread === "object" ? thread : { participants: [actorId], messages: [], seen: {} };
-		const posted = postMessage(base, { from: actorId, text: nextText, now: new Date().toISOString() });
+		const participants = ce ? threadParticipants(ce, users) : (thread?.participants || [actorId]);
+		const base = thread && typeof thread === "object" ? { ...thread, participants } : { participants, messages: [], seen: {} };
+		const posted = postMessage(base, { from: actorId, text: nextText, now: new Date().toISOString(), ce, users });
 		if (!posted.ok) {
 			setError(posted.message || "Could not post.");
 			return;
