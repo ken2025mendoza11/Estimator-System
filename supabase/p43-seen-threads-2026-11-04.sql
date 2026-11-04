@@ -46,30 +46,95 @@ create table if not exists public.methodologies (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.methodology_versions (
+  id text primary key,
+  methodology_id text not null,
+  body text,
+  author_id text,
+  created_at timestamptz not null default now()
+);
+
 alter table public.doc_reads enable row level security;
 alter table public.ce_threads enable row level security;
 alter table public.ce_thread_messages enable row level security;
 alter table public.app_notifications enable row level security;
 alter table public.methodologies enable row level security;
+alter table public.methodology_versions enable row level security;
 
+drop policy if exists doc_reads_own on public.doc_reads;
 create policy doc_reads_own on public.doc_reads
-  for all using (user_id = coalesce(auth.jwt() ->> 'sub', ''))
+  for all to authenticated
+  using (user_id = coalesce(auth.jwt() ->> 'sub', ''))
   with check (user_id = coalesce(auth.jwt() ->> 'sub', ''));
 
+drop policy if exists ce_threads_participants on public.ce_threads;
 create policy ce_threads_participants on public.ce_threads
-  for select using (coalesce(auth.jwt() ->> 'sub', '') = any (participants));
+  for select to authenticated
+  using (coalesce(auth.jwt() ->> 'sub', '') = any (participants));
 
+drop policy if exists ce_thread_messages_participants on public.ce_thread_messages;
 create policy ce_thread_messages_participants on public.ce_thread_messages
-  for select using (
+  for select to authenticated
+  using (
     exists (
       select 1 from public.ce_threads t
       where t.id = thread_id and coalesce(auth.jwt() ->> 'sub', '') = any (t.participants)
     )
   );
 
+drop policy if exists ce_thread_messages_insert on public.ce_thread_messages;
+create policy ce_thread_messages_insert on public.ce_thread_messages
+  for insert to authenticated
+  with check (
+    from_user_id = coalesce(auth.jwt() ->> 'sub', '')
+    and exists (
+      select 1 from public.ce_threads t
+      where t.id = thread_id and coalesce(auth.jwt() ->> 'sub', '') = any (t.participants)
+    )
+  );
+
+drop policy if exists app_notifications_own on public.app_notifications;
 create policy app_notifications_own on public.app_notifications
-  for all using (to_user_id = coalesce(auth.jwt() ->> 'sub', ''))
+  for all to authenticated
+  using (to_user_id = coalesce(auth.jwt() ->> 'sub', ''))
   with check (to_user_id = coalesce(auth.jwt() ->> 'sub', ''));
 
+drop policy if exists methodologies_read on public.methodologies;
 create policy methodologies_read on public.methodologies
-  for select using (true);
+  for select to authenticated
+  using (
+    coalesce(auth.jwt() ->> 'department', '') in ('Estimating', 'Sales')
+    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+  );
+
+drop policy if exists methodologies_write on public.methodologies;
+create policy methodologies_write on public.methodologies
+  for all to authenticated
+  using (
+    author_id = coalesce(auth.jwt() ->> 'sub', '')
+    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+  )
+  with check (
+    author_id = coalesce(auth.jwt() ->> 'sub', '')
+    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+  );
+
+drop policy if exists methodology_versions_read on public.methodology_versions;
+create policy methodology_versions_read on public.methodology_versions
+  for select to authenticated
+  using (
+    coalesce(auth.jwt() ->> 'department', '') in ('Estimating', 'Sales')
+    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+  );
+
+drop policy if exists methodology_versions_write on public.methodology_versions;
+create policy methodology_versions_write on public.methodology_versions
+  for insert to authenticated
+  with check (
+    author_id = coalesce(auth.jwt() ->> 'sub', '')
+    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+  );
+
+create index if not exists ce_threads_ce_id_idx on public.ce_threads (ce_id);
+create index if not exists ce_thread_messages_thread_id_idx on public.ce_thread_messages (thread_id);
+create index if not exists app_notifications_to_user_id_idx on public.app_notifications (to_user_id);

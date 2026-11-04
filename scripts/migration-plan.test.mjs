@@ -91,3 +91,20 @@ test("the copy check reads both files and catches an edit", () => {
   const drifted = authSchemaCopy(root);
   assert.notEqual(drifted.copy, drifted.source);
 });
+
+test("phase 43 sql is additive, locks every new table, and has no open policy", () => {
+  const sql = readFileSync(join(projectRoot(), "supabase/p43-seen-threads-2026-11-04.sql"), "utf8");
+  const folded = sql.toLowerCase();
+  assert.equal(/\bdrop\s+table\b/.test(folded), false);
+  assert.equal(/\bdrop\s+column\b/.test(folded), false);
+  const tables = [...folded.matchAll(/create table if not exists public\.(\w+)/g)].map((match) => match[1]);
+  assert.ok(tables.includes("methodology_versions"));
+  tables.forEach((name) => {
+    assert.equal(folded.includes(`alter table public.${name} enable row level security`), true, name);
+  });
+  assert.equal(/using\s*\(\s*true\s*\)/.test(folded), false);
+  assert.equal(folded.includes("to authenticated"), true);
+  assert.equal(folded.includes("ce_threads_ce_id_idx"), true);
+  assert.equal(folded.includes("ce_thread_messages_thread_id_idx"), true);
+  assert.equal(folded.includes("app_notifications_to_user_id_idx"), true);
+});
