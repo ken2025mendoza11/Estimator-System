@@ -63,7 +63,7 @@ import { applyAward, applyCancel, canCancelJobOrder, canGenerateJobOrder, cancel
 import { JobOrderPanel } from "./JobOrderPanel";
 import { StickyTable } from "./StickyTable";
 import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
-import { Phase10Schedule, Phase10Sow } from "./Phase10Panels";
+import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
 import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
@@ -72,7 +72,7 @@ import { blocksFinalApproval, canSubmit, normalizeCheckerConfig, runChecker, ver
 import { browserSpell } from "../lib/estimator/spellBrowser";
 import { annexesForExport, availabilityKeysFrom, listMasterlistItems } from "../lib/estimator/phase8";
 import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/estimator/routeFuel";
-import { orderExportSections, refreshSchedule, scheduleExportSection } from "../lib/estimator/phase10";
+import { orderExportSections, planSowSchedule, refreshSchedule, scheduleExportSection, sowGanttSchedule } from "../lib/estimator/phase10";
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
@@ -108,6 +108,7 @@ let ceTpl5On = false;
 let ceTpl6On = false;
 let ceTpl7On = false;
 let ceTpl8On = false;
+let ceTpl9On = false;
 let miscShowMemory = {};
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
@@ -4895,7 +4896,8 @@ function defaultAdminConfig() {
 			ceTpl5: false,
 			ceTpl6: false,
 			ceTpl7: false,
-			ceTpl8: false
+			ceTpl8: false,
+			ceTpl9: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5026,7 +5028,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl5: src.features?.ceTpl5 === true,
 			ceTpl6: src.features?.ceTpl6 === true,
 			ceTpl7: src.features?.ceTpl7 === true,
-			ceTpl8: src.features?.ceTpl8 === true
+			ceTpl8: src.features?.ceTpl8 === true,
+			ceTpl9: src.features?.ceTpl9 === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
@@ -8745,6 +8748,7 @@ function reducer(state, action) {
 			...state,
 			attachmentEdits: action.edits || { order: [], names: {} }
 		};
+		case "SET_SOW_PLAN": return { ...state, sowPlan: Array.isArray(action.lines) ? action.lines : [] };
 		case "SET_SUMMARY_SHOW_BREAKDOWN": {
 			const needsSeed = action.value && !state.summaryTaskFilters.showBreakdown && state.summaryTaskFilters.selectedTaskIds.length === 0;
 			return {
@@ -20674,6 +20678,11 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									tasks: state.tasks || [],
 									sowText,
 									onChange: (sow) => dispatch({ type: "SET_SOW", sow })
+								}) : null,
+								ceTpl9On === true ? /* @__PURE__ */ jsx(SowPlanPanel, {
+									lines: state.sowPlan || [],
+									holidays: adminConfig?.phHolidays || [],
+									onChange: (lines) => dispatch({ type: "SET_SOW_PLAN", lines })
 								}) : null
 							] }),
 							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch: isEditorLocked ? null : summaryDispatch, pricing: state.pricing }), noteNode("BOL", "Notes", true)] }),
@@ -28553,6 +28562,32 @@ function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInsp
 		suffixesOn
 	});
 }
+function SowPlanPanel({ lines, holidays, onChange }) {
+	const [zoom, setZoom] = useState("days");
+	const plan = planSowSchedule(lines || [], holidays || []);
+	const patch = (index, field, value) => {
+		const next = (lines || []).map((row, i) => i === index ? { ...row, [field]: value } : row);
+		onChange(next);
+	};
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-card",
+		"aria-label": "SOW schedule",
+		children: [
+			/* @__PURE__ */ jsxs("div", { className: "ce-cat-bar", children: [
+				/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => onChange([...(lines || []), { id: `sow-${(lines || []).length + 1}`, title: "Scope line", start: "", days: 1, after: "" }]), children: "Add line" }),
+				/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setZoom((z) => z === "days" ? "weeks" : "days"), children: zoom === "days" ? "Days" : "Weeks" })
+			] }),
+			plan.ok ? null : /* @__PURE__ */ jsx("p", { className: "rce-field-error", children: plan.message }),
+			/* @__PURE__ */ jsx("table", { className: "ce-table", children: /* @__PURE__ */ jsxs("tbody", { children: (lines || []).map((line, index) => /* @__PURE__ */ jsxs("tr", { children: [
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "Scope line", value: line.title || "", onChange: (e) => patch(index, "title", e.target.value) }) }),
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", type: "date", "aria-label": "Start", value: line.start || "", onChange: (e) => patch(index, "start", e.target.value) }) }),
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", type: "number", "aria-label": "Days", value: line.days ?? 1, onChange: (e) => patch(index, "days", e.target.value) }) }),
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "After", value: line.after || "", onChange: (e) => patch(index, "after", e.target.value) }) })
+			] }, line.id || index)) }) }),
+			plan.ok ? /* @__PURE__ */ jsx("div", { style: { overflowX: "auto", transform: zoom === "weeks" ? "scaleX(0.6)" : "none", transformOrigin: "left" }, children: /* @__PURE__ */ jsx(GanttChart, { schedule: sowGanttSchedule(plan) }) }) : null
+		]
+	});
+}
 function SOWTab({ sowText, setSowText }) {
 	const editor = useEditor({
 		extensions: [
@@ -29164,6 +29199,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl6On = adminConfig.features?.ceTpl6 === true;
 	ceTpl7On = adminConfig.features?.ceTpl7 === true;
 	ceTpl8On = adminConfig.features?.ceTpl8 === true;
+	ceTpl9On = adminConfig.features?.ceTpl9 === true;
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {

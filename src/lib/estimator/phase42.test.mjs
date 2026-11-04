@@ -10,6 +10,7 @@ import { approveMasterItem, buildNounName, lineDbState, persistPending, requestM
 import { applyAttachmentEdits, compiledAttachmentNames, copyAttachmentVersion, removeAttachment, renameAttachment, reorderAttachments } from "./ceAttachOrder.js";
 import { projectTotal } from "./ceTotals.js";
 import { miscPartSubtotals, miscShowAllPref } from "./ceMiscView.js";
+import { planSowSchedule, resizeSowDays } from "./phase10.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -349,6 +350,32 @@ test("task-level rows add to the roll-up and samples without them stay the same"
 	assert.equal(totals.includes("function costNodes"), true);
 	assert.equal(seed.includes("ceTpl8: true"), true);
 });
+
+test("SOW dates follow finish-to-start links and skip holidays", () => {
+	const plan = planSowSchedule([
+		{ id: "a", title: "Mobilize", start: "2026-01-05", days: 2 },
+		{ id: "b", title: "Install", after: "a", days: 2 },
+	], ["2026-01-07"]);
+	assert.equal(plan.ok, true);
+	assert.equal(plan.lines[0].startOn, "2026-01-05");
+	assert.equal(plan.lines[0].endOn, "2026-01-06");
+	assert.equal(plan.lines[1].startOn, "2026-01-08");
+	assert.equal(plan.lines[1].endOn, "2026-01-09");
+	assert.equal(resizeSowDays("2026-01-08", "2026-01-09", ["2026-01-07"]), 2);
+	const cycle = planSowSchedule([
+		{ id: "a", after: "b", days: 1, start: "2026-01-05" },
+		{ id: "b", after: "a", days: 1 },
+	], []);
+	assert.equal(cycle.ok, false);
+	assert.equal(cycle.message, "Cycle in SOW dependencies.");
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(app.includes("ceTpl9: false"), true);
+	assert.equal(app.includes("ceTpl9: src.features?.ceTpl9 === true"), true);
+	assert.equal(app.includes("SOW schedule"), true);
+	assert.equal(seed.includes("ceTpl9: true"), true);
+});
+
 
 
 
