@@ -1345,3 +1345,27 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-user-menu, .ce-user-modal { background: #fff; color: #1c1917; border: 1px solid #d6d3d1; border-radius: 12px; padding: 0.75rem; display: grid; gap: 0.4rem; }
 .ce-user-test { border: 1px dashed #ca8a04; padding: 0.4rem; }
 .ce-user-out { color: #b91c1c; }
+
+.b43-rows .ce-table tbody tr:hover { background: #e8eef5; box-shadow: inset 3px 0 0 #8aa0b8; }
+.b43-rows .ce-table tbody tr:hover td:hover { background: #dbe4ee; }
+@media (hover: none) {
+  .b43-rows .ce-table tbody tr:hover { background: transparent; box-shadow: none; }
+}
+
+.team-banner { border: 1px solid #8aa0b8; background: #e8eef5; border-radius: 0.6rem; margin: 0 0 0.8rem; padding: 0.6rem 0.8rem; }
+.ce-unread-dot { width: 0.55rem; height: 0.55rem; border-radius: 999px; background: #1877f2; display: inline-block; margin-right: 0.35rem; }
+.mon-row-unread { font-weight: 700; }
+.sales-tracker { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
+.sales-tracker li { border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.4rem; font-size: 0.68rem; }
+.sales-tracker li.is-done { background: #1f5c4c; color: #fff; }
+.sales-v2-mobile { display: none; }
+.sales-v2-filters, .sales-v2-cards-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0; }
+.method-wrap { display: grid; grid-template-columns: 220px 1fr; gap: 0.8rem; }
+.method-body { min-height: 10rem; }
+.ce-thread-mine { text-align: right; }
+@media (max-width: 720px) {
+  .sales-v2-table { display: none; }
+  .sales-v2-mobile { display: grid; gap: 0.5rem; }
+  .sales-v2-card { text-align: left; border: 1px solid var(--border); background: #fff; border-radius: 0.6rem; padding: 0.7rem; display: grid; }
+  .method-wrap { grid-template-columns: 1fr; }
+}
