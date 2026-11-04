@@ -98,6 +98,11 @@ export function salesPipelineRows(input) {
 			selling: proposal?.total || markup?.selling || "",
 			proposalNo: proposal?.prNo || proposal?.controlNo || "",
 			validity: proposal?.validUntil || "",
+			priority: String(ce.priority || ce.priorityLevel || ""),
+			company: String(ce.company || ""),
+			createdAt: ce.createdAt || ce.lastEdited || "",
+			targetedIds: [ownerId].filter(Boolean),
+			seenBy: ce.seenBy || {},
 		});
 	});
 	(input?.rces || []).forEach((rce) => {
@@ -118,6 +123,11 @@ export function salesPipelineRows(input) {
 			markupPct: "",
 			proposalNo: "",
 			validity: "",
+			priority: String(rce.priority || rce.priorityLevel || ""),
+			company: String(rce.company || ""),
+			createdAt: rce.createdAt || rce.dateReceived || rce.rceDate || "",
+			targetedIds: [ownerId].filter(Boolean),
+			seenBy: rce.seenBy || {},
 		});
 	});
 	return rows;

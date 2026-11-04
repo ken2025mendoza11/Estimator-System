@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { buildReport, reportSheet } from "../lib/estimator/reports";
 import { categoryOnTask } from "../lib/estimator/ceTotals";
 import { StickyTable } from "./StickyTable";
+import { SalesPipelineV2 } from "./SalesPipelineV2";
 import { SALES_STAGES, pipelineKpis, stageActions } from "../lib/estimator/salesStage";
 
 function money(value) {
@@ -168,7 +169,7 @@ export function Phase6Reports({ ceList, documents, monitor = null, reportOn = tr
 						<p>CE turnaround (days): {monitor.dashboard?.ceTurnaroundDays == null ? "—" : Math.round(monitor.dashboard.ceTurnaroundDays * 10) / 10}</p>
 					</div>
 					<h3 className="ce-serif">Sales list</h3>
-					{Array.isArray(monitor.pipeline) ? <SalesPipeline monitor={monitor} /> : sales.length ? sales.map((row) => (
+					{Array.isArray(monitor.pipeline) ? (monitor.pipelineV2 ? <SalesPipelineV2 monitor={monitor} /> : <SalesPipeline monitor={monitor} />) : sales.length ? sales.map((row) => (
 						<div key={`${row.kind}-${row.id}`}>
 							<p>{row.kind} {row.id} · {row.status} · {row.ageDays}d · {row.holderName || row.ownerName || "Unnamed"}</p>
 							{monitor.canTakeOver && (row.status === "Approved" || row.status === "Sent") && row.ownerId && row.ownerId !== monitor.actorId ? (

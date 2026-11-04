@@ -139,3 +139,34 @@ export function docxXmlToBlocks(xml) {
 	});
 	return blocks;
 }
+
+export const PDF_IMPORT_NOTE = "PDF import brings text only; Word keeps formatting.";
+
+/**
+ * @param {any[]} list
+ * @param {any} doc
+ */
+export function saveMethodology(list, doc) {
+	const next = {
+		...doc,
+		versions: [{ at: String(doc?.updatedAt || ""), body: String(doc?.body || "") }, ...(doc?.versions || [])].slice(0, 20),
+	};
+	return [next, ...(list || []).filter((row) => row && row.id !== next.id)];
+}
+
+/**
+ * @param {any[]} blocks
+ * @returns {string}
+ */
+export function blocksToDocxXml(blocks) {
+	const amp = "&" + "amp;";
+	const lt = "&" + "lt;";
+	const gt = "&" + "gt;";
+	const paras = (blocks || []).map((block) => {
+		const text = String(block?.text || "").replace(/&/g, amp).replace(/</g, lt).replace(/>/g, gt);
+		const style = block?.type === "heading" ? "<w:pStyle w:val=\"Heading1\"/>" : "";
+		const mark = `${block?.bold ? "<w:b/>" : ""}${block?.italic ? "<w:i/>" : ""}`;
+		return `<w:p>${style}<w:r><w:rPr>${mark}</w:rPr><w:t>${text}</w:t></w:r></w:p>`;
+	}).join("");
+	return `<w:document><w:body>${paras}</w:body></w:document>`;
+}
