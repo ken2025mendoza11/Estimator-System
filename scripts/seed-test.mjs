@@ -442,7 +442,7 @@ function adminConfig(users, extras = []) {
     ],
     pending,
     designations: ["Cost Estimator", "Department Head"],
-    features: { approvalEngineV2: true, release1Departments: true, release1SalesView: true, release1WithdrawRequest: true, release1Markup: true, release1Proposal: true, release1JobOrder: true, release1Monitor: true, joScreenV2: true, ceTpl1: true, ceTpl2: true, ceTpl3: true, ceTpl4: true, ceTpl5: true, ceTpl6: true, ceTpl7: true },
+    features: { approvalEngineV2: true, release1Departments: true, release1SalesView: true, release1WithdrawRequest: true, release1Markup: true, release1Proposal: true, release1JobOrder: true, release1Monitor: true, joScreenV2: true, ceTpl1: true, ceTpl2: true, ceTpl3: true, ceTpl4: true, ceTpl5: true, ceTpl6: true, ceTpl7: true, ceTpl8: true },
     approverLists: approverListsFor(users),
     approvalFlows: {
       ce: [

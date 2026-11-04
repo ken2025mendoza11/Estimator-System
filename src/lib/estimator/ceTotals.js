@@ -230,7 +230,7 @@ function directStatement(tasks, pricing, sheets) {
   const misc = { A: 0, B: 0, C: 0, D: 0, E: 0, I: 0, other: 0 };
   (tasks || []).forEach((task) => {
     const wt = taskWorkType(task);
-    flattenSubs(task).forEach((sub) => {
+    costNodes(task).forEach((sub) => {
       const items = sub.items || {};
       (items.BOL || []).forEach((item) => {
         const line = bolDirectParts(item, formula);
@@ -311,7 +311,7 @@ var calcMISC = (i, pricing) => {
 function miscBucket(tasks, section) {
   let total = 0;
   const lines = [];
-  (tasks || []).forEach((t) => flattenSubs(t).forEach((sub) => (sub.items?.MISC || []).forEach((it) => {
+  (tasks || []).forEach((t) => costNodes(t).forEach((sub) => (sub.items?.MISC || []).forEach((it) => {
     if (String(it.section || "") !== section) return;
     const amount = calcMISC(it);
     total += amount;
@@ -401,6 +401,21 @@ function subtaskTotal(subtask2, workType, pricing) {
   return roundMoney(CATS.reduce((s, c) => s + categoryTotal(subtask2.items?.[c] || [], c, workType, pricing), 0) + (subtask2.children || []).reduce((s, ch) => s + subtaskTotal(ch, workType, pricing), 0));
 }
 
+function taskCostHost(task2) {
+  const items = task2 && task2.items;
+  if (!items || typeof items !== "object" || Array.isArray(items)) return null;
+  const cats = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
+  const has = cats.some((cat) => Array.isArray(items[cat]) && items[cat].length);
+  if (!has) return null;
+  return { id: `${task2.id || "task"}::lines`, title: task2.title || "", items, children: [] };
+}
+
+function costNodes(task2) {
+  const host = taskCostHost(task2);
+  const subs = flattenSubs(task2);
+  return host ? [host, ...subs] : subs;
+}
+
 function flattenSubs(task2) {
   const out = [];
   const walk = (list) => {
@@ -415,16 +430,18 @@ function flattenSubs(task2) {
 
 function categoryOnTask(task2, cat, pricing) {
   const wt = taskWorkType(task2);
-  return flattenSubs(task2).reduce((s, st) => s + categoryTotal(st.items?.[cat] || [], cat, wt, pricing), 0);
+  return costNodes(task2).reduce((s, st) => s + categoryTotal(st.items?.[cat] || [], cat, wt, pricing), 0);
 }
 
 function botePowerOnTask(task2) {
-  return flattenSubs(task2).reduce((s, st) => s + (st.items?.BOTE || []).reduce((s3, it) => s3 + boteElectricityCost(it), 0), 0);
+  return costNodes(task2).reduce((s, st) => s + (st.items?.BOTE || []).reduce((s3, it) => s3 + boteElectricityCost(it), 0), 0);
 }
 
 function taskTotal(task2, pricing) {
   const wt = taskWorkType(task2);
-  return roundMoney((task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt, pricing), 0));
+  const host = taskCostHost(task2);
+  const own = host ? subtaskTotal(host, wt, pricing) : 0;
+  return roundMoney(own + (task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt, pricing), 0));
 }
 
 const MOB_ALLOWANCE_RATES = { "Project Manager": 0, Skilled: 0, Admin: 0 };
@@ -513,7 +530,7 @@ var DIRECT_DAY_TYPES = ["Regular", "Sun/Special", "Holiday"];
 export function directBolGroups(tasks, pricing) {
   const model = pricing && pricing.model === "direct-v1" ? pricing : { model: "direct-v1", formula: pricing && pricing.formula };
   const allBOL = [];
-  (tasks || []).forEach((task) => flattenSubs(task).forEach((sub) => (sub.items?.BOL || []).forEach((item) => allBOL.push(item))));
+  (tasks || []).forEach((task) => costNodes(task).forEach((sub) => (sub.items?.BOL || []).forEach((item) => allBOL.push(item))));
   /** @type {Record<string, { Day: Record<string, unknown>, Night: Record<string, unknown> }>} */
   const groups = {};
   DIRECT_DAY_TYPES.forEach((dt) => {
@@ -590,7 +607,7 @@ export function directInputWarnings(tasks) {
     const taskId = String(task?.id || "");
     if (!String(task?.workType || "").trim()) out.push({ code: "blank-work-type", taskId });
     const onsite = normalizeWorkType(task?.workType) === "onsite";
-    flattenSubs(task).forEach((sub) => {
+    costNodes(task).forEach((sub) => {
       (sub.items?.BOTE || []).forEach((item) => {
         if (onsite && num2(item.powerKw) > 0) out.push({ code: "onsite-power", taskId, itemId: String(item.id || "") });
       });
@@ -624,6 +641,8 @@ export {
   directFormula,
   dolePay,
   flattenSubs,
+  costNodes,
+  taskCostHost,
   itemSubtotal,
   miscBucket,
   mobDemobPair,

@@ -8,6 +8,8 @@ import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS,
 import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet } from "./csvImport.js";
 import { approveMasterItem, buildNounName, lineDbState, persistPending, requestMasterItem } from "./ceLineDb.js";
 import { applyAttachmentEdits, compiledAttachmentNames, copyAttachmentVersion, removeAttachment, renameAttachment, reorderAttachments } from "./ceAttachOrder.js";
+import { projectTotal } from "./ceTotals.js";
+import { miscPartSubtotals, miscShowAllPref } from "./ceMiscView.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -313,6 +315,41 @@ test("compiled attachments follow the saved order and keep the original extensio
 	assert.equal(seed.includes("ceTpl7: true"), true);
 	assert.equal(app.includes("Type REMOVE"), true);
 });
+
+test("task-level rows add to the roll-up and samples without them stay the same", () => {
+	const pricing = { model: "direct-v1", formula: {} };
+	const bare = [{
+		id: "t1",
+		workType: "shop",
+		subtasks: [{ id: "s1", items: { BOCM: [{ qty: 2, unitCost: 10 }] } }],
+	}];
+	const withTask = [{
+		...bare[0],
+		items: { BOCM: [{ qty: 1, unitCost: 5 }] },
+	}];
+	const base = projectTotal(bare, pricing);
+	assert.equal(projectTotal(JSON.parse(JSON.stringify(bare)), pricing), base);
+	assert.equal(projectTotal(withTask, pricing), base + 5);
+	const legacy = projectTotal([{ id: "t2", workType: "shop", subtasks: [], items: { BOCM: [{ qty: 2, unitCost: 10 }] } }]);
+	assert.equal(legacy, 20);
+	const parts = miscPartSubtotals([
+		{ section: "A", qty: 2, days: 1, unitCost: 3 },
+		{ section: "A", qty: 1, days: 1, unitCost: 4 },
+	]);
+	assert.equal(parts[0].part, "A");
+	assert.equal(parts[0].total, 10);
+	const memory = miscShowAllPref({}, "sales-1", "*", true);
+	assert.equal(memory["sales-1"]["*"], true);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const totals = readFileSync(new URL("./ceTotals.js", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(app.includes("ceTpl8: false"), true);
+	assert.equal(app.includes("ceTpl8: src.features?.ceTpl8 === true"), true);
+	assert.equal(app.includes('aria-label": "Task resources"') || app.includes('"aria-label": "Task resources"'), true);
+	assert.equal(totals.includes("function costNodes"), true);
+	assert.equal(seed.includes("ceTpl8: true"), true);
+});
+
 
 
 

@@ -80,6 +80,7 @@ import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, 
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
 import { applyAttachmentEdits, attachmentFilesInOrder, removeAttachment, renameAttachment, reorderAttachments, splitAttachmentName } from "../lib/estimator/ceAttachOrder";
+import { miscShowAllPref } from "../lib/estimator/ceMiscView";
 import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
 import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
@@ -106,6 +107,8 @@ let ceTpl4On = false;
 let ceTpl5On = false;
 let ceTpl6On = false;
 let ceTpl7On = false;
+let ceTpl8On = false;
+let miscShowMemory = {};
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
 let applyPendingMaster = (_pending) => {};
@@ -4891,7 +4894,8 @@ function defaultAdminConfig() {
 			ceTpl4: false,
 			ceTpl5: false,
 			ceTpl6: false,
-			ceTpl7: false
+			ceTpl7: false,
+			ceTpl8: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5021,7 +5025,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl4: src.features?.ceTpl4 === true,
 			ceTpl5: src.features?.ceTpl5 === true,
 			ceTpl6: src.features?.ceTpl6 === true,
-			ceTpl7: src.features?.ceTpl7 === true
+			ceTpl7: src.features?.ceTpl7 === true,
+			ceTpl8: src.features?.ceTpl8 === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
@@ -8182,6 +8187,11 @@ function mapTask(state, taskId, fn) {
 	};
 }
 function mapSubtask(t, subtaskId, fn) {
+	if (!subtaskId) {
+		const host = { items: { ...emptyItems(), ...(t.items || {}) } };
+		const next = fn(host);
+		return { ...t, items: next.items || host.items };
+	}
 	const walk = (list) => (list || []).map((s) => {
 		if (s.id === subtaskId) return fn(s);
 		const children = walk(s.children);
@@ -9147,10 +9157,17 @@ function mapAllItems(tasks, fn) {
 			children: mapSubs(s.children)
 		};
 	});
-	return (tasks || []).map((t) => ({
-		...t,
-		subtasks: mapSubs(t.subtasks)
-	}));
+	return (tasks || []).map((t) => {
+		const next = { ...t, subtasks: mapSubs(t.subtasks) };
+		if (t.items && typeof t.items === "object") {
+			const items = { ...t.items };
+			CATS.forEach((c) => {
+				items[c] = (items[c] || []).map((it) => fn(c, it));
+			});
+			next.items = items;
+		}
+		return next;
+	});
 }
 function countExceptionLines(tasks, ex) {
 	let n = 0;
@@ -12540,7 +12557,10 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 					/* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: `ce-pill ${sectionMode === "all" ? "ce-pill-active" : ""}`,
-						onClick: () => setSectionMode("all"),
+						onClick: () => {
+							setSectionMode("all");
+							if (ceTpl8On === true) miscShowMemory = miscShowAllPref(miscShowMemory, release1ActorId || "anon", "*", true);
+						},
 						children: "Show all"
 					}),
 					MISC_PRELOAD.map((sec) => /* @__PURE__ */ jsxs("button", {
@@ -12600,10 +12620,14 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 								children: "Save Group"
 							}), /* @__PURE__ */ jsx("button", {
 								className: "ce-btn-ghost ce-btn-sm misc-hide-btn",
-								onClick: () => setHideSections((prev) => ({
-									...prev,
-									[sec.section]: !prev[sec.section]
-								})),
+								onClick: () => {
+									const show = !!hideSections[sec.section];
+									setHideSections((prev) => ({
+										...prev,
+										[sec.section]: !prev[sec.section]
+									}));
+									if (ceTpl8On === true) miscShowMemory = miscShowAllPref(miscShowMemory, release1ActorId || "anon", sec.section, show);
+								},
 								type: "button",
 								children: hideSections[sec.section] ? "Show All" : "Hide Unused"
 							})]
@@ -13244,6 +13268,11 @@ function SubtaskCard({ task: task2, subtask: subtask2, dispatch, allTasks, taskT
 }
 function TaskAccordion({ t, dispatch, allTasks, taskTemplates, focusSubtaskId = null, sheetMemory = null, onCloseOthers = null }) {
 	const dnd = useBreakdownDnd();
+	const [taskCats, setTaskCats] = useState({});
+	const taskCatOrder = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
+	const taskAllOpen = taskCatOrder.every((c) => taskCats[c]);
+	const taskHost = { id: "", title: t.title, items: { ...emptyItems(), ...(t.items || {}) }, expanded: true, notes: "", files: [], children: [] };
+	const taskDispatch = (action) => dispatch({ ...action, taskId: t.id, subtaskId: "" });
 	const total = taskTotal(t);
 	const isDragging = dnd.drag?.kind === "task" && dnd.drag.taskId === t.id;
 	const nextId = allTasks[allTasks.findIndex((x) => x.id === t.id) + 1]?.id || null;
@@ -13449,6 +13478,35 @@ function TaskAccordion({ t, dispatch, allTasks, taskTemplates, focusSubtaskId = 
 							children: "Close others"
 						}) : null]
 					}) : null,
+					ceTpl8On === true ? /* @__PURE__ */ jsxs("div", {
+						className: "ce-cat-bar",
+						"aria-label": "Task resources",
+						children: [taskCatOrder.map((c) => {
+							const meta = CATEGORY_META[c];
+							const Icon = meta.icon;
+							return /* @__PURE__ */ jsxs("button", {
+								type: "button",
+								className: `ce-cat-chip${taskCats[c] ? " is-open" : ""}`,
+								onClick: () => setTaskCats((prev) => ({ ...prev, [c]: !prev[c] })),
+								children: [/* @__PURE__ */ jsx(Icon, { size: 13 }), meta.short]
+							}, c);
+						}), /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-cat-all",
+							onClick: () => {
+								const next = !taskAllOpen;
+								setTaskCats(Object.fromEntries(taskCatOrder.map((c) => [c, next])));
+							},
+							children: taskAllOpen ? "Close all" : "Open all"
+						})]
+					}) : null,
+					ceTpl8On === true ? taskCatOrder.map((c) => /* @__PURE__ */ jsx(CategoryCard, {
+						category: c,
+						task: t,
+						subtask: taskHost,
+						dispatch: taskDispatch,
+						open: !!taskCats[c]
+					}, `task-${c}`)) : null,
 					/* @__PURE__ */ jsx(NotesAndFilesBlock, {
 					label: t.title || "main task",
 					notes: t.notes,
@@ -29105,6 +29163,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl5On = adminConfig.features?.ceTpl5 === true;
 	ceTpl6On = adminConfig.features?.ceTpl6 === true;
 	ceTpl7On = adminConfig.features?.ceTpl7 === true;
+	ceTpl8On = adminConfig.features?.ceTpl8 === true;
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {

@@ -48,6 +48,8 @@ const NAMES = [
   "categoryTotal",
   "subtaskTotal",
   "flattenSubs",
+  "taskCostHost",
+  "costNodes",
   "categoryOnTask",
   "botePowerOnTask",
   "taskTotal",
