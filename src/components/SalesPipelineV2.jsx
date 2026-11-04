@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
-import { previewDocs } from "../lib/estimator/libraryTemplates";
+import { docPreviewUrl, previewDocs } from "../lib/estimator/libraryTemplates";
 import { stageActions } from "../lib/estimator/salesStage";
 import { salesChipMatch, trackerSteps } from "../lib/estimator/stageBui";
 
@@ -23,6 +23,7 @@ export function SalesPipelineV2({ monitor }) {
 	const [priority, setPriority] = useState("");
 	const [company, setCompany] = useState("");
 	const [openId, setOpenId] = useState("");
+	const [preview, setPreview] = useState(null);
 	const rows = /** @type {any[]} */ (monitor.pipeline || []);
 	const actor = { userId: monitor.actorId, now: monitor.now, config: monitor.dayConfig };
 	const filtered = rows.filter((row) => salesChipMatch(row, chip, actor) && (!priority || row.priority === priority) && (!company || row.company === company));
@@ -104,8 +105,18 @@ export function SalesPipelineV2({ monitor }) {
 								<div>
 									<p>Preview</p>
 									{previewDocs({ rce: open.rceNo ? { rceNo: open.rceNo, status: open.stage } : null, ce: open.ceNo ? { ceNo: open.ceNo, status: open.stage } : null, markup: open.markup || null, proposal: open.proposal || null }).map((doc) => (
-										<button key={doc.kind} type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => monitor.onPreviewDoc?.(open, doc)}>{doc.kind} · {doc.status || "—"}</button>
+										<button key={doc.kind} type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => {
+											const next = docPreviewUrl(doc);
+											setPreview(next);
+											monitor.onPreviewDoc?.(open, next || doc);
+										}}>{doc.kind} · {doc.status || "—"}</button>
 									))}
+									{preview?.url ? (
+										<div className="sales-doc-preview">
+											<iframe title={`${preview.kind} preview`} src={preview.url} />
+											<a href={preview.url} download={preview.downloadName}>Download</a>
+										</div>
+									) : null}
 								</div>
 							) : null}
 							<p>RCE compiled PDF stays on the row action.</p>

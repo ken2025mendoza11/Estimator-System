@@ -98,6 +98,28 @@ export function previewDocs(docs) {
 }
 
 /**
+ * In-app PDF preview for one existing document. CE and Markup stay sales-safe.
+ * @param {{ kind?: unknown, id?: unknown, status?: unknown }} doc
+ */
+export function docPreviewUrl(doc) {
+	const id = String(doc?.id || "").trim();
+	const kind = String(doc?.kind || "").trim();
+	if (!id || !kind) return null;
+	const label = `${kind} ${id}`.replace(/[()\\]/g, "");
+	const stream = `BT 40 120 Td (${label}) Tj ET`;
+	const pdf = `%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 420 240]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length ${stream.length}>>stream\n${stream}\nendstream\nendobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF`;
+	const bytes = encodeURIComponent(pdf);
+	return {
+		kind,
+		id,
+		status: String(doc?.status || ""),
+		salesSafe: kind === "CE" || kind === "Markup",
+		downloadName: `${id}.pdf`,
+		url: `data:application/pdf,${bytes}`,
+	};
+}
+
+/**
  * @param {any} data
  * @param {boolean} sales
  */
