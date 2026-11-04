@@ -1,5 +1,7 @@
 /** Sales stage is derived from the documents. There is no stored stage column. */
 
+import { winRate } from "./reports.js";
+
 export const SALES_STAGES = [
 	"RCE pending",
 	"CE in progress",
@@ -54,15 +56,12 @@ export function deriveSalesStage(input) {
  * @returns {number | null}
  */
 export function salesWinRate(rows) {
-	let awarded = 0;
-	let lost = 0;
-	(rows || []).forEach((row) => {
+	return winRate((rows || []).map((row) => {
 		const stage = row?.stage || deriveSalesStage(row || {});
-		if (stage === "Won") awarded += 1;
-		else if (stage === "Lost") lost += 1;
-	});
-	if (!awarded && !lost) return null;
-	return awarded / (awarded + lost);
+		if (stage === "Won") return { awardStatus: "Awarded" };
+		if (stage === "Lost") return { awardStatus: "Lost" };
+		return {};
+	}));
 }
 
 /**

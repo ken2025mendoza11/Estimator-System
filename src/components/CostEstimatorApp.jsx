@@ -80,6 +80,7 @@ import { orderExportSections, planSowSchedule, refreshSchedule, scheduleExportSe
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories, signatorySlots } from "../lib/estimator/ceSignatories";
+import { winRate as awardWinRate } from "../lib/estimator/reports";
 import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
@@ -23386,13 +23387,8 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	const chipPick = showChips ? ceChips.find((item) => item.id === chip) : null;
 	const chipRows = chipPick ? matched.filter(chipPick.test) : matched;
 	const shown = variant === "active" ? sortMonitoringRows(chipRows, sortBy) : matched;
-	const awardedCount = matched.filter((d) => d.awardStatus === "Awarded").length;
-	const lostCount = matched.filter((d) => {
-		const key = String(d.awardStatus || "").toLowerCase();
-		return key === "lost" || key === "lost bid";
-	}).length;
-	const winDenom = awardedCount + lostCount;
-	const winRate = winDenom ? Math.round(awardedCount / winDenom * 100) : 0;
+	const winRatio = awardWinRate(matched.map((row) => ({ awardStatus: row.awardStatus })));
+	const winPct = winRatio == null ? null : Math.round(winRatio * 100);
 	const avgAgingLabel = averageNumber(matched.map((row) => row.deadlineAge));
 	const statusColors = {
 		Done: "#10B981",
@@ -23455,7 +23451,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 				onToggle: setChip,
 				context: /* @__PURE__ */ jsx(MonChipContext, { parts: [
 					{ label: "Avg aging", value: avgAgingLabel },
-					{ label: "Win rate", value: winDenom ? `${winRate}%` : "—" }
+					{ label: "Win rate", value: winPct == null ? "—" : `${winPct}%` }
 				] })
 			}) : null,
 			variant === "active" && showToolbar ? /* @__PURE__ */ jsxs("div", {

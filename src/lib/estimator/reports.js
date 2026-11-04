@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * Read-only report figures. Win rate is Awarded ÷ (Awarded + Not awarded).
+ * Read-only report figures. Win rate is Awarded ÷ (Awarded + Lost).
  * Amounts passed in are already computed. This file does not change a total.
  */
 
@@ -19,9 +19,14 @@ export function isAwardedRow(row) {
 	return awardKey(row) === "awarded";
 }
 
+export function isLostRow(row) {
+	const key = awardKey(row);
+	return key === "lost" || key === "lost bid";
+}
+
 export function isNotAwardedRow(row) {
 	const key = awardKey(row);
-	return key === "lost" || key === "lost bid" || key === "not awarded";
+	return isLostRow(row) || key === "not awarded";
 }
 
 export function pipelineCounts(rows) {
@@ -33,15 +38,15 @@ export function pipelineCounts(rows) {
 	return counts;
 }
 
-/** Awarded ÷ (Awarded + Not awarded). Null when neither side has a row. */
+/** Awarded ÷ (Awarded + Lost). "Not awarded" is not a loss. Null when neither side has a row. */
 export function winRate(rows) {
 	let awarded = 0;
-	let notAwarded = 0;
+	let lost = 0;
 	(rows || []).forEach((row) => {
 		if (isAwardedRow(row)) awarded += 1;
-		else if (isNotAwardedRow(row)) notAwarded += 1;
+		else if (isLostRow(row)) lost += 1;
 	});
-	const denom = awarded + notAwarded;
+	const denom = awarded + lost;
 	if (!denom) return null;
 	return awarded / denom;
 }

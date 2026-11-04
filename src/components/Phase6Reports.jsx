@@ -139,7 +139,7 @@ export function Phase6Reports({ ceList, documents, monitor = null, reportOn = tr
 			{report ? (
 				<>
 					<h2 className="ce-serif">Reports</h2>
-					<p className="wiz-sub">Win rate is Awarded ÷ (Awarded + Not awarded). Ongoing estimates are not in that ratio.</p>
+					<p className="wiz-sub">Win rate is Awarded ÷ (Awarded + Lost). Ongoing estimates are not in that ratio.</p>
 					<div className="wiz-grid">
 						<p>Awarded: {report.awarded}</p>
 						<p>Not awarded: {report.notAwarded}</p>

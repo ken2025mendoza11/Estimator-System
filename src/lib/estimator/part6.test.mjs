@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { issuePdfData } from "../../utils/exportDocuments.js";
+import { winRate } from "./reports.js";
 import { GO_LIVE_FLAGS, SALES_STAGES, deriveSalesStage, salesPipelineRows, salesWinRate, stageActions } from "./salesStage.js";
 
 test("sales stage is derived for every stage and a Done CE is For markup for its owner", () => {
@@ -41,6 +42,7 @@ test("sales stage is derived for every stage and a Done CE is For markup for its
 	assert.deepEqual(stageActions("For markup", { sales: true }), []);
 	assert.deepEqual(stageActions("For proposal", { manager: true }), ["Generate proposal"]);
 	assert.equal(salesWinRate([{ stage: "Won" }, { stage: "Won" }, { stage: "Lost" }, { stage: "For markup" }]), 2 / 3);
+	assert.equal(salesWinRate([{ stage: "Won" }, { stage: "Lost" }]), winRate([{ awardStatus: "Awarded" }, { awardStatus: "Lost" }]));
 	assert.equal(salesWinRate([{ stage: "For markup" }]), null);
 	assert.deepEqual(GO_LIVE_FLAGS, ["release1Markup", "release1Proposal", "release1Monitor", "release1WithdrawRequest"]);
 });
