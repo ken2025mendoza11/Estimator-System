@@ -139,6 +139,7 @@ let personalActorId = "";
 let personalNewConfig = { weekendDays: [0, 6], holidays: [] };
 let saveCeTemplateNow = (_row, _tpl) => {};
 let saveThreadNow = (_ceId, _thread) => {};
+let notifyThreadNow = (_rows, _ceId) => {};
 let saveTaskTemplateNow = (_task) => {};
 let openAsNewCe = (_row) => {};
 let pendingCloneCeId = "";
@@ -24029,6 +24030,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 				actorId: personalActorId,
 				label: followLabel({ status: threadRow.status, waitingInfo: threadRow.waitingInfo }, { estimator: release1SalesActor !== true, sales: release1SalesActor === true, owner: release1SalesActor === true }) || "Follow up",
 				onSave: (ceId, thread) => saveThreadNow(ceId, thread),
+				onNotices: (rows) => notifyThreadNow(rows, threadRow.ceId),
 				onClose: () => setThreadRow(null)
 			}) : null
 		]
@@ -29581,6 +29583,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	saveThreadNow = (ceId, thread) => {
 		setDocuments((prev) => ({ ...prev, [ceId]: { ...(prev[ceId] || {}), thread } }));
+	};
+	notifyThreadNow = (rows, ceId) => {
+		(rows || []).forEach((row) => {
+			if (!row?.toUserId || row.toUserId === "*") return;
+			notice({ type: "Reply", title: "Reply", body: "New thread reply", toUserId: row.toUserId, ceId: ceId || "", view: "monitoring" });
+		});
 	};
 	saveTaskTemplateNow = (task) => {
 		const name = window.prompt("Per task template name", task?.title || task?.name || "Task");

@@ -4,7 +4,7 @@ import test from "node:test";
 import { markThreadRead, postMessage, threadParticipants, threadVisible, unreadCount } from "./ceThread.js";
 import { docxXmlToBlocks, libraryTabLabel, numberPlan, previewDocs, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, blocksToDocxXml, saveMethodology } from "./libraryTemplates.js";
 import { followLabel, salesChipMatch, teamNewRows, trackerSteps } from "./stageBui.js";
-import { documentTitle, markAllRead, unreadBell } from "./notifyBell.js";
+import { bellForUser, documentTitle, markAllRead, unreadBell } from "./notifyBell.js";
 import { addWorkingDays, isWorkingDay, manilaDate, markSeen, openStage, showNewForUser } from "./personalNew.js";
 
 const week = { weekendDays: [0, 6], holidays: ["2026-11-04"] };
@@ -45,6 +45,11 @@ test("threads, the bell, and library strips keep the current rules", () => {
 	const outsider = postMessage(owner.thread, { from: "other", text: "no", now: "2026-11-04T01:20:00.000Z", ce: routeCe });
 	assert.equal(outsider.ok, false);
 	assert.equal(outsider.message, "Only participants can post.");
+	const reply = postMessage(owner.thread, { from: "sales-1", text: "Attached", now: "2026-11-04T01:30:00.000Z", ce: routeCe });
+	assert.equal(reply.ok, true);
+	assert.equal(reply.notices.some((row) => row.toUserId === "*" || row.toUserId === "sales-1"), false);
+	assert.equal(unreadBell(bellForUser(reply.notices, "est-1")), 1);
+	assert.equal(unreadBell(bellForUser(reply.notices, "sales-1")), 0);
 	const events = [{ toUserId: "sales-1", read: false }, { toUserId: "est-1", read: false }];
 	assert.equal(unreadBell(events), 2);
 	assert.equal(unreadBell(markAllRead(events, "2026-11-04T03:00:00.000Z")), 0);

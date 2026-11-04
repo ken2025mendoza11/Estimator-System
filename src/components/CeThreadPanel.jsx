@@ -10,10 +10,11 @@ import { markThreadRead, postMessage, threadParticipants } from "../lib/estimato
  *   ce?: any,
  *   users?: unknown[],
  *   onSave: (ceId: string, thread: any) => void,
+ *   onNotices?: (notices: any[]) => void,
  *   onClose: () => void,
  * }} props
  */
-export function CeThreadPanel({ ceId, thread, actorId, ce, users = [], label = "Follow up", onSave, onClose }) {
+export function CeThreadPanel({ ceId, thread, actorId, ce, users = [], label = "Follow up", onSave, onNotices, onClose }) {
 	const [text, setText] = useState("");
 	const [error, setError] = useState("");
 	useEffect(() => {
@@ -33,6 +34,7 @@ export function CeThreadPanel({ ceId, thread, actorId, ce, users = [], label = "
 		setText("");
 		setError("");
 		onSave(ceId, posted.thread);
+		if (posted.notices?.length) onNotices?.(posted.notices);
 	}
 	return (
 		<div className="ce-drawer-overlay" onClick={onClose}>

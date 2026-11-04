@@ -56,7 +56,25 @@ export function postMessage(thread, input) {
 	const participants = input?.ce ? threadParticipants(input.ce, input.users) : (thread?.participants || []).map((row) => String(row || "")).filter(Boolean);
 	if (!threadVisible(from, participants)) return { ok: false, message: "Only participants can post." };
 	const message = { id: `${from}-${thread?.messages?.length || 0}`, from, text, at: String(input?.now || "") };
-	return { ok: true, thread: { ...(thread || {}), participants, messages: [...(thread?.messages || []), message] } };
+	const next = { ...(thread || {}), participants, messages: [...(thread?.messages || []), message] };
+	return { ok: true, thread: next, notices: replyNotices(next, from, input?.now) };
+}
+
+/**
+ * One notice per other participant. Never broadcast to everyone.
+ * @param {any} thread
+ * @param {unknown} from
+ * @param {unknown} now
+ */
+export function replyNotices(thread, from, now) {
+	const author = String(from || "");
+	return (thread?.participants || []).map((row) => String(row || "")).filter((id) => id && id !== "*" && id !== author).map((toUserId) => ({
+		toUserId,
+		read: false,
+		kind: "reply",
+		title: "Reply",
+		at: String(now || ""),
+	}));
 }
 
 /**
