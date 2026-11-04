@@ -76,7 +76,7 @@ import { orderExportSections, refreshSchedule, scheduleExportSection } from "../
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
-import { ceWithdrawAllowed, planCeWithdraw } from "../lib/estimator/ceWithdraw";
+import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
 import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
@@ -30546,12 +30546,19 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			};
 		});
 		if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: "Draft" } : cur);
-		notice({
-			type: NOTICE_EVENTS.APPROVAL,
-			title: "CE withdrawn",
-			body: `${ceId}: ${remarks}`,
-			ceId,
-			view: "editor"
+		withdrawRecipients({
+			...ce,
+			approval: doc.approval || ce.approval
+		}, adminConfig?.users || []).forEach((toUserId) => {
+			notice({
+				type: NOTICE_EVENTS.APPROVAL,
+				title: "CE withdrawn",
+				body: `${ceId}: ${remarks}`,
+				ceId,
+				view: "editor",
+				to: toUserId,
+				toUserId
+			});
 		});
 		return true;
 	};

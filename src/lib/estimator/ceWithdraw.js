@@ -54,3 +54,38 @@ export function planCeWithdraw(ce, input) {
 		notify: true,
 	};
 }
+
+function accountOf(user) {
+	if (!user || typeof user !== "object") return "";
+	const row = /** @type {Record<string, unknown>} */ (user);
+	return String(row.userId || row.user_key || row.userKey || row.id || "").trim();
+}
+
+/**
+ * Route approvers only. Never the broadcast "*".
+ * @param {any} ce
+ * @param {any[]} [users]
+ */
+export function withdrawRecipients(ce, users = []) {
+	const steps = [
+		...(ce?.approval?.steps || []),
+		...(ce?.approval?.flowSnapshot?.steps || []),
+	];
+	const list = Array.isArray(users) ? users : [];
+	const ids = [];
+	const add = (value) => {
+		const id = String(value || "").trim();
+		if (!id || id === "*" || ids.includes(id)) return;
+		ids.push(id);
+	};
+	steps.forEach((/** @type {any} */ step) => {
+		add(step?.userId);
+		add(step?.assigneeUserId);
+		add(step?.byUserId);
+		const name = String(step?.assigneeName || step?.assignee || step?.by || "").trim().toLowerCase();
+		if (!name) return;
+		const hit = list.find((user) => String(user?.name || user?.userName || "").trim().toLowerCase() === name);
+		add(accountOf(hit));
+	});
+	return ids;
+}

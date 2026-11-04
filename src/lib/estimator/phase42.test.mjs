@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { freezeOffsets, freezePlan, stickyBarVisible } from "./stickyTable.js";
+import { freezeOffsets, freezePlan, stickyBarVisible, stickyScrollCheck } from "./stickyTable.js";
 import { applyRouteSignatories, routeSignatories, signatoryPending } from "./ceSignatories.js";
-import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw } from "./ceWithdraw.js";
+import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "./ceWithdraw.js";
 import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS, listHeaderValues } from "./ceHeaderEdit.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
@@ -24,6 +24,16 @@ test("sticky tables freeze item and project and keep a bottom scrollbar", () => 
 	assert.equal(app.includes("jsx(StickyTable,"), true);
 	assert.equal(css.includes("position:sticky;bottom:0"), true);
 	assert.equal(css.includes(".ce-sticky-on thead th{position:sticky;top:0"), true);
+	const scrolled = stickyScrollCheck({ rows: 50, rowPx: 36, viewportH: 390, scrolledToRow: 20, tableWidth: 1400, viewportW: 390 });
+	assert.equal(scrolled.tableOnScreen, true);
+	assert.equal(scrolled.headerStuck, true);
+	assert.equal(scrolled.barVisible, true);
+	assert.equal(scrolled.atRow, 20);
+	const mon = app.slice(app.indexOf("function MonitoringDashboard"), app.indexOf("function clientCodeForCe"));
+	assert.equal(mon.includes("jsx(StickyTable,"), true);
+	assert.equal(app.includes('tab === "executive" && /* @__PURE__ */ jsx(MonitoringDashboard,'), true);
+	assert.equal(app.includes('children: "User Monitoring"'), true);
+	assert.equal(app.includes('profile: "user"'), true);
 });
 
 test("a new CE signatory block is filled from the approval route and stays unsigned", () => {
@@ -96,6 +106,21 @@ test("CE withdraw is open before the final signature and blocked after it", () =
 	assert.equal(planned.notify, true);
 	assert.equal(planCeWithdraw(done, { who: "ada", remarks: "Too late" }).ok, false);
 	assert.equal(planCeWithdraw(open, { who: "ada", remarks: "" }).ok, false);
+	const targets = withdrawRecipients({
+		approval: {
+			steps: [
+				{ userId: "u-lead", assigneeName: "Ben Lead" },
+				{ assigneeName: "Dana Head", isFinal: true },
+			],
+		},
+	}, [{ name: "Dana Head", userId: "u-head" }]);
+	assert.deepEqual(targets, ["u-lead", "u-head"]);
+	assert.equal(targets.includes("*"), false);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const body = app.slice(app.indexOf("const handleCeWithdraw"), app.indexOf("const approvalWho"));
+	assert.equal(body.includes("withdrawRecipients"), true);
+	assert.equal(body.includes('to: "*"'), false);
+	assert.equal(body.includes("toUserId"), true);
 });
 
 test("header edit updates client, project, and deadline in list readers and locks after submit", () => {

@@ -88,3 +88,22 @@ export function pinFrozenColumns(table) {
 		});
 	});
 }
+
+/** 50-row case: scrolled into the table, the pinned bar stays up at a narrow viewport.
+ * @param {{ rows?: number, rowPx?: number, viewportH?: number, scrolledToRow?: number, tableWidth?: number, viewportW?: number }} input
+ */
+export function stickyScrollCheck(input = {}) {
+	const rows = Number(input.rows) || 0;
+	const rowPx = Number(input.rowPx) || 36;
+	const viewportH = Number(input.viewportH) || 0;
+	const scrolledToRow = Number(input.scrolledToRow) || 0;
+	const contentH = rows * rowPx;
+	const scrollTop = scrolledToRow * rowPx;
+	const tableOnScreen = contentH > scrollTop && scrollTop < contentH + viewportH;
+	return {
+		tableOnScreen,
+		headerStuck: scrollTop > 0 && tableOnScreen,
+		barVisible: tableOnScreen && stickyBarVisible(input.tableWidth, input.viewportW),
+		atRow: scrolledToRow,
+	};
+}
