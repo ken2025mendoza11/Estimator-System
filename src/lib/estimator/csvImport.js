@@ -772,6 +772,19 @@ export function planCeExport(input = {}) {
 	};
 }
 
+/**
+ * Monitoring ⋮ Export opens the CE export dialog without opening the estimate.
+ * Sales gets the sales-safe flag. There is no dialog when the row has no CE.
+ * @param {any} row
+ * @param {boolean} sales
+ * @returns {{ dialog: "ce-export", ceId: string, salesSafe: boolean } | null}
+ */
+export function monitoringExportRequest(row, sales) {
+	const ceId = String(row?.ceId || "").trim();
+	if (!ceId) return null;
+	return { dialog: "ce-export", ceId, salesSafe: sales === true };
+}
+
 function sectionPart(section) {
 	const label = `${section?.title || ""} ${section?.exportTitle || ""}`;
 	const hit = PART_MATCH.find(([, re]) => re.test(label));

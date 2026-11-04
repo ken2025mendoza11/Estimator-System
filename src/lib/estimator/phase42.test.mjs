@@ -5,7 +5,7 @@ import { freezeOffsets, freezePlan, stickyBarVisible, stickyScrollCheck } from "
 import { applyRouteSignatories, routeSignatories, signatoryPending } from "./ceSignatories.js";
 import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "./ceWithdraw.js";
 import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS, listHeaderValues } from "./ceHeaderEdit.js";
-import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet } from "./csvImport.js";
+import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet, monitoringExportRequest } from "./csvImport.js";
 import { approveMasterItem, buildNounName, lineDbState, persistPending, requestMasterItem } from "./ceLineDb.js";
 import { applyAttachmentEdits, compiledAttachmentNames, copyAttachmentVersion, removeAttachment, renameAttachment, reorderAttachments } from "./ceAttachOrder.js";
 import { projectTotal } from "./ceTotals.js";
@@ -394,6 +394,19 @@ test("monitoring headers wrap instead of overlapping at 1280 and 1024", () => {
 	assert.equal(app.includes("ceTpl10: src.features?.ceTpl10 === true"), true);
 	assert.equal(app.includes("ce-tpl10"), true);
 	assert.equal(seed.includes("ceTpl10: true"), true);
+});
+
+test("monitoring Export opens the dialog for that CE and marks Sales as sales-safe", () => {
+	const sales = monitoringExportRequest({ ceId: "CE-9", project: "Pump" }, true);
+	assert.equal(sales?.dialog, "ce-export");
+	assert.equal(sales?.ceId, "CE-9");
+	assert.equal(sales?.salesSafe, true);
+	const staff = monitoringExportRequest({ ceId: "CE-9" }, false);
+	assert.equal(staff?.salesSafe, false);
+	assert.equal(monitoringExportRequest({ ceId: "" }, true), null);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	assert.equal(app.includes("monitoringExportRequest"), true);
+	assert.equal(app.includes("CeExportDialog"), true);
 });
 
 

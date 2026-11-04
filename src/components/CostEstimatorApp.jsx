@@ -64,7 +64,7 @@ import { JobOrderPanel } from "./JobOrderPanel";
 import { StickyTable } from "./StickyTable";
 import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
 import { salesPipelineRows } from "../lib/estimator/salesStage";
-import { SalesUserCard } from "./SalesUserCard";
+import { CeExportDialog } from "./CeExportDialog";
 import { RceRemarkCell } from "./RceRemarkCell";
 import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "../lib/estimator/rceTemplate";
 import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
@@ -80,7 +80,7 @@ import { orderExportSections, planSowSchedule, refreshSchedule, scheduleExportSe
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
-import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
+import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
 import { applyAttachmentEdits, attachmentFilesInOrder, removeAttachment, renameAttachment, reorderAttachments, splitAttachmentName } from "../lib/estimator/ceAttachOrder";
@@ -23031,7 +23031,7 @@ function fixedViewport() {
 	const z = uiZoom();
 	return { width: window.innerWidth / z, height: window.innerHeight / z };
 }
-function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, canAssign, assignChoices }) {
+function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, canAssign, assignChoices, onExport }) {
 	const [open, setOpen] = useState(false);
 	const [pos, setPos] = useState(null);
 	const [assigning, setAssigning] = useState(false);
@@ -23087,6 +23087,14 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 						},
 						children: "Preview"
 					}),
+					row.ceId && onExport ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							onExport(row);
+						},
+						children: "Export"
+					}) : null,
 					row.canRevise ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						onClick: () => {
@@ -23201,6 +23209,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	const [sortBy, setSortBy] = useState("priority");
 	const [chip, setChip] = useState("");
 	const [previewRow, setPreviewRow] = useState(null);
+	const [exportAsk, setExportAsk] = useState(null);
 	const [openFamilies, setOpenFamilies] = useState({});
 	const [groupOpen, setGroupOpen] = useState(false);
 	const groupMenuRef = useRef(null);
@@ -23399,6 +23408,40 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 		"No quote": "#EF4444",
 		"No Quote": "#EF4444"
 	};
+	function confirmMonitorExport(request, plan) {
+		const doc = documents?.[request.ceId] || {};
+		const ce = (ceList || []).find((row) => row.id === request.ceId) || {};
+		const tasks = doc.tasks || [];
+		const sections = [];
+		const bol = buildBolExportSection(tasks, [], doc.pricing);
+		if (bol) sections.push(bol);
+		const bote = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", [], doc.pricing);
+		if (bote) sections.push(bote);
+		const bocm = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", [], doc.pricing);
+		if (bocm) sections.push(bocm);
+		const ppe = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", [], doc.pricing);
+		if (ppe) sections.push(ppe);
+		const misc = buildMiscExportSection(tasks, doc.pricing, []);
+		if (misc) sections.push(misc);
+		const grand = projectTotal(tasks, doc.pricing, doc.mobSheets);
+		const payload = applyExportPlan({
+			sections,
+			ceNumber: request.ceId,
+			cover: {
+				client: ce.client || doc.projectInfo?.client || "",
+				ceNumber: request.ceId,
+				grandTotal: grand,
+				netTotal: grand,
+				contingencyPct: request.salesSafe ? 0 : Number(doc.commercial?.contingencyPct) || 0,
+				omitContingency: request.salesSafe === true,
+				discountPct: Number(doc.commercial?.discountPct) || 0
+			}
+		}, plan);
+		const format = plan?.format || "pdf";
+		if (format === "excel" || format === "both") exportIssueExcel(payload);
+		if (format !== "excel") exportIssuePdf(payload);
+		setExportAsk(null);
+	}
 	return /* @__PURE__ */ jsxs("div", {
 		className: profile === "monitor" ? "mon-dashboard" : "mon-dashboard mon-dashboard-embed",
 		children: [
@@ -23664,7 +23707,11 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 								onGenerate: profile === "monitor" ? onGeneratePending : void 0,
 								onAssign: profile === "monitor" ? onAssignPending : void 0,
 								canAssign: lead,
-								assignChoices: costingMembers(users)
+								assignChoices: costingMembers(users),
+								onExport: (picked) => {
+									const request = monitoringExportRequest(picked, release1SalesActor === true);
+									if (request) setExportAsk(request);
+								}
 							}) });
 							const cells = profile === "monitor" ? [
 								/* @__PURE__ */ jsx("td", { className: "mon-item", children: idx + 1 }),
@@ -23819,6 +23866,11 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 					setPreviewRow(null);
 					onOpenCE?.(ceId);
 				}
+			}) : null,
+			exportAsk ? /* @__PURE__ */ jsx(CeExportDialog, {
+				request: exportAsk,
+				onClose: () => setExportAsk(null),
+				onExport: confirmMonitorExport
 			}) : null
 		]
 	});
