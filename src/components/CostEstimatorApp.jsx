@@ -78,6 +78,7 @@ import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, 
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
 import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
+import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
 import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
 import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
 import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
@@ -102,6 +103,10 @@ let ceTpl2On = false;
 let ceTpl3On = false;
 let ceTpl4On = false;
 let ceTpl5On = false;
+let ceTpl6On = false;
+let pendingMasterNow = [];
+let submitPendingMaster = (_draft) => {};
+let applyPendingMaster = (_pending) => {};
 let release1MonitorSales = false;
 let release1CanReassign = false;
 let release1ActorId = "";
@@ -4881,7 +4886,8 @@ function defaultAdminConfig() {
 			ceTpl2: false,
 			ceTpl3: false,
 			ceTpl4: false,
-			ceTpl5: false
+			ceTpl5: false,
+			ceTpl6: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5009,8 +5015,10 @@ function normalizeAdminConfig(raw) {
 			ceTpl2: src.features?.ceTpl2 === true,
 			ceTpl3: src.features?.ceTpl3 === true,
 			ceTpl4: src.features?.ceTpl4 === true,
-			ceTpl5: src.features?.ceTpl5 === true
+			ceTpl5: src.features?.ceTpl5 === true,
+			ceTpl6: src.features?.ceTpl6 === true
 		},
+		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -10804,7 +10812,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 										children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 										category: "BOL",
 										row
-									}), /* @__PURE__ */ jsx(LineDbMark, {
+									}), /* @__PURE__ */ jsx(LineDbSlot, {
 										category: "BOL",
 										row,
 										list: masterlistBOL,
@@ -11290,7 +11298,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										category: "BOTE",
 										row
 									}),
-									/* @__PURE__ */ jsx(LineDbMark, {
+									/* @__PURE__ */ jsx(LineDbSlot, {
 										category: "BOTE",
 										row,
 										list: masterlistBOTE,
@@ -11655,7 +11663,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 									category: "BOCM",
 									row
-								}), /* @__PURE__ */ jsx(LineDbMark, {
+								}), /* @__PURE__ */ jsx(LineDbSlot, {
 									category: "BOCM",
 									row,
 									list: masterlistBOCM,
@@ -11954,7 +11962,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 									category: "PPE",
 									row
-								}), /* @__PURE__ */ jsx(LineDbMark, {
+								}), /* @__PURE__ */ jsx(LineDbSlot, {
 									category: "PPE",
 									row,
 									list: masterlistPPE,
@@ -12666,7 +12674,7 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 										children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 										category: "MISC",
 										row: r
-									}), /* @__PURE__ */ jsx(LineDbMark, {
+									}), /* @__PURE__ */ jsx(LineDbSlot, {
 										category: "MISC",
 										row: r,
 										list: masterlistMISC,
@@ -13725,6 +13733,125 @@ function CalcLineMark({ row }) {
 			children: "ⓘ"
 		})
 	] });
+}
+function CeLineDbMark({ category, row, list, onPatch }) {
+	const [open, setOpen] = useState(false);
+	const [form, setForm] = useState(null);
+	if (!row || row.isDraft) return null;
+	const label = lineItemLabel(category, row);
+	if (!label) return null;
+	const catalog = (list || []).map((item) => ({ ...item, description: masterlistItemLabel(category, item) || item.description || item.name || "" }));
+	const status = lineDbState({ name: label, items: catalog, pending: pendingMasterNow, nameField: "description" });
+	const setField = (key) => (event) => setForm((cur) => ({ ...(cur || {}), [key]: event.target.value }));
+	function openAdd(event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const draft = masterAddDraft(label, category);
+		setForm({ ...draft, similar: status.similar[0]?.label || "" });
+		setOpen(true);
+	}
+	function linkMatch(event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const hit = status.similar[0];
+		if (!hit) return;
+		onPatch?.({ masterlistId: hit.item?.id || "", [lineLabelField(category)]: hit.label });
+	}
+	function saveRequest(event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const name = String(form?.name || "").trim();
+		if (!name) return;
+		submitPendingMaster({
+			raw: label,
+			name,
+			uom: form?.uom || "",
+			category: form?.category || category,
+			remark: form?.remark || "",
+			similar: form?.similar ? [form.similar] : status.similar.map((hit) => hit.label)
+		});
+		setOpen(false);
+	}
+	const mark = status.state === "exact" ? "✓" : status.state === "similar" ? "⚠" : status.state === "pending" ? "⏳" : "✕";
+	const title = status.state === "exact" ? "In the database" : status.state === "similar" ? "Similar item" : status.state === "pending" ? "Pending Admin approval" : "Not in the database";
+	return /* @__PURE__ */ jsxs("span", {
+		className: "ce-db-slot",
+		children: [
+			/* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "ce-desc-ico",
+				title,
+				"aria-label": title,
+				onClick: (event) => event.stopPropagation(),
+				children: mark
+			}),
+			status.state === "similar" ? /* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "ce-btn-ghost ce-btn-sm",
+				onClick: linkMatch,
+				children: "Link match"
+			}) : null,
+			status.state === "new" ? /* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "ce-btn-ghost ce-btn-sm",
+				onClick: openAdd,
+				children: "+ Add to DB"
+			}) : null,
+			open && form ? /* @__PURE__ */ jsxs("form", {
+				className: "ce-db-form ce-db-pop",
+				"aria-label": "Add item to database",
+				onSubmit: saveRequest,
+				onClick: (event) => event.stopPropagation(),
+				children: [
+					/* @__PURE__ */ jsx("p", { children: "Add item to database" }),
+					/* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "Noun name", value: form.name, onChange: setField("name") }),
+					/* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "UoM", value: form.uom, onChange: setField("uom"), placeholder: "UoM" }),
+					/* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "Category", value: form.category, onChange: setField("category") }),
+					/* @__PURE__ */ jsx("textarea", { className: "ce-input", "aria-label": "Remark", value: form.remark, onChange: setField("remark") }),
+					status.similar.length ? /* @__PURE__ */ jsxs("select", {
+						className: "ce-input",
+						"aria-label": "Similar items",
+						value: form.similar,
+						onChange: setField("similar"),
+						children: status.similar.map((hit) => /* @__PURE__ */ jsx("option", { value: hit.label, children: hit.label }, hit.label))
+					}) : null,
+					/* @__PURE__ */ jsx("button", { type: "submit", className: "ce-btn-primary ce-btn-sm", children: "Request approval" })
+				]
+			}) : null
+		]
+	});
+}
+function PendingMasterPanel() {
+	const db = useMasterlist();
+	const rows = (pendingMasterNow || []).filter((row) => row && row.status === "pending");
+	if (!rows.length) return null;
+	return /* @__PURE__ */ jsxs("section", {
+		className: "ce-card",
+		"aria-label": "Pending item additions",
+		children: [
+			/* @__PURE__ */ jsx("h3", { children: "Pending item additions" }),
+			rows.map((row) => /* @__PURE__ */ jsxs("div", {
+				children: [
+					/* @__PURE__ */ jsx("span", { children: `${row.name} · ${row.category} · ${row.role || "any role"}` }),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => {
+							const made = approveMasterItem({ pendingId: row.id, pending: pendingMasterNow, items: [], approverRole: "admin" });
+							if (!made.ok || !made.item) return;
+							db.addItem(dbSheetKey(row.category), made.item);
+							applyPendingMaster(made.pending);
+						},
+						children: "Approve"
+					})
+				]
+			}, row.id))
+		]
+	});
+}
+function LineDbSlot(props) {
+	if (ceTpl6On === true) return /* @__PURE__ */ jsx(CeLineDbMark, { ...props });
+	return /* @__PURE__ */ jsx(LineDbMark, { ...props });
 }
 function LineDbMark({ category, row, list, onPatch }) {
 	const db = useMasterlist();
@@ -28912,6 +29039,17 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl3On = adminConfig.features?.ceTpl3 === true;
 	ceTpl4On = adminConfig.features?.ceTpl4 === true;
 	ceTpl5On = adminConfig.features?.ceTpl5 === true;
+	ceTpl6On = adminConfig.features?.ceTpl6 === true;
+	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
+	submitPendingMaster = (draft) => {
+		setAdminConfig((prev) => {
+			const made = requestMasterItem({ ...(draft || {}), pending: prev.pendingMasterItems || [], requestedBy: accountUserId, role: draft?.role || accountRole || "staff" });
+			return normalizeAdminConfig({ ...prev, pendingMasterItems: made.pending });
+		});
+	};
+	applyPendingMaster = (pending) => {
+		setAdminConfig((prev) => normalizeAdminConfig({ ...prev, pendingMasterItems: pending || [] }));
+	};
 	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
@@ -32297,6 +32435,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						taskTemplates
 					}),
 					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsxs(Fragment, { children: [
+						ceTpl6On === true ? /* @__PURE__ */ jsx(PendingMasterPanel, {}) : null,
 						/* @__PURE__ */ jsx(AccessQueue, {
 							microsoftLinkFlow: adminConfig?.features?.microsoftLinkFlow === true,
 							departmentsOn: adminConfig?.features?.release1Departments === true,

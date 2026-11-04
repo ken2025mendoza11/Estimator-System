@@ -6,6 +6,7 @@ import { applyRouteSignatories, routeSignatories, signatoryPending } from "./ceS
 import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "./ceWithdraw.js";
 import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS, listHeaderValues } from "./ceHeaderEdit.js";
 import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet } from "./csvImport.js";
+import { approveMasterItem, buildNounName, lineDbState, persistPending, requestMasterItem } from "./ceLineDb.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -230,4 +231,59 @@ test("old-format CE import ignores an extra column and keeps the file total", ()
 	assert.equal(app.includes('"qty."'), true);
 	assert.equal(app.includes('"line item"'), true);
 });
+
+test("a line noun is requested for approval and joins the database only after Admin approves", () => {
+	assert.equal(buildNounName("bolt hex m12x50 ss304"), "BOLT, HEX, M12 x 50, SS304");
+	const roles = ["staff", "sales", "lead", "guest"];
+	let pending = /** @type {any[]} */ ([]);
+	roles.forEach((role, index) => {
+		const made = requestMasterItem({
+			id: `req-${index}`,
+			raw: "bolt hex m12x50 ss304",
+			uom: "pc",
+			category: "BOCM",
+			requestedBy: `user-${role}`,
+			role,
+			pending,
+			now: "2026-11-04T00:00:00.000Z",
+		});
+		pending = made.pending;
+		assert.equal(made.request.status, "pending");
+		assert.equal(made.request.role, role);
+	});
+	const stored = persistPending(pending);
+	assert.equal(JSON.stringify(stored), JSON.stringify(pending));
+	assert.equal(stored.length, 4);
+	const blocked = approveMasterItem({ pendingId: "req-0", pending: stored, items: [], approverRole: "staff" });
+	assert.equal(blocked.ok, false);
+	assert.equal(blocked.items.length, 0);
+	const approved = approveMasterItem({ pendingId: "req-0", pending: stored, items: [{ description: "EXISTING" }], approverRole: "admin", approverId: "admin-1" });
+	assert.equal(approved.ok, true);
+	assert.equal(approved.items.length, 2);
+	assert.equal(approved.item.description, "BOLT, HEX, M12 x 50, SS304");
+	assert.equal(approved.pending.find((row) => row.id === "req-0").status, "approved");
+	const again = persistPending(approved.pending);
+	assert.equal(again.find((row) => row.id === "req-1").status, "pending");
+	const state = lineDbState({
+		name: "bolt hex m12x50 ss304",
+		pending: again,
+		items: [{ description: "BOLT, HEX, M16 x 40, SS304" }],
+	});
+	assert.equal(state.state, "pending");
+	const similar = lineDbState({
+		name: "bolt hex m16x40 ss304",
+		pending: [],
+		items: [{ description: "BOLT, HEX, M16 x 40, SS304" }],
+	});
+	assert.equal(similar.state === "exact" || similar.state === "similar", true);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(app.includes("ceTpl6: false"), true);
+	assert.equal(app.includes("ceTpl6: src.features?.ceTpl6 === true"), true);
+	assert.equal(seed.includes("ceTpl6: true"), true);
+	assert.equal(app.includes("Add item to database"), true);
+	assert.equal(app.includes("+ Add to DB"), true);
+	assert.equal(app.includes("Link match"), true);
+});
+
 
