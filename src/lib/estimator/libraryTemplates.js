@@ -98,6 +98,29 @@ export function previewDocs(docs) {
 }
 
 /**
+ * @param {any[]} templates
+ */
+export function templateChoices(templates) {
+	return (templates || []).filter(Boolean).map((row) => ({
+		id: String(row.id || ""),
+		name: String(row.name || "Template"),
+		type: String(row.type || row.kind || row.jobType || ""),
+		date: String(row.date || row.updatedAt || row.createdAt || "").slice(0, 10),
+	}));
+}
+
+/**
+ * The template the user picked, never the newest one by default.
+ * @param {any[]} templates
+ * @param {unknown} id
+ */
+export function chosenTemplate(templates, id) {
+	const key = String(id || "");
+	if (!key) return null;
+	return (templates || []).find((row) => row && String(row.id || "") === key) || null;
+}
+
+/**
  * In-app PDF preview for one existing document. CE and Markup stay sales-safe.
  * @param {{ kind?: unknown, id?: unknown, status?: unknown }} doc
  */

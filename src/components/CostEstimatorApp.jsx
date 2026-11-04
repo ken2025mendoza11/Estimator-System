@@ -68,7 +68,7 @@ import { salesPipelineRows } from "../lib/estimator/salesStage";
 import { CeExportDialog } from "./CeExportDialog";
 import { RceRemarkCell } from "./RceRemarkCell";
 import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "../lib/estimator/rceTemplate";
-import { libraryTabLabel, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate } from "../lib/estimator/libraryTemplates";
+import { chosenTemplate, libraryTabLabel, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, templateChoices } from "../lib/estimator/libraryTemplates";
 import { markSeen, openStage, showNewForUser } from "../lib/estimator/personalNew";
 import { documentTitle } from "../lib/estimator/notifyBell";
 import { threadParticipants, unreadCount } from "../lib/estimator/ceThread";
@@ -2757,7 +2757,9 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 					type: "button",
 					className: "ce-btn-ghost",
 					onClick: () => {
-						const picked = oifTemplatesNow[0];
+						const menu = templateChoices(oifTemplatesNow).map((row) => `${row.id} | ${row.name} | ${row.type || "OIF"} | ${row.date}`).join("\n");
+						const id = window.prompt(`Start from template. Type the id:\n${menu}`, "");
+						const picked = chosenTemplate(oifTemplatesNow, id);
 						if (picked?.snapshot) patch(picked.snapshot);
 					},
 					children: "Start from template"
@@ -28460,7 +28462,9 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						className: "ce-btn-ghost",
 						type: "button",
 						onClick: () => {
-							const picked = rceTemplatesNow[0];
+							const menu = templateChoices(rceTemplatesNow).map((row) => `${row.id} | ${row.name} | ${row.type || "RCE"} | ${row.date}`).join("\n");
+							const id = window.prompt(`Start from template. Type the id:\n${menu}`, "");
+							const picked = chosenTemplate(rceTemplatesNow, id);
 							if (picked?.snapshot) patchForm(picked.snapshot);
 						},
 						children: "Start from template"

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { markThreadRead, postMessage, threadParticipants, threadVisible, unreadCount } from "./ceThread.js";
-import { blocksToDocxXml, docPreviewUrl, docxXmlToBlocks, htmlToBlocks, importDocxBlocks, libraryTabLabel, numberPlan, previewDocs, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, saveMethodology, xmlToDocxBytes } from "./libraryTemplates.js";
+import { blocksToDocxXml, chosenTemplate, docPreviewUrl, docxXmlToBlocks, htmlToBlocks, importDocxBlocks, libraryTabLabel, numberPlan, previewDocs, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, saveMethodology, templateChoices, xmlToDocxBytes } from "./libraryTemplates.js";
 import { followLabel, salesChipMatch, teamNewRows, trackerSteps } from "./stageBui.js";
 import { bellForUser, documentTitle, markAllRead, unreadBell } from "./notifyBell.js";
 import { addWorkingDays, isWorkingDay, manilaDate, markSeen, openStage, showNewForUser } from "./personalNew.js";
@@ -134,4 +134,18 @@ test("a docx round trip keeps the heading, list, table, bold, and italic", async
 	assert.equal(imported.some((row) => row.type === "list" && row.italic && row.text.includes("Item")), true);
 	assert.equal(imported.some((row) => row.type === "table" && row.rows.flat().includes("Cell")), true);
 	assert.equal(htmlToBlocks("<p><strong>Bold</strong> <em>Italic</em></p>").some((row) => row.bold && row.italic), true);
+	const templates = [
+		{ id: "old", name: "Old shop", type: "RCE", date: "2026-01-01", snapshot: { customer: "Old" } },
+		{ id: "picked", name: "Site visit", type: "OIF", updatedAt: "2026-11-04T01:00:00.000Z", snapshot: { projectDescription: "Pump" } },
+	];
+	assert.equal(templateChoices(templates)[1].date, "2026-11-04");
+	assert.equal(chosenTemplate(templates, "picked").id, "picked");
+	assert.equal(chosenTemplate(templates, "picked").snapshot.projectDescription, "Pump");
+	assert.equal(chosenTemplate(templates, "missing"), null);
+	assert.notEqual(chosenTemplate(templates, "picked").id, templates[0].id);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	assert.equal(app.includes("chosenTemplate(oifTemplatesNow"), true);
+	assert.equal(app.includes("chosenTemplate(rceTemplatesNow"), true);
+	assert.equal(app.includes("oifTemplatesNow[0]"), false);
+	assert.equal(app.includes("rceTemplatesNow[0]"), false);
 });
