@@ -107,4 +107,14 @@ test("phase 43 sql is additive, locks every new table, and has no open policy", 
   assert.equal(folded.includes("ce_threads_ce_id_idx"), true);
   assert.equal(folded.includes("ce_thread_messages_thread_id_idx"), true);
   assert.equal(folded.includes("app_notifications_to_user_id_idx"), true);
+  assert.equal(/auth\.jwt\(\)\s*->>\s*'role'/.test(sql), false);
+  assert.equal(/ce_threads inserts are server-only \(service role\)/.test(sql), true);
+  const method = sql.slice(sql.indexOf("policy methodologies_read"));
+  assert.equal(method.includes("app_metadata"), true);
+  ["methodologies_read", "methodologies_write", "methodology_versions_read", "methodology_versions_write"].forEach((name) => {
+    const start = sql.indexOf(`policy ${name}`);
+    const end = sql.indexOf("drop policy", start + 1);
+    const block = sql.slice(start, end === -1 ? sql.length : end);
+    assert.equal(block.includes("app_metadata"), true, name);
+  });
 });

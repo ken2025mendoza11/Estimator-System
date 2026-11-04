@@ -68,6 +68,7 @@ create policy doc_reads_own on public.doc_reads
   with check (user_id = coalesce(auth.jwt() ->> 'sub', ''));
 
 drop policy if exists ce_threads_participants on public.ce_threads;
+-- ce_threads inserts are server-only (service role). Authenticated users only select a thread they are on.
 create policy ce_threads_participants on public.ce_threads
   for select to authenticated
   using (coalesce(auth.jwt() ->> 'sub', '') = any (participants));
@@ -103,8 +104,8 @@ drop policy if exists methodologies_read on public.methodologies;
 create policy methodologies_read on public.methodologies
   for select to authenticated
   using (
-    coalesce(auth.jwt() ->> 'department', '') in ('Estimating', 'Sales')
-    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+    coalesce(auth.jwt() -> 'app_metadata' ->> 'department', '') in ('Estimating', 'Sales')
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
   );
 
 drop policy if exists methodologies_write on public.methodologies;
@@ -112,19 +113,19 @@ create policy methodologies_write on public.methodologies
   for all to authenticated
   using (
     author_id = coalesce(auth.jwt() ->> 'sub', '')
-    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
   )
   with check (
     author_id = coalesce(auth.jwt() ->> 'sub', '')
-    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
   );
 
 drop policy if exists methodology_versions_read on public.methodology_versions;
 create policy methodology_versions_read on public.methodology_versions
   for select to authenticated
   using (
-    coalesce(auth.jwt() ->> 'department', '') in ('Estimating', 'Sales')
-    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+    coalesce(auth.jwt() -> 'app_metadata' ->> 'department', '') in ('Estimating', 'Sales')
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
   );
 
 drop policy if exists methodology_versions_write on public.methodology_versions;
@@ -132,7 +133,7 @@ create policy methodology_versions_write on public.methodology_versions
   for insert to authenticated
   with check (
     author_id = coalesce(auth.jwt() ->> 'sub', '')
-    or coalesce(auth.jwt() ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') in ('lead', 'head', 'admin', 'Lead', 'Head', 'Admin')
   );
 
 create index if not exists ce_threads_ce_id_idx on public.ce_threads (ce_id);
