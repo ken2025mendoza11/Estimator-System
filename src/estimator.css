@@ -1290,3 +1290,28 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-header-drawer .ce-field{margin-bottom:.75rem}
 .ce-header-drawer textarea.ce-input{min-height:4.5rem;resize:vertical}
 .ce-header-drawer .ce-drawer-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.4rem}
+.ce-tpl10 .mon-table th,
+.ce-tpl10 .ce-table th,
+.ce-tpl10 .dash-table th,
+.ce-tpl10 .rce-table th,
+.ce-tpl10 .oif-mon-table th{
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+  line-height:1.2;
+  min-width:4.75rem;
+  height:auto;
+  padding:.4rem .5rem;
+}
+.ce-tpl10 .mon-table.mon-active-table.mon-ce-board th.mon-project,
+.ce-tpl10 .mon-table.mon-active-table.mon-ce-board td.mon-project{
+  min-width:12rem;
+  width:14rem;
+  max-width:none;
+  white-space:normal;
+}
+.ce-tpl10 th.mon-ce-head,
+.ce-tpl10 td.mon-ce{
+  min-width:10.5rem;
+  white-space:nowrap;
+}

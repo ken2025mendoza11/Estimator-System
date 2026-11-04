@@ -109,6 +109,7 @@ let ceTpl6On = false;
 let ceTpl7On = false;
 let ceTpl8On = false;
 let ceTpl9On = false;
+let ceTpl10On = false;
 let miscShowMemory = {};
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
@@ -4897,7 +4898,8 @@ function defaultAdminConfig() {
 			ceTpl6: false,
 			ceTpl7: false,
 			ceTpl8: false,
-			ceTpl9: false
+			ceTpl9: false,
+			ceTpl10: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5029,7 +5031,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl6: src.features?.ceTpl6 === true,
 			ceTpl7: src.features?.ceTpl7 === true,
 			ceTpl8: src.features?.ceTpl8 === true,
-			ceTpl9: src.features?.ceTpl9 === true
+			ceTpl9: src.features?.ceTpl9 === true,
+			ceTpl10: src.features?.ceTpl10 === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
@@ -23504,7 +23507,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							/* @__PURE__ */ jsx("th", { className: "mon-priority", children: "Priority" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-st", children: "Status" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-project", children: "Project Description" }),
-							/* @__PURE__ */ jsx("th", { children: "CE #" }),
+							/* @__PURE__ */ jsx("th", { className: "mon-ce-head", children: "CE #" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-company", children: "Company" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-dept", children: "Department" }),
 							/* @__PURE__ */ jsx("th", { children: "RCE Received" }),
@@ -23524,7 +23527,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							/* @__PURE__ */ jsx("th", { children: "Deadline" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-wrap", children: "Aging" }),
 							/* @__PURE__ */ jsx("th", { children: "Amount" }),
-							/* @__PURE__ */ jsx("th", { children: "CE #" }),
+							/* @__PURE__ */ jsx("th", { className: "mon-ce-head", children: "CE #" }),
 							showEstimator ? /* @__PURE__ */ jsx("th", { className: "mon-estimator", children: "Estimator" }) : null,
 							/* @__PURE__ */ jsx("th", { className: "mon-company", children: "Company" }),
 							/* @__PURE__ */ jsx("th", { children: "Department" }),
@@ -26830,7 +26833,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 							/* @__PURE__ */ jsx("th", { className: "mon-wrap-co", children: "Company Designation" }),
 							/* @__PURE__ */ jsx("th", { children: "Department" }),
 							/* @__PURE__ */ jsx("th", { children: "RCE #" }),
-							/* @__PURE__ */ jsx("th", { children: "CE #" }),
+							/* @__PURE__ */ jsx("th", { className: "mon-ce-head", children: "CE #" }),
 							/* @__PURE__ */ jsx("th", { children: "Client" }),
 							/* @__PURE__ */ jsx("th", { children: "Project Description" }),
 							/* @__PURE__ */ jsx("th", { children: "Amount" })
@@ -28961,7 +28964,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		setCurrentView(next);
 	};
 	return /* @__PURE__ */ jsxs("div", {
-		className: "ce-shell-outer",
+		className: "ce-shell-outer" + (ceTpl10On === true ? " ce-tpl10" : ""),
 		children: [/* @__PURE__ */ jsxs("aside", {
 			className: `ce-sidebar ${collapsed ? "ce-sidebar-collapsed" : ""}`,
 			children: [
@@ -29200,6 +29203,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl7On = adminConfig.features?.ceTpl7 === true;
 	ceTpl8On = adminConfig.features?.ceTpl8 === true;
 	ceTpl9On = adminConfig.features?.ceTpl9 === true;
+	ceTpl10On = adminConfig.features?.ceTpl10 === true;
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {

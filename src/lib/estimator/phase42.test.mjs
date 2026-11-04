@@ -11,6 +11,7 @@ import { applyAttachmentEdits, compiledAttachmentNames, copyAttachmentVersion, r
 import { projectTotal } from "./ceTotals.js";
 import { miscPartSubtotals, miscShowAllPref } from "./ceMiscView.js";
 import { planSowSchedule, resizeSowDays } from "./phase10.js";
+import { headerFit, headersReadable } from "./ceHeaderFit.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -375,6 +376,26 @@ test("SOW dates follow finish-to-start links and skip holidays", () => {
 	assert.equal(app.includes("SOW schedule"), true);
 	assert.equal(seed.includes("ceTpl9: true"), true);
 });
+
+test("monitoring headers wrap instead of overlapping at 1280 and 1024", () => {
+	const labels = ["Item No.", "Estimator", "Priority", "Status", "Project Description", "CE #", "Company", "Department", "RCE Received", "Deadline", "Aging", "Amount", "Remarks"];
+	assert.equal(headerFit("CE #").nowrap, true);
+	assert.equal(headerFit("Project Description").wraps, true);
+	assert.ok(headerFit("Project Description").minPx >= 180);
+	assert.equal(headersReadable(labels, 1280), true);
+	assert.equal(headersReadable(labels, 1024), true);
+	const css = readFileSync(new URL("../../estimator.css", import.meta.url), "utf8");
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(css.includes(".ce-tpl10 .mon-table.mon-active-table.mon-ce-board th.mon-project"), true);
+	assert.equal(css.includes("white-space:normal"), true);
+	assert.equal(css.includes("th.mon-ce-head"), true);
+	assert.equal(app.includes("ceTpl10: false"), true);
+	assert.equal(app.includes("ceTpl10: src.features?.ceTpl10 === true"), true);
+	assert.equal(app.includes("ce-tpl10"), true);
+	assert.equal(seed.includes("ceTpl10: true"), true);
+});
+
 
 
 
