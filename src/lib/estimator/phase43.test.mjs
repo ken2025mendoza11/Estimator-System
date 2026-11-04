@@ -121,6 +121,24 @@ test("threads, the bell, and library strips keep the current rules", () => {
 	assert.equal(docxXmlToBlocks(xml).some((row) => row.type === "heading" && row.text === "Title"), true);
 });
 
+test("a Sales or Operations head who is not on the cost estimate is not a thread participant", () => {
+	const ce = { assigneeId: "est-1" };
+	const users = [
+		{ userId: "sales-head", role: "head", department: "Sales" },
+		{ userId: "ops-head", role: "head", department: "Operations" },
+		{ userId: "est-head", role: "head", department: "Estimating" },
+		{ userId: "est-lead", role: "lead", accountDepartment: "Cost Estimating" },
+		{ userId: "admin-1", role: "admin", department: "Sales" },
+	];
+	const ids = threadParticipants(ce, users);
+	assert.equal(ids.includes("sales-head"), false);
+	assert.equal(ids.includes("ops-head"), false);
+	assert.equal(ids.includes("est-head"), true);
+	assert.equal(ids.includes("est-lead"), true);
+	assert.equal(ids.includes("admin-1"), true);
+	assert.equal(ids.includes("est-1"), true);
+});
+
 test("a docx round trip keeps the heading, list, table, bold, and italic", async () => {
 	const blocks = [
 		{ type: "heading", text: "Title", bold: true },

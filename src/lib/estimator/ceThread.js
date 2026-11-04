@@ -10,7 +10,8 @@ function addId(ids, value) {
 }
 
 /**
- * Assignee, Estimating Lead, Sales owner, approvers, and admins.
+ * Assignee, the Estimating Lead or Head, the Sales owner, approvers, and admins.
+ * A Lead or Head in another department is not added.
  * @param {any} input
  * @param {unknown[]} [users]
  */
@@ -30,8 +31,11 @@ export function threadParticipants(input, users) {
 	(ce.adminIds || []).forEach((/** @type {any} */ id) => addId(ids, id));
 	(Array.isArray(users) ? users : []).forEach((/** @type {any} */ user) => {
 		const role = String(user?.level || user?.role || user?.position || "").toLowerCase();
+		const dept = String(user?.accountDepartment || user?.account_department || user?.department || "").trim().toLowerCase();
 		const id = user?.userId || user?.id || "";
-		if (role === "lead" || role === "head" || role.includes("estimating lead")) addId(ids, id);
+		const estimating = dept === "estimating" || dept === "cost estimating";
+		const leadOrHead = role === "lead" || role === "head" || role.includes("estimating lead");
+		if (leadOrHead && estimating) addId(ids, id);
 		if (role === "admin") addId(ids, id);
 	});
 	return ids;
