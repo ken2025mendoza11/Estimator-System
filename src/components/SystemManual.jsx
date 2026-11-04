@@ -545,7 +545,7 @@ function buildArticles(ctx) {
 						</tbody>
 					</table>
 				</div>
-				<p>Use <b>Acting as</b> on the sidebar to see the system the way that person sees it. It does not log you out.</p>
+				<p>The sidebar title is ESTIMATOR SYSTEM. Use <b>Acting as</b> only in a test build. It does not log you out.</p>
 			</>
 		)
 	});

@@ -200,7 +200,7 @@ function sheetName(title) {
   return String(title || 'Sheet').replace(/[\\/?*[\]]/g, ' ').slice(0, 31);
 }
 
-function issuePdfData(data = {}) {
+export function issuePdfData(data = {}) {
   const cover = data.cover || {};
   const grand = Number(cover.grandTotal) || 0;
   const checksum = Math.round(grand * 100) / 100;
@@ -231,7 +231,7 @@ function issuePdfData(data = {}) {
           ['Reviewed', cover.reviewedBy || ''],
           ['Approved', cover.approvedBy || ''],
           ['Grand total', String(checksum)],
-          ['Contingency %', String(cover.contingencyPct || 0)],
+          ...(cover.omitContingency ? [] : [['Contingency %', String(cover.contingencyPct || 0)]]),
           ['Discount %', String(cover.discountPct || 0)],
           ['Net', String(cover.netTotal || checksum)],
           ['Assumptions', cover.assumptions || ''],
@@ -303,14 +303,14 @@ export function exportIssueExcel(data = {}) {
   const last = 14 + catNames.length;
   coverAoA.push([]);
   coverAoA.push(['Grand', '', '', '', { f: `SUM(E${first}:E${last})` }]);
-  coverAoA.push(['Contingency %', cover.contingencyPct || 0]);
+  if (!cover.omitContingency) coverAoA.push(['Contingency %', cover.contingencyPct || 0]);
   coverAoA.push(['Discount %', cover.discountPct || 0]);
   coverAoA.push([
     'Net',
     '',
     '',
     '',
-    { f: `E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100)` },
+    { f: cover.omitContingency ? `E${last + 2}*(1-B${last + 3}/100)` : `E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100)` },
   ]);
   coverAoA.push([]);
   coverAoA.push(['Assumptions / exclusions', cover.assumptions || '']);

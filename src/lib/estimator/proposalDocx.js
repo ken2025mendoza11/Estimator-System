@@ -24,6 +24,11 @@ export async function proposalDocxBytes(proposal) {
 export function proposalPdfBytes(proposal) {
 	const Pdf = typeof jsPDFNamed === "function" ? jsPDFNamed : jsPDFDefault;
 	const pdf = new Pdf({ unit: "pt", format: "a4" });
+	pdf.setFillColor(173, 216, 230);
+	pdf.rect(36, 800, 523, 22, "F");
+	pdf.setTextColor(20, 40, 90);
+	pdf.text("COMMERCIAL PROPOSAL", 48, 816);
+	pdf.setTextColor(0, 0, 0);
 	const lines = proposalLines(proposal);
 	let y = 48;
 	lines.forEach((line) => {

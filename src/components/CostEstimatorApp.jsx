@@ -19102,7 +19102,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const grand = projectTotal(state.tasks, state.pricing, state.mobSheets);
 	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat, state.pricing), 0);
 	const benefitSum = directOn ? directColumnTotals(state.tasks, state.pricing).A1 : 0;
-	const contPct = num2(state.commercial?.contingencyPct);
+	const contPct = 0;
 	const discPct = num2(state.commercial?.discountPct);
 	const netTotal = directOn ? grand : checksumTotal(grand * (1 + contPct / 100) * (1 - discPct / 100));
 	const switchOffer = offerDirectSwitch({
@@ -19430,10 +19430,9 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		}
 		if (warnings.length && !issueAck) setIssueAck(true);
 		const data = ceTpl5On && exportChoice ? applyExportPlan(prepareExportData(), exportChoice) : prepareExportData();
-		const cont = num2(state.commercial?.contingencyPct);
 		const disc = num2(state.commercial?.discountPct);
 		const grand2 = projectTotal(state.tasks, state.pricing, state.mobSheets);
-		const net = directOn ? grand2 : commercialNet(grand2, cont, disc);
+		const net = directOn ? grand2 : commercialNet(grand2, 0, disc);
 		const typesInUse = [...new Set((state.enabledWorkTypes && state.enabledWorkTypes.length ? state.enabledWorkTypes : (state.tasks || []).map((t) => taskWorkType(t))).filter(Boolean))];
 		const tradingOnly = typesInUse.length === 1 && typesInUse[0] === "trading";
 		const parties = partiesFromApproval(linkedRce?.approval);
@@ -19454,7 +19453,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				approvedBy: linkedRce?.approvedBy || parties.approvedBy || "",
 				grandTotal: grand2,
 				netTotal: directOn ? grand2 : checksumTotal(net),
-				contingencyPct: directOn ? 0 : cont,
+				contingencyPct: 0,
+				omitContingency: true,
 				discountPct: directOn ? 0 : disc,
 				assumptions: state.assumptions || sowText.replace(/<[^>]+>/g, " "),
 				exportedBy: editingUser,
@@ -19760,13 +19760,13 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 						onClick: () => onAcceptSalesCeRequest(),
 						children: "Take CE request"
 					}) : null,
-					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: markup }) ? /* @__PURE__ */ jsx("button", {
+					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: markup, ...(ceData?.salesOwnerId ? { actorUserId: release1ActorId, ownerUserId: ceData.salesOwnerId, isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}) }) ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => onMarkup("create", { directCost: officialTotal }),
 						children: "Generate Markup"
 					}) : null,
-					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: markup?.status, existing: proposal }) ? /* @__PURE__ */ jsx("button", {
+					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: markup?.status, existing: proposal, ...(ceData?.salesOwnerId ? { actorUserId: release1ActorId, ownerUserId: ceData.salesOwnerId, isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}) }) ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: "ce-btn-primary ce-btn-sm",
 						onClick: () => {
@@ -20600,23 +20600,11 @@ ${names.join(", ")}`, editingUser) : editingUser;
 											className: "ce-commercial",
 											children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("b", { children: "Net" }), /* @__PURE__ */ jsx("div", {
 												className: "ce-mono",
-												children: fmt(grand * (1 + num2(state.commercial?.contingencyPct) / 100) * (1 - num2(state.commercial?.discountPct) / 100))
+												children: fmt(grand * (1 - num2(state.commercial?.discountPct) / 100))
 											})] })]
 										}) : /* @__PURE__ */ jsxs("div", {
 											className: "ce-commercial",
 											children: [
-												/* @__PURE__ */ jsxs("label", { children: ["Contingency %", /* @__PURE__ */ jsx("input", {
-													className: "ce-input",
-													type: "number",
-													value: state.commercial?.contingencyPct ?? 0,
-													onChange: (e) => {
-														if (commercialLimits.reject("commercial", "contingencyPct", e.target.value)) return;
-														dispatch({
-															type: "PATCH_COMMERCIAL",
-															patch: { contingencyPct: e.target.value }
-														});
-													}
-												}), limitNote(commercialLimits.fieldNote("commercial", "contingencyPct"))] }),
 												/* @__PURE__ */ jsxs("label", { children: ["Discount %", /* @__PURE__ */ jsx("input", {
 													className: "ce-input",
 													type: "number",
@@ -20631,7 +20619,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 												}), limitNote(commercialLimits.fieldNote("commercial", "discountPct"))] }),
 												/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("b", { children: "Net" }), /* @__PURE__ */ jsx("div", {
 													className: "ce-mono",
-													children: fmt(grand * (1 + num2(state.commercial?.contingencyPct) / 100) * (1 - num2(state.commercial?.discountPct) / 100))
+													children: fmt(grand * (1 - num2(state.commercial?.discountPct) / 100))
 												})] })
 											]
 										}),
@@ -28980,7 +28968,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 						!collapsed && /* @__PURE__ */ jsx(ClipboardList, { size: 18 }),
 						!collapsed && /* @__PURE__ */ jsx("span", {
 							className: "ce-serif ce-sidebar-brand-text",
-							children: "Cost Estimator"
+							children: "ESTIMATOR SYSTEM"
 						}),
 						/* @__PURE__ */ jsx("button", {
 							type: "button",
@@ -31452,7 +31440,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (current) return;
 			const doc = documents[ceId] || {};
 			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || ceId;
-			result = createMarkup({ ceId, ceNo, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100" });
+			result = createMarkup({ ceId, ceNo, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100", ...(activeCE?.salesOwnerId ? { ownerUserId: activeCE.salesOwnerId, isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}) });
 		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
 		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
 		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
@@ -31573,6 +31561,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				clauses: adminConfig.proposalClauses,
 				header: "Proposal",
 				prDate: todayLocal(),
+				...(activeCE?.salesOwnerId ? { ownerUserId: activeCE.salesOwnerId, isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) } : {}),
 				...payload || {},
 				markupNo: markup.markupNo || "",
 				ceNo: markup.ceNo || payload?.ceNo || ""

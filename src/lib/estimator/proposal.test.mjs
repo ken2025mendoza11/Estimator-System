@@ -165,4 +165,17 @@ test("docx and pdf contain the proposal text, and the flag defaults off", async 
 	assert.equal(canGenerateProposal({ flagOn: true, sales: true, markupStatus: "Approved" }), true);
 	assert.equal(canGenerateProposal({ flagOn: true, sales: true, markupStatus: "Draft" }), false);
 	assert.equal(canGenerateProposal({ flagOn: false, sales: true, markupStatus: "Approved" }), false);
+	assert.equal(canGenerateProposal({ flagOn: true, sales: true, markupStatus: "Approved", actorUserId: "sales-1", ownerUserId: "sales-1" }), true);
+	assert.equal(canGenerateProposal({ flagOn: true, sales: true, markupStatus: "Approved", actorUserId: "sales-2", ownerUserId: "sales-1" }), false);
+	assert.equal(canGenerateProposal({ flagOn: true, sales: true, markupStatus: "Approved", actorUserId: "mgr", ownerUserId: "sales-1", isSalesManager: true }), true);
+	const lines = proposalLines({ prNo: "PR 26-360801", controlNo: "0001", ceNo: "CE-1", total: 10, scope: "Lift", clauses: "Net 30", validityDays: 30, validUntil: "2026-02-01" });
+	assert.equal(lines.includes("SY3"), true);
+	assert.equal(lines.includes("COMMERCIAL PROPOSAL"), true);
+	assert.equal(lines.includes("I. Scope"), true);
+	assert.equal(lines.includes("II. Price"), true);
+	assert.equal(lines.includes("III. Terms"), true);
+	assert.equal(lines.includes("Client Conforme"), true);
+	const denied = createProposal({ byUserId: "sales-2", ownerUserId: "sales-1", isSalesManager: false, controlNo: "0001", parts: { profit: 10, contingency: 0, markup: 0 }, directCost: 100 });
+	assert.equal(denied.ok, false);
+	assert.match(denied.message, /Sales owner or a Sales Manager/);
 });

@@ -1,7 +1,7 @@
 /** Proposal from an approved markup. Prices are the markup selling split by cost group. CE lines are not recomputed. */
 
 import { backupSignatureLabel, normalizeApproverLists, personName } from "./departments.js";
-import { totalPercent, sellingFromDirect } from "./markup.js";
+import { salesActorAllowed, sellingFromDirect, totalPercent } from "./markup.js";
 import { roundMoney, sumRounded } from "./money.js";
 
 export const RELEASE1_PROPOSAL_FLAG = "release1Proposal";
@@ -164,6 +164,8 @@ export function proposalLines(proposal, users) {
 	const name = (/** @type {unknown} */ id) => personName(id, users);
 	return [
 		String(row.header || "Proposal"),
+		"SY3",
+		"COMMERCIAL PROPOSAL",
 		`PR no. ${row.prNo || "—"}`,
 		`PR date ${row.prDate || "—"}`,
 		`Control no. ${row.controlNo || "—"}${rev}`,
@@ -171,11 +173,14 @@ export function proposalLines(proposal, users) {
 		`Project ${row.project || "—"}`,
 		`CE no. ${row.ceNo || row.ceId || "—"} Rev ${row.ceRev || "—"}`,
 		`Markup no. ${row.markupNo || "—"}`,
+		"I. Scope",
 		"Scope",
 		String(row.scope || ""),
+		"II. Price",
 		"Price breakdown",
 		...groups.map((/** @type {any} */ group) => `${group.label || group.key}: ${Number(group.selling || 0).toFixed(2)}`),
 		`Total ${Number(row.total || 0).toFixed(2)}`,
+		"III. Terms",
 		"Clauses",
 		String(row.clauses || ""),
 		`Valid until ${row.validUntil || "—"} (${row.validityDays ?? 30} days)`,
@@ -183,6 +188,7 @@ export function proposalLines(proposal, users) {
 		`Approver ${name(row.approverId)}`,
 		row.approverFor ? `Signature ${row.approverFor}` : "Signature",
 		`Client conforme ${row.clientConforme || ""}`,
+		"Client Conforme",
 	];
 }
 
@@ -193,6 +199,18 @@ export function proposalLines(proposal, users) {
 export function createProposal(input) {
 	const byUserId = String(input?.byUserId || "").trim();
 	if (!byUserId) return { ok: false, message: "An account id is required." };
+	if (input?.ownerUserId != null || input?.isSalesManager != null) {
+		const allowed = canGenerateProposal({
+			flagOn: true,
+			sales: true,
+			markupStatus: "Approved",
+			existing: false,
+			actorUserId: byUserId,
+			ownerUserId: input.ownerUserId,
+			isSalesManager: input.isSalesManager === true,
+		});
+		if (!allowed) return { ok: false, message: "Only the Sales owner or a Sales Manager can generate a proposal." };
+	}
 	const controlNo = formatControlNo(input?.controlNo);
 	if (!controlNo) return { ok: false, message: "A 4-digit control number from the database is required." };
 	const parts = input?.parts;
@@ -530,11 +548,12 @@ export function noRevisionNeeded(proposal, input) {
 }
 
 /**
- * @param {{ flagOn?: boolean, sales?: boolean, markupStatus?: unknown, existing?: unknown }} input
+ * @param {{ flagOn?: boolean, sales?: boolean, markupStatus?: unknown, existing?: unknown, ownerUserId?: unknown, actorUserId?: unknown, isSalesManager?: unknown }} input
  * @returns {boolean}
  */
 export function canGenerateProposal(input) {
 	if (input?.flagOn !== true || input?.sales !== true) return false;
 	if (String(input?.markupStatus || "") !== "Approved") return false;
-	return !input.existing;
+	if (input?.existing) return false;
+	return salesActorAllowed(input);
 }
