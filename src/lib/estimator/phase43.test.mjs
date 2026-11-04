@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { markThreadRead, postMessage, threadParticipants, threadVisible, unreadCount } from "./ceThread.js";
-import { docPreviewUrl, docxXmlToBlocks, libraryTabLabel, numberPlan, previewDocs, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, blocksToDocxXml, saveMethodology } from "./libraryTemplates.js";
+import { blocksToDocxXml, docPreviewUrl, docxXmlToBlocks, htmlToBlocks, importDocxBlocks, libraryTabLabel, numberPlan, previewDocs, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, saveMethodology, xmlToDocxBytes } from "./libraryTemplates.js";
 import { followLabel, salesChipMatch, teamNewRows, trackerSteps } from "./stageBui.js";
 import { bellForUser, documentTitle, markAllRead, unreadBell } from "./notifyBell.js";
 import { addWorkingDays, isWorkingDay, manilaDate, markSeen, openStage, showNewForUser } from "./personalNew.js";
@@ -116,4 +116,22 @@ test("threads, the bell, and library strips keep the current rules", () => {
 	const xml = blocksToDocxXml([{ type: "heading", text: "Title", bold: true }]);
 	assert.equal(xml.includes("Heading1"), true);
 	assert.equal(docxXmlToBlocks(xml).some((row) => row.type === "heading" && row.text === "Title"), true);
+});
+
+test("a docx round trip keeps the heading, list, table, bold, and italic", async () => {
+	const blocks = [
+		{ type: "heading", text: "Title", bold: true },
+		{ type: "list", text: "Item", italic: true },
+		{ type: "table", rows: [["Cell"]] },
+	];
+	const xml = blocksToDocxXml(blocks);
+	const read = docxXmlToBlocks(xml);
+	assert.equal(read.some((row) => row.type === "heading" && row.bold && row.text === "Title"), true);
+	assert.equal(read.some((row) => row.type === "list" && row.italic && row.text === "Item"), true);
+	assert.equal(read.some((row) => row.type === "table" && row.rows[0][0] === "Cell"), true);
+	const imported = await importDocxBlocks(xmlToDocxBytes(xml));
+	assert.equal(imported.some((row) => row.type === "heading" && row.text.includes("Title")), true);
+	assert.equal(imported.some((row) => row.type === "list" && row.italic && row.text.includes("Item")), true);
+	assert.equal(imported.some((row) => row.type === "table" && row.rows.flat().includes("Cell")), true);
+	assert.equal(htmlToBlocks("<p><strong>Bold</strong> <em>Italic</em></p>").some((row) => row.bold && row.italic), true);
 });

@@ -184,11 +184,108 @@ export function blocksToDocxXml(blocks) {
 	const amp = "&" + "amp;";
 	const lt = "&" + "lt;";
 	const gt = "&" + "gt;";
+	const esc = (value) => String(value || "").replace(/&/g, amp).replace(/</g, lt).replace(/>/g, gt);
 	const paras = (blocks || []).map((block) => {
-		const text = String(block?.text || "").replace(/&/g, amp).replace(/</g, lt).replace(/>/g, gt);
-		const style = block?.type === "heading" ? "<w:pStyle w:val=\"Heading1\"/>" : "";
-		const mark = `${block?.bold ? "<w:b/>" : ""}${block?.italic ? "<w:i/>" : ""}`;
+		if (block?.type === "table") {
+			const rows = (block.rows || []).map((row) => `<w:tr>${(row || []).map((cell) => `<w:tc><w:p><w:r><w:t>${esc(cell)}</w:t></w:r></w:p></w:tc>`).join("")}</w:tr>`).join("");
+			return `<w:tbl>${rows}</w:tbl>`;
+		}
+		const text = esc(block?.text);
+		const style = block?.type === "heading" ? "<w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>" : block?.type === "list" ? "<w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>" : "";
+		const mark = `${block?.bold ? "<w:b/>" : ""}${block?.italic ? "<w:i/>" : ""}${block?.underline ? "<w:u w:val=\"single\"/>" : ""}`;
 		return `<w:p>${style}<w:r><w:rPr>${mark}</w:rPr><w:t>${text}</w:t></w:r></w:p>`;
 	}).join("");
 	return `<w:document><w:body>${paras}</w:body></w:document>`;
+}
+
+/**
+ * @param {Uint8Array} bytes
+ */
+function crc32(bytes) {
+	let crc = 0xffffffff;
+	for (let i = 0; i < bytes.length; i += 1) {
+		crc ^= bytes[i];
+		for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+	}
+	return (~crc) >>> 0;
+}
+
+/**
+ * @param {number} value
+ * @param {number} size
+ */
+function le(value, size) {
+	const out = [];
+	for (let i = 0; i < size; i += 1) out.push((value >>> (8 * i)) & 255);
+	return out;
+}
+
+/**
+ * Stored zip of a Word document so mammoth can read the same blocks.
+ * @param {string} xml
+ * @returns {Uint8Array}
+ */
+export function xmlToDocxBytes(xml) {
+	const source = String(xml || "");
+	const document = source.includes("xmlns:w") ? source : source.replace("<w:document>", "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
+	const files = [
+		["[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/></Types>"],
+		["_rels/.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>"],
+		["word/_rels/document.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/></Relationships>"],
+		["word/numbering.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"*\"/></w:lvl></w:abstractNum><w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num></w:numbering>"],
+		["word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${document}`],
+	];
+	/** @type {number[]} */
+	const local = [];
+	/** @type {number[]} */
+	const central = [];
+	files.forEach(([name, text]) => {
+		const nameBytes = Array.from(new TextEncoder().encode(name));
+		const data = Array.from(new TextEncoder().encode(text));
+		const crc = crc32(Uint8Array.from(data));
+		const offset = local.length;
+		local.push(...le(0x04034b50, 4), ...le(20, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(crc, 4), ...le(data.length, 4), ...le(data.length, 4), ...le(nameBytes.length, 2), ...le(0, 2), ...nameBytes, ...data);
+		central.push(...le(0x02014b50, 4), ...le(20, 2), ...le(20, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(crc, 4), ...le(data.length, 4), ...le(data.length, 4), ...le(nameBytes.length, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 4), ...le(offset, 4), ...nameBytes);
+	});
+	const start = local.length;
+	const all = [...local, ...central, ...le(0x06054b50, 4), ...le(0, 2), ...le(0, 2), ...le(files.length, 2), ...le(files.length, 2), ...le(central.length, 4), ...le(start, 4), ...le(0, 2)];
+	return Uint8Array.from(all);
+}
+
+/**
+ * @param {string} html
+ */
+export function htmlToBlocks(html) {
+	const source = String(html || "");
+	/** @type {any[]} */
+	const blocks = [];
+	const plain = (value) => String(value || "").replace(/<[^>]+>/g, "").trim();
+	const tables = source.match(/<table[\s\S]*?<\/table>/gi) || [];
+	tables.forEach((table) => {
+		const rows = [...table.matchAll(/<tr[\s\S]*?<\/tr>/gi)].map((row) => [...row[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) => plain(cell[1])));
+		blocks.push({ type: "table", rows });
+	});
+	const rest = source.replace(/<table[\s\S]*?<\/table>/gi, "");
+	[...rest.matchAll(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi)].forEach((match) => {
+		blocks.push({ type: "heading", text: plain(match[1]), bold: /<(strong|b)[\s>]/i.test(match[1]) || true, italic: /<(em|i)[\s>]/i.test(match[1]) });
+	});
+	[...rest.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].forEach((match) => {
+		blocks.push({ type: "list", text: plain(match[1]), bold: /<(strong|b)[\s>]/i.test(match[1]), italic: /<(em|i)[\s>]/i.test(match[1]) });
+	});
+	[...rest.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].forEach((match) => {
+		const text = plain(match[1]);
+		if (!text) return;
+		blocks.push({ type: "p", text, bold: /<(strong|b)[\s>]/i.test(match[1]), italic: /<(em|i)[\s>]/i.test(match[1]) });
+	});
+	return blocks;
+}
+
+/**
+ * @param {Uint8Array | ArrayBuffer} bytes
+ */
+export async function importDocxBlocks(bytes) {
+	const mammoth = await import("mammoth");
+	const buffer = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+	const result = await mammoth.convertToHtml({ buffer: Buffer.from(buffer) });
+	return htmlToBlocks(result.value);
 }
