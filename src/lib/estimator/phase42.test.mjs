@@ -5,6 +5,7 @@ import { freezeOffsets, freezePlan, stickyBarVisible, stickyScrollCheck } from "
 import { applyRouteSignatories, routeSignatories, signatoryPending } from "./ceSignatories.js";
 import { ceReviseOnly, ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "./ceWithdraw.js";
 import { applyHeaderEdit, headerEditDraft, headerEditLocked, HEADER_EDIT_FIELDS, listHeaderValues } from "./ceHeaderEdit.js";
+import { applyExportPlan, classifyImportMatch, importedTotal, mapCeSheet } from "./csvImport.js";
 
 test("sticky tables freeze item and project and keep a bottom scrollbar", () => {
 	assert.deepEqual(freezePlan(["Item No.", "Estimator", "Project Description", "CE #"]), [0, 2]);
@@ -183,5 +184,50 @@ test("header edit updates client, project, and deadline in list readers and lock
 	assert.equal(app.includes("ceTpl4: src.features?.ceTpl4 === true"), true);
 	assert.equal(seed.includes("ceTpl4: true"), true);
 	assert.equal(app.includes("ce-header-drawer"), true);
+});
+
+test("old-format CE import ignores an extra column and keeps the file total", () => {
+	const headers = ["DESCRIPTION", "QTY.", "U/M", "RATE / UNIT COST", "BRAND"];
+	const body = [
+		["Welding rod E6013 3.2mm", "5", "kg", "210.00", "Lincoln"],
+		["SUBTOTAL", "", "", "", ""],
+		["Paint, epoxy primer", "4", "gal", "1850.00", ""],
+	];
+	const mapped = mapCeSheet(headers, body);
+	assert.deepEqual(mapped.ignored, ["BRAND"]);
+	assert.equal(mapped.missing.includes("remarks"), true);
+	assert.equal(mapped.rows.filter((/** @type {any} */ row) => row.skip).length, 1);
+	assert.equal(mapped.rows.filter((/** @type {any} */ row) => row.selected).length, 2);
+	const fileTotal = 5 * 210 + 4 * 1850;
+	assert.equal(importedTotal(mapped.rows), fileTotal);
+	const library = [
+		{ description: "ROD, WELDING, E6013, 3.2MM" },
+		{ description: "DISC, GRINDING, 4 IN" },
+	];
+	const exact = classifyImportMatch("ROD, WELDING, E6013, 3.2MM", library, { similarity: 0.78 });
+	assert.equal(exact.kind, "exact");
+	const fresh = classifyImportMatch("Paint, epoxy primer", library, { similarity: 0.9 });
+	assert.equal(fresh.kind, "new");
+	const filtered = applyExportPlan({
+		sections: [
+			{ title: "CE Summary", columns: ["Item", "Total"], rows: [["Labor", "100"]], signs: [{ name: "Ada", stamp: "signed" }] },
+			{ title: "BOL", columns: ["Item", "Rate/Day"], rows: [["Welder", "500"]] },
+			{ title: "MISC", columns: ["Item", "Amount"], rows: [["Power", "20"]] },
+		],
+		attachmentFiles: [{ name: "a.pdf" }],
+	}, { format: "both", whole: false, parts: ["bol"], hidePrices: true, includeSignatures: false });
+	assert.deepEqual(filtered.sections.map((/** @type {any} */ section) => section.title), ["BOL"]);
+	assert.equal(filtered.sections[0].rows[0][1], "—");
+	assert.equal(filtered.attachmentFiles.length, 0);
+	const app = readFileSync(new URL("../../components/CostEstimatorApp.jsx", import.meta.url), "utf8");
+	const seed = readFileSync(new URL("../../../scripts/seed-test.mjs", import.meta.url), "utf8");
+	assert.equal(app.includes("ceTpl5: false"), true);
+	assert.equal(app.includes("ceTpl5: src.features?.ceTpl5 === true"), true);
+	assert.equal(seed.includes("ceTpl5: true"), true);
+	assert.equal(app.includes('"aria-label": "Export"'), true);
+	assert.equal(app.includes('"aria-label": "Import wizard"'), true);
+	assert.equal(app.includes('"u/m"'), true);
+	assert.equal(app.includes('"qty."'), true);
+	assert.equal(app.includes('"line item"'), true);
 });
 

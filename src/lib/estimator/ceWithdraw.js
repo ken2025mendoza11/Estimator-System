@@ -55,6 +55,7 @@ export function planCeWithdraw(ce, input) {
 	};
 }
 
+/** @param {any} user */
 function accountOf(user) {
 	if (!user || typeof user !== "object") return "";
 	const row = /** @type {Record<string, unknown>} */ (user);
@@ -72,7 +73,9 @@ export function withdrawRecipients(ce, users = []) {
 		...(ce?.approval?.flowSnapshot?.steps || []),
 	];
 	const list = Array.isArray(users) ? users : [];
+	/** @type {string[]} */
 	const ids = [];
+	/** @param {any} value */
 	const add = (value) => {
 		const id = String(value || "").trim();
 		if (!id || id === "*" || ids.includes(id)) return;

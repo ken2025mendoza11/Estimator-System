@@ -76,6 +76,7 @@ import { orderExportSections, refreshSchedule, scheduleExportSection } from "../
 import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories } from "../lib/estimator/ceSignatories";
+import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
 import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
@@ -100,6 +101,7 @@ let ceTpl1On = false;
 let ceTpl2On = false;
 let ceTpl3On = false;
 let ceTpl4On = false;
+let ceTpl5On = false;
 let release1MonitorSales = false;
 let release1CanReassign = false;
 let release1ActorId = "";
@@ -4878,7 +4880,8 @@ function defaultAdminConfig() {
 			ceTpl1: false,
 			ceTpl2: false,
 			ceTpl3: false,
-			ceTpl4: false
+			ceTpl4: false,
+			ceTpl5: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5005,7 +5008,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl1: src.features?.ceTpl1 === true,
 			ceTpl2: src.features?.ceTpl2 === true,
 			ceTpl3: src.features?.ceTpl3 === true,
-			ceTpl4: src.features?.ceTpl4 === true
+			ceTpl4: src.features?.ceTpl4 === true,
+			ceTpl5: src.features?.ceTpl5 === true
 		},
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
@@ -6999,7 +7003,7 @@ var CSV_FIELD_MAP = {
 			"equipment",
 			"name"
 		],
-		unit: ["uom", "unit of measure"],
+		unit: ["uom", "unit of measure", "u/m", "um"],
 		ratePerDay: [
 			"daily rate",
 			"rate per day",
@@ -7039,7 +7043,7 @@ var CSV_FIELD_MAP = {
 			"name",
 			"material"
 		],
-		unit: ["uom", "unit of measure"],
+		unit: ["uom", "unit of measure", "u/m", "um"],
 		unitCost: [
 			"unit cost",
 			"cost",
@@ -7059,7 +7063,7 @@ var CSV_FIELD_MAP = {
 			"name",
 			"ppe"
 		],
-		unit: ["uom", "unit of measure"],
+		unit: ["uom", "unit of measure", "u/m", "um"],
 		unitCost: [
 			"unit cost",
 			"cost",
@@ -7121,6 +7125,15 @@ var CSV_FIELD_MAP = {
 			"address / location",
 			"site address"
 		]
+	},
+	ce: {
+		description: ["item description", "description", "item", "desc"],
+		qty: ["qty", "qty.", "quantity", "qnty"],
+		unit: ["unit", "uom", "u/m", "um", "u.m"],
+		unitPrice: ["unit price", "rate / unit cost", "unit cost", "rate", "price"],
+		role: ["role", "role / position", "position", "designation"],
+		lineItem: ["line item", "item no", "item no."],
+		remarks: ["remarks", "remark", "notes"]
 	}
 };
 function normalizeCsvHeader(h) {
@@ -18867,6 +18880,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	}, [ceStatus]);
 	const [importError, setImportError] = useState("");
 	const [exportPreview, setExportPreview] = useState(null);
+	const [exportPlan, setExportPlan] = useState(null);
+	const [importWizard, setImportWizard] = useState(null);
 	const fileInputRef = useRef(null);
 	activeCePricing = isDirectPricing(state.pricing) ? state.pricing : null;
 	bolLegendFlag = adminConfig?.features?.directCostTotalsForNew === true;
@@ -19199,7 +19214,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		provisionalIds,
 		rateExceptions: state.rateExceptions || []
 	};
-	const runIssuePack = async (mode = "preview") => {
+	const runIssuePack = async (mode = "preview", exportChoice = null) => {
 		const viewPack = release1SalesViewOn && (!!readOnly || !!isEditorLocked);
 		const gaps = viewPack ? [] : listEntryGaps(state.tasks);
 		if (gaps.length) {
@@ -19213,7 +19228,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			return;
 		}
 		if (warnings.length && !issueAck) setIssueAck(true);
-		const data = prepareExportData();
+		const data = ceTpl5On && exportChoice ? applyExportPlan(prepareExportData(), exportChoice) : prepareExportData();
 		const cont = num2(state.commercial?.contingencyPct);
 		const disc = num2(state.commercial?.discountPct);
 		const grand2 = projectTotal(state.tasks, state.pricing, state.mobSheets);
@@ -19251,9 +19266,9 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			}),
 			...(engineOn ? { approval: approvalNow || null } : {})
 		};
-		if (mode === "excel") {
+		if (mode === "excel" || mode === "both") {
 			exportIssueExcel(payload);
-			return;
+			if (mode === "excel") return;
 		}
 		let url = "";
 		try {
@@ -19276,6 +19291,66 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			if (cur?.url) URL.revokeObjectURL(cur.url);
 			return null;
 		});
+	};
+	const readImportSheet = (file) => {
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => {
+			const book = XLSX.read(reader.result, { type: "array" });
+			const sheetName = book.SheetNames.find((name) => /bocm|bol|bote|ppe|misc/i.test(name)) || book.SheetNames[0];
+			const grid = XLSX.utils.sheet_to_json(book.Sheets[sheetName], { header: 1, raw: false, defval: "" });
+			const headerAt = Math.max(0, (grid || []).findIndex((row) => (row || []).some((cell) => /desc|qty|role|item|u\/m|rate/i.test(String(cell || "")))));
+			const mapped = mapCeSheet(grid[headerAt] || [], grid.slice(headerAt + 1));
+			const library = listMasterlistItems(masterlist);
+			const rules = adminConfig?.masterlistRules || {};
+			setImportWizard({
+				step: "map",
+				fileName: file.name,
+				sheetName,
+				mapped: {
+					...mapped,
+					rows: mapped.rows.map((row) => ({
+						...row,
+						match: row.skip ? null : classifyImportMatch(row.description, library, { similarity: rules.similarity, nameField: "description" })
+					}))
+				}
+			});
+		};
+		reader.readAsArrayBuffer(file);
+	};
+	const confirmCeImport = () => {
+		const mapped = importWizard?.mapped;
+		if (!mapped) return;
+		const task = (state.tasks || [])[0];
+		const sub = task?.subtasks?.[0];
+		if (!task || !sub) {
+			window.alert("Add a task before importing rows.");
+			return;
+		}
+		const items = mapped.rows.filter((row) => row.selected && !row.skip).map((row) => {
+			const price = Number(String(row.unitPrice).replace(/[^0-9.-]/g, "")) || 0;
+			const qty = Number(String(row.qty).replace(/[^0-9.-]/g, "")) || 0;
+			return {
+				id: uid3("imp"),
+				description: row.description,
+				role: row.role || row.description,
+				qty,
+				unit: row.unit,
+				unitCost: price,
+				rate: price,
+				days: 1,
+				dayType: "Regular",
+				shift: "Day"
+			};
+		});
+		dispatch({
+			type: "ADD_ITEMS",
+			taskId: task.id,
+			subtaskId: sub.id,
+			category: sheetCategory(importWizard.sheetName),
+			items
+		});
+		setImportWizard(null);
 	};
 	useMemo(() => {
 		const items = [];
@@ -19656,8 +19731,20 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						meta: state.meta,
 						grand,
 						dispatch,
-						onExport: runIssuePack,
-						onImportClick: () => fileInputRef.current && fileInputRef.current.click(),
+						onExport: () => {
+							if (ceTpl5On !== true) {
+								void runIssuePack("preview");
+								return;
+							}
+							setExportPlan(defaultExportPlan());
+						},
+						onImportClick: () => {
+							if (ceTpl5On === true) {
+								setImportWizard({ step: "file", fileName: "", sheetName: "", mapped: null });
+								return;
+							}
+							if (fileInputRef.current) fileInputRef.current.click();
+						},
 						editLocked: !estimateOpen,
 						onEditingChange: (value) => {
 							setHeaderEditing(value);
@@ -19692,6 +19779,76 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								rceNo: ceData?.rceId
 							}) : null
 						} : null
+					}),
+					exportPlan && /* @__PURE__ */ jsx("div", {
+						className: "ce-modal-overlay",
+						onClick: () => setExportPlan(null),
+						children: /* @__PURE__ */ jsxs("div", {
+							className: "ce-modal-card",
+							role: "dialog",
+							"aria-label": "Export",
+							onClick: (event) => event.stopPropagation(),
+							children: [
+								/* @__PURE__ */ jsx("h3", { className: "ce-serif", style: { marginTop: 0 }, children: "Export" }),
+								/* @__PURE__ */ jsx("div", { className: "ce-summary-toggle", children: ["pdf", "excel", "both"].map((format) => /* @__PURE__ */ jsx("button", {
+									type: "button",
+									className: "ce-pill" + (exportPlan.format === format ? " ce-pill-active" : ""),
+									onClick: () => setExportPlan({ ...exportPlan, format }),
+									children: format === "pdf" ? "PDF" : format === "excel" ? "Excel" : "Both"
+								}, format)) }),
+								/* @__PURE__ */ jsxs("div", { className: "ce-summary-toggle", children: [
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-pill" + (exportPlan.whole ? " ce-pill-active" : ""), onClick: () => setExportPlan({ ...exportPlan, whole: true }), children: "Whole CE" }),
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-pill" + (!exportPlan.whole ? " ce-pill-active" : ""), onClick: () => setExportPlan({ ...exportPlan, whole: false }), children: "Selected parts" })
+								] }),
+								!exportPlan.whole && /* @__PURE__ */ jsx("div", { className: "ce-form-grid", children: EXPORT_PARTS.map((part) => /* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [
+									/* @__PURE__ */ jsx("input", { type: "checkbox", checked: exportPlan.parts.includes(part.id), onChange: () => setExportPlan({ ...exportPlan, parts: exportPlan.parts.includes(part.id) ? exportPlan.parts.filter((id) => id !== part.id) : [...exportPlan.parts, part.id] }) }),
+									part.label
+								] }, part.id)) }),
+								/* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [/* @__PURE__ */ jsx("input", { type: "checkbox", checked: exportPlan.hidePrices === true, onChange: () => setExportPlan({ ...exportPlan, hidePrices: !exportPlan.hidePrices }) }), " Hide prices"] }),
+								/* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [/* @__PURE__ */ jsx("input", { type: "checkbox", checked: exportPlan.includeSignatures !== false, onChange: () => setExportPlan({ ...exportPlan, includeSignatures: !exportPlan.includeSignatures }) }), " Include signatures"] }),
+								/* @__PURE__ */ jsxs("div", { className: "ce-confirm-actions", children: [
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost", onClick: () => setExportPlan(null), children: "Cancel" }),
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-primary", onClick: () => {
+										const choice = exportPlan;
+										setExportPlan(null);
+										void runIssuePack(choice.format === "excel" ? "excel" : choice.format === "both" ? "both" : "preview", choice);
+									}, children: `Export ${exportPlan.whole ? EXPORT_PARTS.length : exportPlan.parts.length} parts` })
+								] })
+							]
+						})
+					}),
+					importWizard && /* @__PURE__ */ jsx("div", {
+						className: "ce-modal-overlay",
+						onClick: () => setImportWizard(null),
+						children: /* @__PURE__ */ jsxs("div", {
+							className: "ce-modal-card",
+							role: "dialog",
+							"aria-label": "Import wizard",
+							onClick: (event) => event.stopPropagation(),
+							children: [
+								/* @__PURE__ */ jsx("h3", { className: "ce-serif", style: { marginTop: 0 }, children: "Import wizard" }),
+								/* @__PURE__ */ jsx("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: (event) => readImportSheet(event.target.files && event.target.files[0]) }),
+								importWizard.mapped && /* @__PURE__ */ jsxs("div", { children: [
+									/* @__PURE__ */ jsx("p", { className: "wiz-hint", children: `${importWizard.fileName} · ${importWizard.sheetName}. Unknown columns are ignored. Missing columns stay blank.` }),
+									/* @__PURE__ */ jsx("table", { className: "ce-table", children: /* @__PURE__ */ jsxs("tbody", { children: importWizard.mapped.columns.map((col) => /* @__PURE__ */ jsxs("tr", { children: [
+										/* @__PURE__ */ jsx("td", { children: col.header || "(none)" }),
+										/* @__PURE__ */ jsx("td", { children: col.field || "ignore" }),
+										/* @__PURE__ */ jsx("td", { children: col.status })
+									] }, col.header)) }) }),
+									/* @__PURE__ */ jsxs("div", { className: "ce-summary-toggle", children: [
+										/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setImportWizard({ ...importWizard, mapped: { ...importWizard.mapped, rows: setRowSelection(importWizard.mapped.rows, true) } }), children: "Select all" }),
+										/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setImportWizard({ ...importWizard, mapped: { ...importWizard.mapped, rows: setRowSelection(importWizard.mapped.rows, false) } }), children: "Clear" })
+									] }),
+									/* @__PURE__ */ jsx("p", { className: "wiz-hint", children: `${importWizard.mapped.rows.filter((row) => row.selected).length} selected · ${importWizard.mapped.rows.filter((row) => row.skip).length} skipped · total ${importedTotal(importWizard.mapped.rows).toFixed(2)}` }),
+									importWizard.mapped.rows.filter((row) => !row.skip).slice(0, 8).map((row) => /* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [
+										/* @__PURE__ */ jsx("input", { type: "checkbox", checked: row.selected === true, onChange: () => setImportWizard({ ...importWizard, mapped: { ...importWizard.mapped, rows: importWizard.mapped.rows.map((item) => item.index === row.index ? { ...item, selected: !item.selected } : item) } }) }),
+										`${row.description} · ${row.match?.kind || "new"}`
+									] }, row.index)),
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-primary", onClick: confirmCeImport, children: `Import ${importWizard.mapped.rows.filter((row) => row.selected).length} rows` })
+								] }),
+								/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost", onClick: () => setImportWizard(null), children: "Cancel" })
+							]
+						})
 					}),
 					exportPreview && /* @__PURE__ */ jsx("div", {
 						className: "ce-modal-overlay",
@@ -28754,6 +28911,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl2On = adminConfig.features?.ceTpl2 === true;
 	ceTpl3On = adminConfig.features?.ceTpl3 === true;
 	ceTpl4On = adminConfig.features?.ceTpl4 === true;
+	ceTpl5On = adminConfig.features?.ceTpl5 === true;
 	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
 	release1ActorId = accountUserId || "";
 	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };

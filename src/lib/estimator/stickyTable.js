@@ -103,7 +103,7 @@ export function stickyScrollCheck(input = {}) {
 	return {
 		tableOnScreen,
 		headerStuck: scrollTop > 0 && tableOnScreen,
-		barVisible: tableOnScreen && stickyBarVisible(input.tableWidth, input.viewportW),
+		barVisible: tableOnScreen && stickyBarVisible(Number(input.tableWidth) || 0, Number(input.viewportW) || 0),
 		atRow: scrolledToRow,
 	};
 }

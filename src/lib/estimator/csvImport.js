@@ -1,6 +1,7 @@
 // @ts-nocheck
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
+import { findSimilarItems } from './masterlistRules.js';
 
 const SKIP = new Set([
   'no',
@@ -26,7 +27,7 @@ const CSV_FIELD_MAP = {
   },
   equipment: {
     description: ['item', 'tool', 'equipment', 'name'],
-    unit: ['uom', 'unit of measure'],
+    unit: ['uom', 'unit of measure', 'u/m', 'um'],
     ratePerDay: ['daily rate', 'rate per day', 'rate/day', 'rate', 'unit price', 'rate / unit cost'],
     powerKw: ['kw', 'power', 'power kw', 'power (kw)'],
     hoursPerDay: ['hrs/day', 'hours/day', 'hours per day', 'hrs per day', 'hours'],
@@ -36,14 +37,14 @@ const CSV_FIELD_MAP = {
   },
   consumables: {
     description: ['item', 'name', 'material'],
-    unit: ['uom', 'unit of measure'],
+    unit: ['uom', 'unit of measure', 'u/m', 'um'],
     unitCost: ['unit cost', 'unit price', 'rate / unit cost', 'cost', 'rate', 'price'],
     active: ['status'],
     lastReviewed: ['last reviewed', 'reviewed', 'date reviewed'],
   },
   ppe: {
     item: ['description', 'name', 'ppe'],
-    unit: ['uom', 'unit of measure'],
+    unit: ['uom', 'unit of measure', 'u/m', 'um'],
     unitCost: ['unit cost', 'unit price', 'rate / unit cost', 'cost', 'rate', 'price'],
     active: ['status'],
     lastReviewed: ['last reviewed', 'reviewed', 'date reviewed'],
@@ -75,6 +76,15 @@ const CSV_FIELD_MAP = {
       'company full name',
     ],
     address: ['addr', 'location', 'site', 'address / location', 'site address'],
+  },
+  ce: {
+    description: ['item description', 'description', 'item', 'desc'],
+    qty: ['qty', 'qty.', 'quantity', 'qnty'],
+    unit: ['unit', 'uom', 'u/m', 'um', 'u.m'],
+    unitPrice: ['unit price', 'rate / unit cost', 'unit cost', 'rate', 'price'],
+    role: ['role', 'role / position', 'position', 'designation'],
+    lineItem: ['line item', 'item no', 'item no.', 'no'],
+    remarks: ['remarks', 'remark', 'notes'],
   },
 };
 
@@ -689,4 +699,217 @@ export function mergeImportedRows(existing, incoming, keyFn) {
     }
   });
   return { rows: next, added, updated };
+}
+
+export const EXPORT_PARTS = [
+	{ id: "summary", label: "Front / Summary page" },
+	{ id: "bol", label: "BOL — Labor" },
+	{ id: "bote", label: "BOTE — Tools & Equip." },
+	{ id: "bocm", label: "BOCM — Consumables" },
+	{ id: "ppe", label: "PPE" },
+	{ id: "misc", label: "MISC (Parts A–E)" },
+	{ id: "sow", label: "SOW" },
+	{ id: "mob", label: "MOB/DEMOB" },
+	{ id: "attachments", label: "Attachments (compiled)" },
+	{ id: "rce", label: "RCE checklist" },
+];
+
+/** Old CE sheet headers. headerScore uses the same names. */
+export const CE_HEADER_ALIASES = {
+	description: ["description", "item description", "item", "desc"],
+	qty: ["qty", "qty.", "quantity", "qnty"],
+	unit: ["unit", "uom", "u/m", "um", "u.m"],
+	unitPrice: ["unit price", "rate / unit cost", "unit cost", "rate", "price"],
+	role: ["role", "role / position", "position", "designation"],
+	lineItem: ["line item", "item no", "item no.", "no"],
+	remarks: ["remarks", "remark", "notes"],
+};
+
+const PART_MATCH = [
+	["summary", /summary/i],
+	["sow", /scope of work|\bsow\b/i],
+	["bol", /\bbol\b|labor|labour/i],
+	["bote", /\bbote\b|tools/i],
+	["bocm", /\bbocm\b|consumable/i],
+	["ppe", /\bppe\b|protective/i],
+	["misc", /\bmisc/i],
+	["mob", /mobili|demob|pickup|delivery/i],
+	["rce", /\brce\b|request for costing/i],
+	["attachments", /attach/i],
+];
+
+function normHeader(value) {
+	return String(value ?? "").normalize("NFKC").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function num(value) {
+	const n = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+	return Number.isFinite(n) ? n : 0;
+}
+
+export function defaultExportPlan() {
+	return {
+		format: "pdf",
+		whole: true,
+		parts: EXPORT_PARTS.map((part) => part.id),
+		hidePrices: false,
+		includeSignatures: true,
+	};
+}
+
+export function planCeExport(input = {}) {
+	const whole = input.whole !== false;
+	const picked = Array.isArray(input.parts) ? input.parts.filter((id) => EXPORT_PARTS.some((part) => part.id === id)) : [];
+	const parts = whole ? EXPORT_PARTS.map((part) => part.id) : picked;
+	const format = input.format === "excel" || input.format === "both" ? input.format : "pdf";
+	return {
+		format,
+		whole,
+		parts,
+		hidePrices: input.hidePrices === true,
+		includeSignatures: input.includeSignatures !== false,
+		count: parts.length,
+	};
+}
+
+function sectionPart(section) {
+	const label = `${section?.title || ""} ${section?.exportTitle || ""}`;
+	const hit = PART_MATCH.find(([, re]) => re.test(label));
+	return hit ? hit[0] : "";
+}
+
+function hideMoney(section) {
+	const cols = section.columns || [];
+	const money = cols.map((col, index) => /rate|price|cost|subtotal|amount|total/i.test(String(col || "")) ? index : -1).filter((index) => index >= 0);
+	if (!money.length || !Array.isArray(section.rows)) return section;
+	return {
+		...section,
+		rows: section.rows.map((row) => {
+			if (!Array.isArray(row)) return row;
+			const next = row.slice();
+			money.forEach((index) => {
+				if (next[index] != null && next[index] !== "") next[index] = "—";
+			});
+			return next;
+		}),
+	};
+}
+
+/** Filter an export payload. Does not change stored estimate totals.
+ * @param {any} payload
+ * @param {any} plan
+ */
+export function applyExportPlan(payload, plan) {
+	const chosen = planCeExport(plan);
+	const keep = new Set(chosen.parts);
+	let sections = Array.isArray(payload?.sections) ? payload.sections.map((section) => ({ ...section })) : [];
+	if (!chosen.whole) sections = sections.filter((section) => keep.has(sectionPart(section)));
+	if (chosen.hidePrices) sections = sections.map(hideMoney);
+	if (!chosen.includeSignatures) {
+		sections = sections.map((section) => section.signs ? {
+			...section,
+			signs: section.signs.map((slot) => ({ ...slot, stamp: "" })),
+		} : section);
+	}
+	const next = { ...payload, sections, exportPlan: chosen };
+	if (!keep.has("attachments")) {
+		next.attachmentFiles = [];
+		next.attachments = [];
+		next.annexes = [];
+	}
+	return next;
+}
+
+export function mapCeHeaders(headers) {
+	const fields = Object.keys(CE_HEADER_ALIASES);
+	const mapping = {};
+	const columns = [];
+	(headers || []).forEach((header, index) => {
+		const token = normHeader(header);
+		if (!token) return;
+		let field = "";
+		let status = "ignored";
+		for (const key of fields) {
+			if (mapping[key] != null) continue;
+			const names = CE_HEADER_ALIASES[key].map(normHeader);
+			if (names[0] === token || normHeader(key) === token) {
+				field = key;
+				status = "matched";
+				break;
+			}
+			if (names.includes(token)) {
+				field = key;
+				status = "alias";
+				break;
+			}
+		}
+		if (field) mapping[field] = index;
+		columns.push({ header: String(header ?? "").trim(), field, status });
+	});
+	const missing = fields.filter((key) => mapping[key] == null);
+	const ignored = columns.filter((col) => col.status === "ignored").map((col) => col.header);
+	return { mapping, columns, missing, ignored };
+}
+
+export function rowSkipReason(description, qty) {
+	const name = String(description || "").trim();
+	const amount = String(qty || "").trim();
+	if (!name && !amount) return "blank";
+	if (/subtotal|grand total|^total$/i.test(name)) return "subtotal";
+	return "";
+}
+
+function cellAt(row, index) {
+	if (index == null || index < 0) return "";
+	return String(row?.[index] ?? "").trim();
+}
+
+export function mapCeSheet(headers, body) {
+	const mapped = mapCeHeaders(headers);
+	const rows = (body || []).map((row, index) => {
+		const description = cellAt(row, mapped.mapping.description) || cellAt(row, mapped.mapping.role);
+		const qty = cellAt(row, mapped.mapping.qty);
+		const skip = rowSkipReason(description, qty);
+		return {
+			index,
+			description,
+			qty,
+			unit: cellAt(row, mapped.mapping.unit),
+			unitPrice: cellAt(row, mapped.mapping.unitPrice),
+			role: cellAt(row, mapped.mapping.role),
+			lineItem: cellAt(row, mapped.mapping.lineItem),
+			remarks: cellAt(row, mapped.mapping.remarks),
+			skip,
+			selected: !skip,
+		};
+	}).filter((row) => row.description || row.qty || row.skip);
+	return { ...mapped, rows };
+}
+
+export function setRowSelection(rows, selected) {
+	return (rows || []).map((row) => row.skip ? { ...row, selected: false } : { ...row, selected: selected === true });
+}
+
+export function classifyImportMatch(name, items, rules = {}) {
+	const similarAt = Number(rules.similarity);
+	const floor = Number.isFinite(similarAt) ? similarAt : 0.78;
+	const hits = findSimilarItems(name, items, rules.nameField || "description", Math.min(floor, 0.5)).slice(0, 3);
+	const best = hits[0];
+	if (best && best.score >= 0.98) return { kind: "exact", score: best.score, picks: [best] };
+	const similar = hits.filter((hit) => hit.score >= floor).slice(0, 3);
+	if (similar.length) return { kind: "similar", score: similar[0].score, picks: similar };
+	return { kind: "new", score: best?.score || 0, picks: [] };
+}
+
+export function importedTotal(rows) {
+	return (rows || []).filter((row) => row.selected && !row.skip).reduce((sum, row) => sum + num(row.qty) * num(row.unitPrice), 0);
+}
+
+export function sheetCategory(name) {
+	const sheet = String(name || "").toUpperCase();
+	if (sheet.includes("BOTE") || sheet.includes("TOOL")) return "BOTE";
+	if (sheet.includes("PPE")) return "PPE";
+	if (sheet.includes("MISC")) return "MISC";
+	if (sheet.includes("BOL") || sheet.includes("LABOR")) return "BOL";
+	return "BOCM";
 }
