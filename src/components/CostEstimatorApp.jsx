@@ -63,6 +63,8 @@ import { applyAward, applyCancel, canCancelJobOrder, canGenerateJobOrder, cancel
 import { JobOrderPanel } from "./JobOrderPanel";
 import { StickyTable } from "./StickyTable";
 import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
+import { salesPipelineRows } from "../lib/estimator/salesStage";
+import { SalesUserCard } from "./SalesUserCard";
 import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -110,6 +112,7 @@ let ceTpl7On = false;
 let ceTpl8On = false;
 let ceTpl9On = false;
 let ceTpl10On = false;
+let salesProfileOn = false;
 let miscShowMemory = {};
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
@@ -4899,7 +4902,8 @@ function defaultAdminConfig() {
 			ceTpl7: false,
 			ceTpl8: false,
 			ceTpl9: false,
-			ceTpl10: false
+			ceTpl10: false,
+			salesProfile: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5032,7 +5036,8 @@ function normalizeAdminConfig(raw) {
 			ceTpl7: src.features?.ceTpl7 === true,
 			ceTpl8: src.features?.ceTpl8 === true,
 			ceTpl9: src.features?.ceTpl9 === true,
-			ceTpl10: src.features?.ceTpl10 === true
+			ceTpl10: src.features?.ceTpl10 === true,
+			salesProfile: src.features?.salesProfile === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
@@ -23355,7 +23360,12 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	const chipRows = chipPick ? matched.filter(chipPick.test) : matched;
 	const shown = variant === "active" ? sortMonitoringRows(chipRows, sortBy) : matched;
 	const awardedCount = matched.filter((d) => d.awardStatus === "Awarded").length;
-	const winRate = matched.length ? Math.round(awardedCount / matched.length * 100) : 0;
+	const lostCount = matched.filter((d) => {
+		const key = String(d.awardStatus || "").toLowerCase();
+		return key === "lost" || key === "lost bid";
+	}).length;
+	const winDenom = awardedCount + lostCount;
+	const winRate = winDenom ? Math.round(awardedCount / winDenom * 100) : 0;
 	const avgAgingLabel = averageNumber(matched.map((row) => row.deadlineAge));
 	const statusColors = {
 		Done: "#10B981",
@@ -23384,7 +23394,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 				onToggle: setChip,
 				context: /* @__PURE__ */ jsx(MonChipContext, { parts: [
 					{ label: "Avg aging", value: avgAgingLabel },
-					{ label: "Win rate", value: `${winRate}%` }
+					{ label: "Win rate", value: winDenom ? `${winRate}%` : "—" }
 				] })
 			}) : null,
 			variant === "active" && showToolbar ? /* @__PURE__ */ jsxs("div", {
@@ -28937,7 +28947,7 @@ function navKeyForView(view) {
 	if (view === "rce-form" || view === "rce-detail" || view === "rce-inbox") return "monitoring";
 	return view;
 }
-function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, actingUserId = "", users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false, scheduleOn = false }) {
+function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, actingUserId = "", users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false, scheduleOn = false, profileOn = false, profileUser = null, onSaveProfile, onHelp }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [bellOpen, setBellOpen] = useState(false);
 	const activeKey = navKeyForView(currentView);
@@ -28979,7 +28989,19 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 						})
 					]
 				}),
-				!collapsed && /* @__PURE__ */ jsxs("div", {
+				profileOn ? /* @__PURE__ */ jsx(SalesUserCard, {
+					user: profileUser,
+					collapsed,
+					testMode,
+					users,
+					actingUser,
+					onActingUser,
+					onSave: onSaveProfile,
+					onHelp,
+					onSignOut: () => {
+						void signOutEstimator(() => signOut());
+					}
+				}) : !collapsed && /* @__PURE__ */ jsxs("div", {
 					className: "ce-acting",
 					children: [
 						/* @__PURE__ */ jsx("label", { children: testMode ? "Acting as · TEST MODE" : "Acting as" }),
@@ -29192,6 +29214,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceTpl8On = adminConfig.features?.ceTpl8 === true;
 	ceTpl9On = adminConfig.features?.ceTpl9 === true;
 	ceTpl10On = adminConfig.features?.ceTpl10 === true;
+	salesProfileOn = adminConfig.features?.salesProfile === true;
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {
@@ -31991,7 +32014,31 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		canReassign: release1CanReassign,
 		actorId: release1ActorId,
 		onTakeOver: (row) => handleMonitor("takeover", row),
-		onReassign: (row, toUserId) => handleMonitor("reassign", row, toUserId)
+		onReassign: (row, toUserId) => handleMonitor("reassign", row, toUserId),
+		now: release1Now,
+		isManager: isSalesManager(findAccount(release1Users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn),
+		pipeline: salesPipelineRows({
+			rces: rceList || [],
+			ces: (ceList || []).map((row) => {
+				const doc = documents?.[row.id] || {};
+				const rce = (rceList || []).find((item) => item && (item.id === row.rceId || item.rceNo === row.rceNo));
+				return {
+					id: row.id,
+					ceNo: row.ceNo || row.id,
+					rceNo: row.rceNo || "",
+					rceId: row.rceId || "",
+					status: row.status || "",
+					awardStatus: row.awardStatus || doc.awardStatus || "",
+					project: row.project || row.projectDesc || doc.projectInfo?.project || "",
+					amount: doc.amount || row.amount || "",
+					salesOwnerId: salesOwnerAccountId({ ce: row, doc, rce, users: release1Users, departmentsOn: release1DepartmentsOn })
+				};
+			}),
+			markups: markups || [],
+			proposals: proposals || [],
+			jobOrders: jobOrders || [],
+			ownerId: release1MonitorSales && !isSalesManager(findAccount(release1Users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) ? release1ActorId : ""
+		})
 	} : null;
 	return /* @__PURE__ */ jsx("div", {
 		className: "ce-app",
@@ -32021,6 +32068,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				canAdmin: isAdminAccount,
 				reportsOn: adminConfig.features?.reports === true || release1MonitorOn,
 				scheduleOn: adminConfig.features?.schedule === true,
+				profileOn: salesProfileOn,
+				profileUser: findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }) || { id: accountUserId, name: editorName, level: actingLevel },
+				onSaveProfile: (nextUser) => {
+					setAdminConfig((prev) => normalizeAdminConfig({
+						...prev,
+						users: (prev.users || []).map((user) => accountId(user) === accountUserId ? { ...user, ...nextUser } : user)
+					}));
+				},
+				onHelp: () => setCurrentView("manual"),
 				onMarkRead: () => {
 					setLocalReminders((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));
 					setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));

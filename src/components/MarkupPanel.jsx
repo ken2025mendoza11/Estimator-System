@@ -1,6 +1,8 @@
-import { actorMayDecideMarkup, markupPercentsOpen } from "../lib/estimator/markup";
+import { actorMayDecideMarkup, markupPercentsOpen, markupSheetRows } from "../lib/estimator/markup";
 import { personName } from "../lib/estimator/departments";
 import { askReason } from "../lib/estimator/reasonBox";
+import * as XLSX from "xlsx";
+import jsPDFDefault, { jsPDF as jsPDFNamed } from "jspdf";
 
 /** @param {unknown} value */
 function money(value) {
@@ -36,6 +38,19 @@ export function MarkupPanel({ markup, sales, actorId, users, onMarkup }) {
 		onMarkup?.("parts", { parts: { ...parts, [key]: value } });
 	}
 
+	function downloadExcel() {
+		const book = XLSX.utils.book_new();
+		XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(markupSheetRows(markup)), "Markup");
+		XLSX.writeFile(book, `${markup.markupNo || "markup"}.xlsx`);
+	}
+
+	function downloadPdf() {
+		const Pdf = typeof jsPDFNamed === "function" ? jsPDFNamed : jsPDFDefault;
+		const pdf = new Pdf();
+		markupSheetRows(markup).forEach((row, index) => pdf.text(`${row[0]}: ${row[1]}`, 14, 20 + index * 8));
+		pdf.save(`${markup.markupNo || "markup"}.pdf`);
+	}
+
 	return (
 		<div className="ce-card wiz-card">
 			<h3 className="ce-serif">Markup</h3>
@@ -60,6 +75,8 @@ export function MarkupPanel({ markup, sales, actorId, users, onMarkup }) {
 			{open && sales && actorId === markup.ownerId ? (
 				<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onMarkup?.("submit")}>Submit markup</button>
 			) : null}
+			<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={downloadExcel}>Excel</button>
+			<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={downloadPdf}>PDF</button>
 			{mayDecide ? (
 				<span>
 					<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onMarkup?.("approve")}>Approve markup</button>

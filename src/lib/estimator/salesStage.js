@@ -82,12 +82,19 @@ export function salesPipelineRows(input) {
 		const jobOrder = jobs.find((row) => row && (row.ceId === ce.id || row.ceNo === ce.ceNo));
 		const ownerId = String(ce.salesOwnerId || ce.ownerId || "");
 		if (ownerFilter && ownerId && ownerId !== ownerFilter) return;
+		const parts = markup?.parts;
+		const markupPct = parts ? Number(parts.profit || 0) + Number(parts.contingency || 0) + Number(parts.markup || 0) : "";
 		rows.push({
 			id: String(ce.ceNo || ce.id || ""),
+			rceNo: String(ce.rceNo || ""),
+			ceNo: String(ce.ceNo || ce.id || ""),
+			project: String(ce.project || ce.projectTitle || ""),
 			ownerId,
+			salesOwner: String(ce.salesOwnerName || ownerId),
 			stage: deriveSalesStage({ ce, markup, proposal, jobOrder }),
 			markup,
 			proposal,
+			markupPct,
 			direct: ce.amount || ce.directCost || "",
 			selling: proposal?.total || markup?.selling || "",
 			proposalNo: proposal?.prNo || proposal?.controlNo || "",
@@ -97,12 +104,19 @@ export function salesPipelineRows(input) {
 	(input?.rces || []).forEach((rce) => {
 		const linked = (input?.ces || []).some((ce) => ce.rceId === rce.id || ce.rceNo === rce.rceNo);
 		if (linked) return;
+		const ownerId = String(rce.salesOwnerId || rce.ownerId || "");
+		if (ownerFilter && ownerId && ownerId !== ownerFilter) return;
 		rows.push({
 			id: String(rce.rceNo || rce.id || ""),
-			ownerId: String(rce.salesOwnerId || rce.ownerId || ""),
+			rceNo: String(rce.rceNo || rce.id || ""),
+			ceNo: "",
+			project: String(rce.projectTitle || rce.project || ""),
+			ownerId,
+			salesOwner: String(rce.salesOwnerName || ownerId),
 			stage: deriveSalesStage({ rce, ce: null }),
 			direct: "",
 			selling: "",
+			markupPct: "",
 			proposalNo: "",
 			validity: "",
 		});
@@ -125,4 +139,31 @@ export function stageActions(stage, role) {
 	if (role?.head && (stage === "Won" || stage === "Lost" || stage === "Sent/awaiting")) actions.push("Take over");
 	if (stage === "RCE pending" || stage === "Markup approval" || stage === "Proposal approval") actions.push("Withdraw");
 	return actions;
+}
+
+/**
+ * @param {any[]} rows
+ * @param {unknown} [now]
+ */
+export function pipelineKpis(rows, now) {
+	const list = rows || [];
+	const open = list.filter((row) => !["Won", "Lost", "Expired"].includes(row.stage));
+	const today = String(now || "").slice(0, 10);
+	const expiring = list.filter((row) => {
+		const until = String(row.validity || "").slice(0, 10);
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return false;
+		const days = (Date.parse(`${until}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000;
+		return days >= 0 && days <= 7;
+	}).length;
+	/** @type {Record<string, number>} */
+	const counts = {};
+	SALES_STAGES.forEach((stage) => {
+		counts[stage] = list.filter((row) => row.stage === stage).length;
+	});
+	return {
+		win: salesWinRate(list),
+		openValue: open.reduce((sum, row) => sum + (Number(row.selling) || 0), 0),
+		expiring,
+		counts,
+	};
 }

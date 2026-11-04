@@ -1,7 +1,10 @@
 // @ts-nocheck
+import { useState } from "react";
 import * as XLSX from "xlsx";
 import { buildReport, reportSheet } from "../lib/estimator/reports";
 import { categoryOnTask } from "../lib/estimator/ceTotals";
+import { StickyTable } from "./StickyTable";
+import { SALES_STAGES, pipelineKpis, stageActions } from "../lib/estimator/salesStage";
 
 function money(value) {
 	const n = Number(value);
@@ -26,6 +29,80 @@ function mixOf(ceList, documents) {
 		});
 	});
 	return parts;
+}
+
+function SalesPipeline({ monitor }) {
+	const [stage, setStage] = useState("All");
+	const [owner, setOwner] = useState("");
+	const [showOld, setShowOld] = useState(false);
+	const rows = monitor.pipeline || [];
+	const owners = [...new Set(rows.map((row) => row.salesOwner).filter(Boolean))];
+	const owned = rows.filter((row) => !owner || row.salesOwner === owner || row.ownerId === owner);
+	const filtered = owned.filter((row) => stage === "All" || row.stage === stage);
+	const kpis = pipelineKpis(owned, monitor.now);
+	const win = kpis.win == null ? "—" : `${Math.round(kpis.win * 1000) / 10}%`;
+	function download() {
+		const sheet = [["Stage", "RCE", "CE", "Project", "Markup %", "Selling", "Proposal", "Validity", "Sales owner"], ...filtered.map((row) => [row.stage, row.rceNo, row.ceNo, row.project, row.markupPct, row.selling, row.proposalNo, row.validity, row.salesOwner])];
+		const book = XLSX.utils.book_new();
+		XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(sheet), "Pipeline");
+		XLSX.writeFile(book, "sales-pipeline.xlsx");
+	}
+	return (
+		<div className="sales-pipeline" aria-label="Sales pipeline">
+			<div className="wiz-grid">
+				<p>Win rate: {win}</p>
+				<p>CE turnaround (days): {monitor.dashboard?.ceTurnaroundDays == null ? "—" : Math.round(monitor.dashboard.ceTurnaroundDays * 10) / 10}</p>
+				<p>Open pipeline: {money(kpis.openValue)}</p>
+				<p>Expiring ≤ 7 days: {kpis.expiring}</p>
+			</div>
+			<div className="mon-chip-row">
+				<button type="button" className={"ce-pill" + (stage === "All" ? " ce-pill-active" : "")} onClick={() => setStage("All")}>All {rows.length}</button>
+				{SALES_STAGES.map((name) => (
+					<button key={name} type="button" className={"ce-pill" + (stage === name ? " ce-pill-active" : "")} onClick={() => setStage(name)}>{name} {kpis.counts[name] || 0}</button>
+				))}
+			</div>
+			<label>Owner <select aria-label="Owner" className="ce-input" value={owner} onChange={(event) => setOwner(event.target.value)}><option value="">All</option>{owners.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+			<label className="ce-checkbox-row"><input type="checkbox" checked={showOld} onChange={() => setShowOld((value) => !value)} /> Old columns</label>
+			<StickyTable className="mon-table-container" enabled>
+				<table className="ce-table mon-table">
+					<thead>
+						<tr>
+							<th>RCE No.</th>
+							<th>Project</th>
+							<th>Stage</th>
+							<th>Markup %</th>
+							<th>Selling price</th>
+							<th>Proposal no.</th>
+							<th>Validity</th>
+							<th>Sales owner</th>
+							{showOld ? <th>Direct</th> : null}
+							<th>Action</th>
+						</tr>
+					</thead>
+					<tbody>
+						{filtered.map((row) => {
+							const actions = stageActions(row.stage, { sales: true, owner: monitor.actorIsOwner !== false, manager: !!monitor.isManager, head: !!monitor.canReassign });
+							return (
+								<tr key={row.id}>
+									<td>{row.rceNo || row.id}</td>
+									<td>{row.project}</td>
+									<td>{row.stage}</td>
+									<td>{row.markupPct === "" ? "—" : row.markupPct}</td>
+									<td>{row.selling === "" ? "—" : money(row.selling)}</td>
+									<td>{row.proposalNo || "—"}</td>
+									<td>{row.validity || "—"}</td>
+									<td>{row.salesOwner || "—"}</td>
+									{showOld ? <td>{row.direct === "" ? "—" : money(row.direct)}</td> : null}
+									<td>{actions[0] ? <button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => monitor.onAction?.(row, actions[0])}>{actions[0]}</button> : "—"}</td>
+								</tr>
+							);
+						})}
+					</tbody>
+				</table>
+			</StickyTable>
+			<button type="button" className="ce-btn-primary ce-btn-sm" onClick={download}>Excel</button>
+		</div>
+	);
 }
 
 function rowsOf(ceList, documents) {
@@ -87,11 +164,11 @@ export function Phase6Reports({ ceList, documents, monitor = null, reportOn = tr
 					<h2 className="ce-serif">Sales monitor</h2>
 					<p className="wiz-sub">Win rate and CE turnaround use the same report figures. They do not recompute a cost estimate.</p>
 					<div className="wiz-grid">
-						<p>Win rate: {pct(monitor.dashboard?.winRate)}</p>
+						<p>Win rate: {Array.isArray(monitor.pipeline) ? pct(pipelineKpis(monitor.pipeline, monitor.now).win) : pct(monitor.dashboard?.winRate)}</p>
 						<p>CE turnaround (days): {monitor.dashboard?.ceTurnaroundDays == null ? "—" : Math.round(monitor.dashboard.ceTurnaroundDays * 10) / 10}</p>
 					</div>
 					<h3 className="ce-serif">Sales list</h3>
-					{sales.length ? sales.map((row) => (
+					{Array.isArray(monitor.pipeline) ? <SalesPipeline monitor={monitor} /> : sales.length ? sales.map((row) => (
 						<div key={`${row.kind}-${row.id}`}>
 							<p>{row.kind} {row.id} · {row.status} · {row.ageDays}d · {row.holderName || row.ownerName || "Unnamed"}</p>
 							{monitor.canTakeOver && (row.status === "Approved" || row.status === "Sent") && row.ownerId && row.ownerId !== monitor.actorId ? (
