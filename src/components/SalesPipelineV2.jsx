@@ -23,7 +23,7 @@ export function SalesPipelineV2({ monitor }) {
 	const [priority, setPriority] = useState("");
 	const [company, setCompany] = useState("");
 	const [openId, setOpenId] = useState("");
-	const [preview, setPreview] = useState(null);
+	const [preview, setPreview] = useState(/** @type {{ kind?: string, id?: string, status?: string, salesSafe?: boolean, downloadName?: string, url?: string } | null} */ (null));
 	const rows = /** @type {any[]} */ (monitor.pipeline || []);
 	const actor = { userId: monitor.actorId, now: monitor.now, config: monitor.dayConfig };
 	const filtered = rows.filter((row) => salesChipMatch(row, chip, actor) && (!priority || row.priority === priority) && (!company || row.company === company));

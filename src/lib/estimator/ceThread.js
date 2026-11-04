@@ -15,19 +15,20 @@ function addId(ids, value) {
  * @param {unknown[]} [users]
  */
 export function threadParticipants(input, users) {
+	/** @type {string[]} */
 	const ids = [];
 	const ce = input || {};
 	addId(ids, ce.assigneeId);
 	addId(ids, ce.assignedToId);
 	addId(ids, ce.leadId);
 	addId(ids, ce.estimatingLeadId);
-	(ce.leadIds || []).forEach((id) => addId(ids, id));
+	(ce.leadIds || []).forEach((/** @type {any} */ id) => addId(ids, id));
 	addId(ids, ce.salesOwnerId);
-	(ce.approverIds || []).forEach((id) => addId(ids, id));
-	(ce.approvers || []).forEach((step) => addId(ids, typeof step === "string" ? step : step?.userId || step?.id));
-	(ce.approval?.steps || []).forEach((step) => addId(ids, step?.userId || step?.id));
-	(ce.adminIds || []).forEach((id) => addId(ids, id));
-	(Array.isArray(users) ? users : []).forEach((user) => {
+	(ce.approverIds || []).forEach((/** @type {any} */ id) => addId(ids, id));
+	(ce.approvers || []).forEach((/** @type {any} */ step) => addId(ids, typeof step === "string" ? step : step?.userId || step?.id));
+	(ce.approval?.steps || []).forEach((/** @type {any} */ step) => addId(ids, step?.userId || step?.id));
+	(ce.adminIds || []).forEach((/** @type {any} */ id) => addId(ids, id));
+	(Array.isArray(users) ? users : []).forEach((/** @type {any} */ user) => {
 		const role = String(user?.level || user?.role || user?.position || "").toLowerCase();
 		const id = user?.userId || user?.id || "";
 		if (role === "lead" || role === "head" || role.includes("estimating lead")) addId(ids, id);
@@ -42,18 +43,18 @@ export function threadParticipants(input, users) {
  */
 export function threadVisible(userId, participants) {
 	const id = String(userId || "");
-	return (participants || []).map((row) => String(row || "")).includes(id);
+	return (participants || []).map((/** @type {any} */ row) => String(row || "")).includes(id);
 }
 
 /**
  * @param {any} thread
- * @param {{ from?: unknown, text?: unknown, now?: unknown }} input
+ * @param {{ from?: unknown, text?: unknown, now?: unknown, ce?: any, users?: unknown[] }} input
  */
 export function postMessage(thread, input) {
 	const from = String(input?.from || "");
 	const text = String(input?.text || "").trim();
 	if (!from || !text) return { ok: false, message: "A message needs an author and text." };
-	const participants = input?.ce ? threadParticipants(input.ce, input.users) : (thread?.participants || []).map((row) => String(row || "")).filter(Boolean);
+	const participants = input?.ce ? threadParticipants(input.ce, input.users) : (thread?.participants || []).map((/** @type {any} */ row) => String(row || "")).filter(Boolean);
 	if (!threadVisible(from, participants)) return { ok: false, message: "Only participants can post." };
 	const message = { id: `${from}-${thread?.messages?.length || 0}`, from, text, at: String(input?.now || "") };
 	const next = { ...(thread || {}), participants, messages: [...(thread?.messages || []), message] };
@@ -68,7 +69,7 @@ export function postMessage(thread, input) {
  */
 export function replyNotices(thread, from, now) {
 	const author = String(from || "");
-	return (thread?.participants || []).map((row) => String(row || "")).filter((id) => id && id !== "*" && id !== author).map((toUserId) => ({
+	return (thread?.participants || []).map((/** @type {any} */ row) => String(row || "")).filter((/** @type {any} */ id) => id && id !== "*" && id !== author).map((/** @type {any} */ toUserId) => ({
 		toUserId,
 		read: false,
 		kind: "reply",

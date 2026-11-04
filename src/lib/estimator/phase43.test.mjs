@@ -47,7 +47,7 @@ test("threads, the bell, and library strips keep the current rules", () => {
 	assert.equal(outsider.message, "Only participants can post.");
 	const reply = postMessage(owner.thread, { from: "sales-1", text: "Attached", now: "2026-11-04T01:30:00.000Z", ce: routeCe });
 	assert.equal(reply.ok, true);
-	assert.equal(reply.notices.some((row) => row.toUserId === "*" || row.toUserId === "sales-1"), false);
+	assert.equal(reply.notices.some((/** @type {any} */ row) => row.toUserId === "*" || row.toUserId === "sales-1"), false);
 	assert.equal(unreadBell(bellForUser(reply.notices, "est-1")), 1);
 	assert.equal(unreadBell(bellForUser(reply.notices, "sales-1")), 0);
 	const events = [{ toUserId: "sales-1", read: false }, { toUserId: "est-1", read: false }];
@@ -82,10 +82,13 @@ test("threads, the bell, and library strips keep the current rules", () => {
 	const listed = previewDocs({ rce: { rceNo: "RCE-1", status: "Accepted" }, ce: null, markup: null, proposal: { controlNo: "PR-1", status: "Sent" } });
 	assert.deepEqual(listed.map((doc) => doc.kind), ["RCE", "Proposal"]);
 	const opened = docPreviewUrl(listed[1]);
+	if (!opened) throw new Error("missing preview");
 	assert.equal(opened.url.startsWith("data:application/pdf,"), true);
 	assert.equal(opened.id, "PR-1");
 	assert.equal(opened.downloadName, "PR-1.pdf");
-	assert.equal(docPreviewUrl({ kind: "CE", id: "CE-9", status: "Done" }).salesSafe, true);
+	const cePreview = docPreviewUrl({ kind: "CE", id: "CE-9", status: "Done" });
+	if (!cePreview) throw new Error("missing ce preview");
+	assert.equal(cePreview.salesSafe, true);
 	assert.equal(docPreviewUrl({ kind: "RCE" }), null);
 	const safe = salesSafeExport({ cover: { contingencyPct: 5 } }, true);
 	assert.equal(safe.cover.omitContingency, true);

@@ -207,10 +207,11 @@ export function blocksToDocxXml(blocks) {
 	const amp = "&" + "amp;";
 	const lt = "&" + "lt;";
 	const gt = "&" + "gt;";
+	/** @param {unknown} value */
 	const esc = (value) => String(value || "").replace(/&/g, amp).replace(/</g, lt).replace(/>/g, gt);
-	const paras = (blocks || []).map((block) => {
+	const paras = (blocks || []).map((/** @type {any} */ block) => {
 		if (block?.type === "table") {
-			const rows = (block.rows || []).map((row) => `<w:tr>${(row || []).map((cell) => `<w:tc><w:p><w:r><w:t>${esc(cell)}</w:t></w:r></w:p></w:tc>`).join("")}</w:tr>`).join("");
+			const rows = (block.rows || []).map((/** @type {any} */ row) => `<w:tr>${(row || []).map((/** @type {any} */ cell) => `<w:tc><w:p><w:r><w:t>${esc(cell)}</w:t></w:r></w:p></w:tc>`).join("")}</w:tr>`).join("");
 			return `<w:tbl>${rows}</w:tbl>`;
 		}
 		const text = esc(block?.text);
@@ -282,6 +283,7 @@ export function htmlToBlocks(html) {
 	const source = String(html || "");
 	/** @type {any[]} */
 	const blocks = [];
+	/** @param {unknown} value */
 	const plain = (value) => String(value || "").replace(/<[^>]+>/g, "").trim();
 	const tables = source.match(/<table[\s\S]*?<\/table>/gi) || [];
 	tables.forEach((table) => {

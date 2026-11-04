@@ -65,7 +65,7 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 									const run = async () => {
 										if (file.name.toLowerCase().endsWith(".docx")) {
 											const blocks = await importDocxBlocks(/** @type {ArrayBuffer} */ (reader.result));
-											const body = blocks.map((block) => block.type === "table" ? (block.rows || []).map((row) => row.join(" | ")).join("\n") : block.text || "").filter(Boolean).join("\n");
+											const body = blocks.map((/** @type {any} */ block) => block.type === "table" ? (block.rows || []).map((/** @type {any} */ row) => row.join(" | ")).join("\n") : block.text || "").filter(Boolean).join("\n");
 											write({ ...current, body: `${current.body || ""}\n${body}`.trim(), blocks });
 											return;
 										}
@@ -90,7 +90,9 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 							}} />
 						</label>
 						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => {
-							const blob = new Blob([xmlToDocxBytes(blocksToDocxXml([{ type: "p", text: current.body || "", bold: true }]))], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+							const bytes = xmlToDocxBytes(blocksToDocxXml([{ type: "p", text: current.body || "", bold: true }]));
+							const part = /** @type {BlobPart} */ (/** @type {unknown} */ (bytes));
+							const blob = new Blob([part], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
 							const url = URL.createObjectURL(blob);
 							const link = document.createElement("a");
 							link.href = url;
