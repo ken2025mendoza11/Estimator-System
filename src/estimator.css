@@ -1345,3 +1345,9 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 .ce-user-menu, .ce-user-modal { background: #fff; color: #1c1917; border: 1px solid #d6d3d1; border-radius: 12px; padding: 0.75rem; display: grid; gap: 0.4rem; }
 .ce-user-test { border: 1px dashed #ca8a04; padding: 0.4rem; }
 .ce-user-out { color: #b91c1c; }
+
+.b43-rows .ce-table tbody tr:hover { background: #e8eef5; box-shadow: inset 3px 0 0 #8aa0b8; }
+.b43-rows .ce-table tbody tr:hover td:hover { background: #dbe4ee; }
+@media (hover: none) {
+  .b43-rows .ce-table tbody tr:hover { background: transparent; box-shadow: none; }
+}

@@ -68,6 +68,9 @@ import { salesPipelineRows } from "../lib/estimator/salesStage";
 import { CeExportDialog } from "./CeExportDialog";
 import { RceRemarkCell } from "./RceRemarkCell";
 import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "../lib/estimator/rceTemplate";
+import { libraryTabLabel, salesSafeExport, stripCeTemplate } from "../lib/estimator/libraryTemplates";
+import { markSeen, showNewForUser } from "../lib/estimator/personalNew";
+import { documentTitle } from "../lib/estimator/notifyBell";
 import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
 import { AccessQueue } from "./AccessQueue";
 import { Phase8CePanel } from "./Phase8Panels";
@@ -120,6 +123,17 @@ let salesProfileOn = false;
 let rceTplOn = false;
 let rceRouteNow = [];
 let rceUsersNow = [];
+let personalNewTagOn = false;
+let salesPipelineMonitoringOn = false;
+let ceThreadsOn = false;
+let notificationsBellOn = false;
+let libraryMethodologiesOn = false;
+let templatesFromDocsOn = false;
+let monitoringExportOn = false;
+let salesDocPreviewOn = false;
+let personalActorId = "";
+let personalNewConfig = { weekendDays: [0, 6], holidays: [] };
+let saveCeTemplateNow = (_row, _tpl) => {};
 let miscShowMemory = {};
 let pendingMasterNow = [];
 let submitPendingMaster = (_draft) => {};
@@ -4922,7 +4936,15 @@ function defaultAdminConfig() {
 			ceTpl9: false,
 			ceTpl10: false,
 			salesProfile: false,
-			rceTpl: false
+			rceTpl: false,
+			personalNewTag: false,
+			salesPipelineMonitoring: false,
+			ceThreads: false,
+			notificationsBell: false,
+			libraryMethodologies: false,
+			templatesFromDocs: false,
+			monitoringExport: false,
+			salesDocPreview: false
 		},
 		approvalModes: {},
 		approvalFinal: {},
@@ -5057,9 +5079,18 @@ function normalizeAdminConfig(raw) {
 			ceTpl9: src.features?.ceTpl9 === true,
 			ceTpl10: src.features?.ceTpl10 === true,
 			salesProfile: src.features?.salesProfile === true,
-			rceTpl: src.features?.rceTpl === true
+			rceTpl: src.features?.rceTpl === true,
+			personalNewTag: src.features?.personalNewTag === true,
+			salesPipelineMonitoring: src.features?.salesPipelineMonitoring === true,
+			ceThreads: src.features?.ceThreads === true,
+			notificationsBell: src.features?.notificationsBell === true,
+			libraryMethodologies: src.features?.libraryMethodologies === true,
+			templatesFromDocs: src.features?.templatesFromDocs === true,
+			monitoringExport: src.features?.monitoringExport === true,
+			salesDocPreview: src.features?.salesDocPreview === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
+		workingDays: src.workingDays && typeof src.workingDays === "object" ? src.workingDays : { weekendDays: [0, 6], holidays: [] },
 		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
 		approvalModes: normalizeApprovalModes(src.approvalModes),
 		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
@@ -23104,6 +23135,15 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 						},
 						children: "Export"
 					}) : null,
+					templatesFromDocsOn && row.ceId ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							const tpl = stripCeTemplate({ client: row.client || "", project: row.projectDesc || "", notes: "", attachments: [] });
+							if (typeof saveCeTemplateNow === "function") saveCeTemplateNow(row, tpl);
+						},
+						children: "Save as CE template"
+					}) : null,
 					row.canRevise ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						onClick: () => {
@@ -23343,6 +23383,8 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			awardStatus: "",
 			awardRemarks: "",
 			isNew: true,
+			targetedIds: [r.assignedToId, r.salesOwnerId].filter(Boolean),
+			createdAt: received || new Date().toISOString(),
 			overdue: r.ceDeadline ? Date.parse(r.ceDeadline) < Date.now() : false,
 			rceOnly: true,
 			priority: monPriorityLabel(r.priorityLevel),
@@ -23390,7 +23432,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 		{ id: "due3", label: "Due in 3 days", color: "#b45309", test: (row) => !monIsNonActive(row.status) && row.deadlineAge != null && row.deadlineAge >= 0 && row.deadlineAge <= 3 },
 		{ id: "wait", label: "Waiting for info", color: "#a16207", test: (row) => String(row.status || "").toLowerCase() === "waiting for information" },
 		{ id: "approval", label: "For approval", color: "#4338ca", test: (row) => String(row.status || "").toLowerCase() === "for approval" },
-		{ id: "new", label: "New", color: "#1f5c4c", test: (row) => !!row.isNew }
+		{ id: "new", label: "New", color: "#1f5c4c", test: (row) => personalNewTagOn === true ? showNewForUser({ userId: personalActorId, targetedIds: row.targetedIds || [], seenBy: row.seenBy || {}, createdAt: row.createdAt || row.rceReceivedDate || row.received, now: new Date().toISOString(), config: personalNewConfig }) : !!row.isNew }
 	];
 	const chipPick = showChips ? ceChips.find((item) => item.id === chip) : null;
 	const chipRows = chipPick ? matched.filter(chipPick.test) : matched;
@@ -26671,13 +26713,13 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 					/* @__PURE__ */ jsx("button", {
 						className: `ce-pill ${activeTab === "templates" ? "ce-pill-active" : ""}`,
 						onClick: () => setActiveTab("templates"),
-						children: "Templates"
+						children: libraryTabLabel(libraryMethodologiesOn === true, "ce")
 					}),
 					mode !== "archive" && /* @__PURE__ */ jsx("button", {
 						className: `ce-pill ${activeTab === "task-templates" ? "ce-pill-active" : ""}`,
 						onClick: () => setActiveTab("task-templates"),
 						type: "button",
-						children: "Per Task Template"
+						children: libraryTabLabel(libraryMethodologiesOn === true, "task")
 					}),
 					/* @__PURE__ */ jsx("button", {
 						className: `ce-pill ${activeTab === "archive" ? "ce-pill-active" : ""}`,
@@ -26693,7 +26735,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 						className: "scope-lib-bar",
 						children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("h2", {
 							className: "ce-serif",
-							children: "Templates"
+							children: libraryTabLabel(libraryMethodologiesOn === true, "ce")
 						}), /* @__PURE__ */ jsx("p", {
 							className: "wiz-sub",
 							children: "Start from an onsite, shop, trading, or hybrid template and fill it in here."
@@ -29125,7 +29167,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		setCurrentView(next);
 	};
 	return /* @__PURE__ */ jsxs("div", {
-		className: "ce-shell-outer" + (ceTpl10On === true ? " ce-tpl10" : ""),
+		className: "ce-shell-outer" + (ceTpl10On === true ? " ce-tpl10" : "") + ((personalNewTagOn || ceThreadsOn) === true ? " b43-rows" : ""),
 		children: [/* @__PURE__ */ jsxs("aside", {
 			className: `ce-sidebar ${collapsed ? "ce-sidebar-collapsed" : ""}`,
 			children: [
@@ -29221,7 +29263,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							"data-nav": item.key,
 							className: "ce-navitem" + (isActive ? " ce-navitem-active" : "") + (item.redBorder ? " ce-navitem-monitoring" : ""),
 							onClick: () => go(item.key),
-							children: [/* @__PURE__ */ jsx(Icon, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: item.label })]
+							children: [/* @__PURE__ */ jsx(Icon, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: item.key === "scope" ? libraryTabLabel(libraryMethodologiesOn === true, "nav") : item.label })]
 						}, item.key);
 					}), reportsOn ? /* @__PURE__ */ jsxs("button", {
 						type: "button",
@@ -29381,6 +29423,19 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	rceTplOn = adminConfig.features?.rceTpl === true;
 	rceRouteNow = adminConfig.approvalFlows?.rce || [];
 	rceUsersNow = adminConfig.users || [];
+	personalNewTagOn = adminConfig.features?.personalNewTag === true;
+	salesPipelineMonitoringOn = adminConfig.features?.salesPipelineMonitoring === true;
+	ceThreadsOn = adminConfig.features?.ceThreads === true;
+	notificationsBellOn = adminConfig.features?.notificationsBell === true;
+	libraryMethodologiesOn = adminConfig.features?.libraryMethodologies === true;
+	templatesFromDocsOn = adminConfig.features?.templatesFromDocs === true;
+	monitoringExportOn = adminConfig.features?.monitoringExport === true;
+	salesDocPreviewOn = adminConfig.features?.salesDocPreview === true;
+	personalActorId = accountUserId || "";
+	personalNewConfig = adminConfig.workingDays || personalNewConfig;
+	saveCeTemplateNow = (row, tpl) => {
+		setScopeTemplates((prev) => [{ id: `tpl-${row.ceId || Date.now()}`, name: row.ceDisplay || row.ceId || "CE template", snapshot: tpl, jobType: "onsite" }, ...(prev || [])]);
+	};
 	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
 	submitPendingMaster = (draft) => {
 		setAdminConfig((prev) => {
@@ -29717,6 +29772,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	];
 	const [localReminders, setLocalReminders] = useState([]);
 	const shownNotices = [...localReminders, ...notifications || []];
+	if (notificationsBellOn === true && typeof document !== "undefined") document.title = documentTitle(unreadNotices(shownNotices, editorName, actingLevel, accountUserId).length);
 	useEffect(() => {
 		if (!engineFlag) return;
 		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
@@ -30265,7 +30321,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const openEditorForCE = (ce) => {
 		setEditorReturn(currentView === "dashboard" ? "dashboard" : "monitoring");
-		if (ce?.isNew) {
+		if (personalNewTagOn === true && ce?.id) {
+			const seenBy = markSeen(ce.seenBy || {}, personalActorId, new Date().toISOString());
+			const next = { ...ce, seenBy };
+			setCeList((prev) => prev.map((c) => c.id === ce.id ? next : c));
+			setActiveCE(next);
+		} else if (ce?.isNew) {
 			const cleared = {
 				...ce,
 				isNew: false
@@ -32204,7 +32265,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			proposals: proposals || [],
 			jobOrders: jobOrders || [],
 			ownerId: release1MonitorSales && !isSalesManager(findAccount(release1Users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) ? release1ActorId : ""
-		})
+		}),
+		pipelineV2: salesPipelineMonitoringOn === true,
+		threadsOn: ceThreadsOn === true,
+		previewOn: salesDocPreviewOn === true
 	} : null;
 	return /* @__PURE__ */ jsx("div", {
 		className: "ce-app",
