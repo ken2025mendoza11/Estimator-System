@@ -40,6 +40,42 @@ function holidaySet(holidays) {
 	return set;
 }
 
+/**
+ * An array is the holiday list and Saturday stays a working day.
+ * A company config may set saturdayWorking. Default is Saturday on.
+ * weekendDays is honored only when saturdayWorking is omitted.
+ * @param {unknown} input
+ */
+export function readCalendar(input) {
+	if (Array.isArray(input) || input == null) return { holidays: holidaySet(input), skipSaturday: false };
+	const row = /** @type {{ holidays?: unknown, saturdayWorking?: unknown, weekendDays?: unknown }} */ (input);
+	const holidays = holidaySet(row.holidays);
+	if (typeof row.saturdayWorking === "boolean") return { holidays, skipSaturday: row.saturdayWorking === false };
+	if (Array.isArray(row.weekendDays)) return { holidays, skipSaturday: row.weekendDays.map((day) => Number(day)).includes(6) };
+	return { holidays, skipSaturday: false };
+}
+
+/**
+ * Company calendar for NEW expiry, SOW schedule, and estimated days.
+ * Saturday is on unless the config says otherwise.
+ * @param {any} admin
+ */
+export function companyCalendar(admin) {
+	const wd = admin?.workingDays && typeof admin.workingDays === "object" ? admin.workingDays : {};
+	const holidays = [];
+	(admin?.phHolidays || []).forEach((item) => {
+		const iso = cleanHolidayDate(item);
+		if (iso) holidays.push(iso);
+	});
+	(wd.holidays || []).forEach((item) => {
+		const iso = cleanHolidayDate(item);
+		if (iso && !holidays.includes(iso)) holidays.push(iso);
+	});
+	let saturdayWorking = true;
+	if (typeof wd.saturdayWorking === "boolean") saturdayWorking = wd.saturdayWorking;
+	return { holidays, saturdayWorking };
+}
+
 export function isSunday(iso) {
 	const row = parts(iso);
 	if (!row) return false;
@@ -49,8 +85,11 @@ export function isSunday(iso) {
 export function isWorkingDay(iso, holidays) {
 	const row = parts(iso);
 	if (!row) return false;
-	if (utcDate(row).getUTCDay() === 0) return false;
-	return !holidaySet(holidays).has(row.iso);
+	const cfg = readCalendar(holidays);
+	const day = utcDate(row).getUTCDay();
+	if (day === 0) return false;
+	if (day === 6 && cfg.skipSaturday) return false;
+	return !cfg.holidays.has(row.iso);
 }
 
 /** Move across working days. addWorkingDays(Monday, 1) is Tuesday when Tuesday is a working day. */
@@ -91,4 +130,9 @@ export function workingDaysBetween(start, end, holidays) {
 		}
 	}
 	return count;
+}
+
+/** Estimated working days in [start, end). Same calendar as NEW expiry and the SOW schedule. */
+export function estWorkingDays(start, end, config) {
+	return Math.max(0, workingDaysBetween(start, end, config));
 }

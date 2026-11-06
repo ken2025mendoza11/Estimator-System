@@ -75,6 +75,9 @@ export function MarkupPanel({ markup, sales, actorId, users, onMarkup }) {
 			{open && sales && actorId === markup.ownerId ? (
 				<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onMarkup?.("submit")}>Submit markup</button>
 			) : null}
+			{sales && actorId === markup.ownerId && (markup.status === "Approved" || markup.status === "Returned") ? (
+				<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => onMarkup?.("revise")}>Revise markup</button>
+			) : null}
 			<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={downloadExcel}>Excel</button>
 			<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={downloadPdf}>PDF</button>
 			{mayDecide ? (

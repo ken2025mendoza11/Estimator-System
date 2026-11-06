@@ -213,6 +213,22 @@ export function markupNumber(ceNo, revision) {
 }
 
 /**
+ * Next markup copy in a CE family. The first document is revision 0.
+ * @param {any[] | null | undefined} rows
+ * @param {unknown} ceId
+ */
+export function nextMarkupRevision(rows, ceId) {
+	const id = String(ceId || "").trim();
+	const family = (Array.isArray(rows) ? rows : []).filter((row) => {
+		if (!row) return false;
+		return String(row.ceId || "") === id || String(row.ceNo || "") === id;
+	});
+	if (!family.length) return 0;
+	const max = family.reduce((highest, row) => Math.max(highest, Math.trunc(Number(row.revision) || 0)), 0);
+	return max + 1;
+}
+
+/**
  * Rows for the markup PDF and Excel. Totals match the screen.
  * @param {any} markup
  * @returns {(string | number)[][]}

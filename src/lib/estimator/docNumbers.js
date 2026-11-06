@@ -199,3 +199,91 @@ export function numberIdentityClash(rows, incoming) {
   if (!hit) return null;
   return { ok: false, message: "That number is already used." };
 }
+
+/**
+ * Unique-index and "already used" failures. Other errors are not clashes.
+ * @param {unknown} result
+ */
+export function isDocNumberClash(result) {
+  const record = result && typeof result === "object" ? /** @type {{ message?: string, code?: string }} */ (result) : {};
+  const message = String(record.message || result || "");
+  const code = String(record.code || "");
+  return code === "23505" || /already used|duplicate key|unique constraint|unique violation/i.test(message);
+}
+
+/**
+ * Take the next free number. A clash is retried. Any other failure stops.
+ * @param {() => Promise<unknown>} allocate
+ * @param {(number: string) => Promise<{ ok?: boolean, skipped?: boolean, message?: string }>} claim
+ * @param {{ tries?: number }} [options]
+ */
+export async function allocateUntilFree(allocate, claim, options) {
+  const tries = Math.min(10, Math.max(1, Math.trunc(Number(options?.tries) || 8)));
+  let last = DOC_NUMBER_RETRY;
+  for (let i = 0; i < tries; i++) {
+    let number = "";
+    try {
+      number = String((await allocate()) || "").trim();
+    } catch (err) {
+      if (isDocNumberClash(err)) continue;
+      throw err;
+    }
+    if (!number) {
+      last = DOC_NUMBER_RETRY;
+      continue;
+    }
+    let claimed;
+    try {
+      claimed = await claim(number);
+    } catch (err) {
+      if (isDocNumberClash(err)) {
+        last = "That number is already used.";
+        continue;
+      }
+      throw err;
+    }
+    if (claimed?.ok || claimed?.skipped) return { ok: true, number, tries: i + 1 };
+    if (!isDocNumberClash(claimed)) return { ok: false, message: String(claimed?.message || DOC_NUMBER_RETRY) };
+    last = String(claimed?.message || "That number is already used.");
+  }
+  return { ok: false, message: last, clash: true };
+}
+
+/**
+ * Put a freshly allocated number on the stored document. The row id stays put.
+ * @param {string} kind
+ * @param {any} payload
+ * @param {string} number
+ */
+export function rewritePayloadNumber(kind, payload, number) {
+  const key = String(kind || "").toLowerCase() === "oif" ? "inspection" : String(kind || "").toLowerCase();
+  const next = String(number || "").trim();
+  const body = payload && typeof payload === "object" ? { ...payload } : {};
+  if (key === "rce") return { ...body, rceNo: next };
+  if (key === "inspection") return { ...body, oifNo: next };
+  if (key === "markup") return { ...body, markupNo: next };
+  if (key === "ce") {
+    const document = body.document && typeof body.document === "object" ? { ...body.document } : {};
+    const info = document.projectInfo && typeof document.projectInfo === "object" ? { ...document.projectInfo } : {};
+    info.docNo = next;
+    document.projectInfo = info;
+    document.docNo = next;
+    const summary = body.summary && typeof body.summary === "object" ? { ...body.summary, docNo: next } : body.summary;
+    return { ...body, document, ceNo: next, summary };
+  }
+  return body;
+}
+
+/** Blank until the first save. Opening the form must not show a taken number. */
+/** @param {unknown} value */
+export function rceNumberLabel(value) {
+  const text = String(value || "").trim();
+  return text && text !== "—" ? text : "—";
+}
+
+/** True when save/submit still has to allocate. */
+/** @param {unknown} value */
+export function rceNeedsNumber(value) {
+  const text = String(value || "").trim();
+  return !text || text === "—";
+}

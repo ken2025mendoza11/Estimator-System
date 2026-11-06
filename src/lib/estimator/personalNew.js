@@ -1,5 +1,7 @@
 /** Personal NEW tag. Seen state is per user. A viewer does not clear anyone else. */
 
+import { addWorkingDays as addCalendarDays, isWorkingDay as calendarWorkingDay } from "./phCalendar.js";
+
 /**
  * @param {unknown} iso
  * @returns {string}
@@ -11,44 +13,40 @@ export function manilaDate(iso) {
 }
 
 /**
- * @param {{ weekendDays?: number[], holidays?: string[] }} [config]
+ * Saturday is a working day unless the company config turns it off.
+ * An explicit weekendDays list is still honored (tests and older callers).
+ * @param {{ weekendDays?: number[], holidays?: string[], saturdayWorking?: boolean }} [config]
  */
 export function dayConfig(config) {
-	const weekend = Array.isArray(config?.weekendDays) ? config.weekendDays.map((day) => Number(day)) : [0, 6];
 	const holidays = Array.isArray(config?.holidays) ? config.holidays.map((day) => String(day)) : [];
-	return { weekendDays: weekend, holidays };
+	if (config && typeof config.saturdayWorking === "boolean") {
+		const saturdayWorking = config.saturdayWorking !== false;
+		return { saturdayWorking, weekendDays: saturdayWorking ? [0] : [0, 6], holidays };
+	}
+	if (config && Array.isArray(config.weekendDays)) {
+		const weekendDays = config.weekendDays.map((day) => Number(day));
+		return { weekendDays, holidays, saturdayWorking: !weekendDays.includes(6) };
+	}
+	return { saturdayWorking: true, weekendDays: [0], holidays };
 }
 
 /**
  * @param {string} dateStr
- * @param {{ weekendDays?: number[], holidays?: string[] }} [config]
+ * @param {{ weekendDays?: number[], holidays?: string[], saturdayWorking?: boolean }} [config]
  */
 export function isWorkingDay(dateStr, config) {
-	const cfg = dayConfig(config);
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
-	if (cfg.holidays.includes(dateStr)) return false;
-	const [year, month, day] = dateStr.split("-").map((part) => Number(part));
-	const weekDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-	return !cfg.weekendDays.includes(weekDay);
+	return calendarWorkingDay(dateStr, dayConfig(config));
 }
 
 /**
  * @param {string} dateStr
  * @param {number} count
- * @param {{ weekendDays?: number[], holidays?: string[] }} [config]
+ * @param {{ weekendDays?: number[], holidays?: string[], saturdayWorking?: boolean }} [config]
  */
 export function addWorkingDays(dateStr, count, config) {
-	let left = Math.max(0, Number(count) || 0);
-	let cursor = dateStr;
-	let guard = 0;
-	while (left > 0 && guard < 370) {
-		guard += 1;
-		const [year, month, day] = cursor.split("-").map((part) => Number(part));
-		const next = new Date(Date.UTC(year, month - 1, day + 1));
-		cursor = next.toISOString().slice(0, 10);
-		if (isWorkingDay(cursor, config)) left -= 1;
-	}
-	return cursor;
+	const left = Math.max(0, Number(count) || 0);
+	if (!dateStr || !left) return dateStr || "";
+	return addCalendarDays(dateStr, left, dayConfig(config));
 }
 
 /**
