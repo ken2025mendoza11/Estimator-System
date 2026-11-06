@@ -2,7 +2,7 @@
 'use client';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { Activity, AlertCircle, Award, Bell, BookOpen, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsDownUp, ChevronsUpDown, ClipboardList, Clock, Copy, Database, Download, Eye, EyeOff, FileText, Filter, Flag, FolderPlus, GripVertical, HardHat, Layers, LayoutDashboard, Library, Package, Paperclip, Pencil, Pin, Plus, RefreshCw, Search, Settings, Shield, Tag, Trash2, Undo2, Upload, UploadCloud, Users, Wrench, X } from "lucide-react";
+import { Activity, AlertCircle, ArrowUpRight, Award, Bell, BookOpen, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsDownUp, ChevronsUpDown, ClipboardList, Clock, Copy, Database, Download, Eye, EyeOff, FileText, Filter, Flag, FolderPlus, GripVertical, HardHat, Layers, LayoutDashboard, Library, MessageCircle, Package, Paperclip, Pencil, Pin, Plus, RefreshCw, Search, Settings, Shield, Tag, Trash2, Undo2, Upload, UploadCloud, Users, Wrench, X } from "lucide-react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -4702,7 +4702,8 @@ function inspectionDisplayCols(visibleCols) {
 		...lead,
 		{ key: "__aging", label: "Aging", synthetic: "aging" },
 		{ key: "__ceStatus", label: "CE Status", synthetic: "ceStatus" },
-		...rest
+		...rest,
+		{ key: "__actions", label: "Actions", synthetic: "actions" }
 	];
 }
 function MonPriorityText({ label, boardColors }) {
@@ -21209,7 +21210,7 @@ var DEFAULT_OIF_MON_COLUMNS = [
 var DEFAULT_OIF_MON_WIDTHS = {
 	itemNo: 80,
 	oifNo: 160,
-	ceId: 130,
+	ceId: 188,
 	projectDescription: 240,
 	customerName: 170,
 	date: 130,
@@ -21267,7 +21268,7 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 	const visibleCols = schema.columns.filter((c) => c.visible !== false);
 	const displayCols = useMemo(() => inspectionDisplayCols(visibleCols), [visibleCols]);
 	const { widths, updateWidth } = useResizableColumns("oif-mon-col-widths", useMemo(() => {
-		const next = { ...DEFAULT_OIF_MON_WIDTHS, __aging: 72, __ceStatus: 128 };
+		const next = { ...DEFAULT_OIF_MON_WIDTHS, __aging: 72, __ceStatus: 128, __actions: 96 };
 		schema.columns.forEach((c) => {
 			if (next[c.key] == null) next[c.key] = 140;
 		});
@@ -21402,7 +21403,28 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 							return /* @__PURE__ */ jsx("tr", {
 								onClick: () => setPreviewReport(r),
 								style: { cursor: "pointer" },
-								children: displayCols.map((c) => /* @__PURE__ */ jsx("td", { children: c.isCustom ? /* @__PURE__ */ jsx("input", {
+								children: displayCols.map((c) => /* @__PURE__ */ jsx("td", {
+									className: c.synthetic === "actions" ? "mon-actions" : "mon-clip",
+									title: c.synthetic || c.isCustom ? undefined : String(oifMonCellValue(r, c.key, idx) || ""),
+									children: c.synthetic === "actions" ? /* @__PURE__ */ jsxs("div", {
+										className: "mon-row-actions",
+										onClick: (event) => event.stopPropagation(),
+										children: [
+											/* @__PURE__ */ jsx(MonRowMenu, {
+												row: { ceId: r.id || r.oifNo || "inspection" },
+												onOpen: () => onOpenInspection?.(r),
+												onPreview: () => setPreviewReport(r)
+											}),
+											/* @__PURE__ */ jsx("button", {
+												type: "button",
+												className: "mon-icon-btn",
+												title: "Open",
+												"aria-label": "Open",
+												onClick: () => onOpenInspection?.(r),
+												children: /* @__PURE__ */ jsx(ArrowUpRight, { size: 14 })
+											})
+										]
+									}) : c.isCustom ? /* @__PURE__ */ jsx("input", {
 									className: "ce-input",
 									value: r[c.key] || "",
 									onClick: (e) => e.stopPropagation(),
@@ -23145,7 +23167,7 @@ function fixedViewport() {
 	const z = uiZoom();
 	return { width: window.innerWidth / z, height: window.innerHeight / z };
 }
-function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, canAssign, assignChoices, onExport }) {
+function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, canAssign, assignChoices, onExport, extras = [] }) {
 	const [open, setOpen] = useState(false);
 	const [pos, setPos] = useState(null);
 	const [assigning, setAssigning] = useState(false);
@@ -23286,7 +23308,15 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 						type: "button",
 						onClick: () => setAssigning(true),
 						children: "Assign…"
-					}) : null
+					}) : null,
+					...(Array.isArray(extras) ? extras.filter(Boolean).map((item) => /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							item.onClick?.();
+						},
+						children: item.label
+					}, item.label)) : [])
 				]
 			}) : null
 		]
@@ -23822,72 +23852,72 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 									...receivedChoices.map((user) => /* @__PURE__ */ jsx("option", { value: user.name, children: shortPersonName(user.name) }, user.id || user.name))
 								]
 							}) });
-							const actionsCell = /* @__PURE__ */ jsx("td", { className: profile === "approval" ? "mon-actions mon-decide" : "mon-actions", children: profile === "approval" ? /* @__PURE__ */ jsxs("div", {
-								className: "mon-decide-btns",
-								onClick: (event) => event.stopPropagation(),
-								children: [
-									/* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-primary ce-btn-sm",
-										onClick: () => onDecide?.(row, "accept", "Approved from dashboard"),
-										children: "Approve"
-									}),
-									!engineOn && /* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-ghost ce-btn-sm mon-reject",
-										onClick: () => {
-											void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
-												if (!asked.ok) return;
-												onDecide?.(row, "reject", asked.text);
-											});
-										},
-										children: "Reject"
-									}),
-									engineOn && (documents?.[row.ceId]?.approval || {}).engine === "v2" && /* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-ghost ce-btn-sm",
-										onClick: () => {
-											void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
-												if (!asked.ok) return;
-												onDecide?.(row, "approve-comment", asked.text);
-											});
-										},
-										children: "Approve with comment"
-									}),
-									engineOn && (documents?.[row.ceId]?.approval || {}).engine === "v2" && /* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-ghost ce-btn-sm",
-										onClick: () => {
-											void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
-												if (!asked.ok) return;
-												onDecide?.(row, "request-edit", asked.text);
-											});
-										},
-										children: "Request edit"
-									})
-								]
-							}) : /* @__PURE__ */ jsxs("div", {
+							const followText = followLabel({ status: row.status, waitingInfo: row.waitingInfo }, { estimator: release1SalesActor !== true, sales: release1SalesActor === true, owner: release1SalesActor === true }) || "Follow up";
+							const approvalV2 = engineOn && (documents?.[row.ceId]?.approval || {}).engine === "v2";
+							const actionsCell = /* @__PURE__ */ jsx("td", { className: "mon-actions", children: /* @__PURE__ */ jsxs("div", {
 								className: "mon-row-actions",
 								onClick: (event) => event.stopPropagation(),
-								children: [/* @__PURE__ */ jsx(MonRowMenu, {
-								row,
-								onOpen: onOpenCE,
-								onPreview: setPreviewRow,
-								onRevise: onStartRevision,
-								onGenerate: profile === "monitor" ? onGeneratePending : void 0,
-								onAssign: profile === "monitor" ? onAssignPending : void 0,
-								canAssign: lead,
-								assignChoices: costingMembers(users),
-								onExport: (picked) => {
-									const request = monitoringExportRequest(picked, release1SalesActor === true);
-									if (request) setExportAsk(request);
-								}
-							}), ceThreadsOn === true && row.ceId ? /* @__PURE__ */ jsx("button", {
-								type: "button",
-								className: "ce-btn-ghost ce-btn-sm",
-								onClick: () => setThreadRow(row),
-								children: followLabel({ status: row.status, waitingInfo: row.waitingInfo }, { estimator: release1SalesActor !== true, sales: release1SalesActor === true, owner: release1SalesActor === true }) || "Follow up"
-							}) : null] }) });
+								children: [
+									/* @__PURE__ */ jsx(MonRowMenu, {
+										row,
+										onOpen: onOpenCE,
+										onPreview: setPreviewRow,
+										onRevise: onStartRevision,
+										onGenerate: profile === "monitor" ? onGeneratePending : void 0,
+										onAssign: profile === "monitor" ? onAssignPending : void 0,
+										canAssign: lead,
+										assignChoices: costingMembers(users),
+										onExport: (picked) => {
+											const request = monitoringExportRequest(picked, release1SalesActor === true);
+											if (request) setExportAsk(request);
+										},
+										extras: profile === "approval" ? [
+											approvalV2 ? { label: "Approve with comment", onClick: () => {
+												void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+													if (!asked.ok) return;
+													onDecide?.(row, "approve-comment", asked.text);
+												});
+											} } : null,
+											approvalV2 ? { label: "Request edit", onClick: () => {
+												void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+													if (!asked.ok) return;
+													onDecide?.(row, "request-edit", asked.text);
+												});
+											} } : null,
+											!engineOn ? { label: "Reject", onClick: () => {
+												void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
+													if (!asked.ok) return;
+													onDecide?.(row, "reject", asked.text);
+												});
+											} } : null
+										] : []
+									}),
+									profile !== "approval" && ceThreadsOn === true && row.ceId ? /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn is-chat",
+										title: followText,
+										"aria-label": followText,
+										onClick: () => setThreadRow(row),
+										children: /* @__PURE__ */ jsx(MessageCircle, { size: 14 })
+									}) : null,
+									profile === "approval" ? /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn is-ok",
+										title: "Approve",
+										"aria-label": "Approve",
+										onClick: () => onDecide?.(row, "accept", "Approved from dashboard"),
+										children: /* @__PURE__ */ jsx(Check, { size: 14 })
+									}) : null,
+									row.ceId && onOpenCE ? /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn",
+										title: "Open",
+										"aria-label": "Open",
+										onClick: () => onOpenCE(row.ceId),
+										children: /* @__PURE__ */ jsx(ArrowUpRight, { size: 14 })
+									}) : null
+								]
+							}) });
 							const cells = profile === "monitor" ? [
 								/* @__PURE__ */ jsx("td", { className: "mon-item", children: idx + 1 }),
 								estimatorCell,
@@ -24386,7 +24416,7 @@ function mergeSheetSchema(sheetKey, stored) {
 function defaultDbColWidths(columns) {
 	const w = {
 		_no: 64,
-		_actions: 140
+		_actions: 96
 	};
 	(columns || []).forEach((c) => {
 		if (c.type === "number") w[c.key] = 128;
@@ -25058,7 +25088,8 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 		...colDefaults,
 		...storedColWidths
 	};
-	const tableWidth = (Number(widths._no) || 64) + (Number(widths._actions) || 148) + fields.reduce((sum, f) => sum + (Number(widths[f.key]) || 160), 0) + customFields.reduce((sum, cf) => sum + (Number(widths[`cf_${cf.id}`]) || 140), 0);
+	const actionsW = 96;
+	const tableWidth = (Number(widths._no) || 64) + actionsW + fields.reduce((sum, f) => sum + (Number(widths[f.key]) || 160), 0) + customFields.reduce((sum, cf) => sum + (Number(widths[`cf_${cf.id}`]) || 140), 0);
 	const activeLabel = (allTabs.find((t) => t.key === activeTab) || {}).label || activeTab;
 	const nameField = MASTERLIST_SHEETS.find((s) => s.key === activeTab)?.nameField || currentSheetConfig.labelKey || (isClients ? "fullName" : "description");
 	const sheetSort = sheetRule(rules, activeTab);
@@ -25575,15 +25606,14 @@ Import anyway? Cancel skips the whole file.`)) return;
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "db-table db-resizable-table",
 					style: {
-						width: Math.max(tableWidth, 720),
-						minWidth: "calc(100% + 320px)"
+						width: Math.max(tableWidth, 0)
 					},
 					children: [
 						/* @__PURE__ */ jsxs("colgroup", { children: [
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths._no}px` } }),
 							fields.map((f) => /* @__PURE__ */ jsx("col", { style: { width: `${widths[f.key] || 160}px` } }, f.key)),
 							customFields.map((cf) => /* @__PURE__ */ jsx("col", { style: { width: `${widths[`cf_${cf.id}`] || 140}px` } }, cf.id)),
-							/* @__PURE__ */ jsx("col", { style: { width: `${widths._actions}px` } })
+							/* @__PURE__ */ jsx("col", { style: { width: `${actionsW}px` } })
 						] }),
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx(ResizableTh, {
@@ -25657,8 +25687,9 @@ Import anyway? Cancel skips the whole file.`)) return;
 							}, cf.id)),
 							/* @__PURE__ */ jsx(ResizableTh, {
 								colKey: "_actions",
-								width: widths._actions,
-								onResize: updateWidth,
+								className: "db-actions-head",
+								width: actionsW,
+								onResize: (key) => updateWidth(key, actionsW),
 								style: {
 									position: "sticky",
 									top: 0,
@@ -28634,10 +28665,24 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 								initials: linked ? estimatorInitials(linked.assignedTo || "", users) : "—",
 								boardColors: colors
 							}) }),
-							/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(MonRowMenu, {
-								row: { ceId: rce.id || rce.rceNo || "rce" },
-								onOpen: () => onViewRCE?.(rce),
-								onPreview: () => setPreviewRce(rce)
+							/* @__PURE__ */ jsx("td", { className: "mon-actions", children: /* @__PURE__ */ jsxs("div", {
+								className: "mon-row-actions",
+								onClick: (event) => event.stopPropagation(),
+								children: [
+									/* @__PURE__ */ jsx(MonRowMenu, {
+										row: { ceId: rce.id || rce.rceNo || "rce" },
+										onOpen: () => onViewRCE?.(rce),
+										onPreview: () => setPreviewRce(rce)
+									}),
+									/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn",
+										title: "Open",
+										"aria-label": "Open",
+										onClick: () => onViewRCE?.(rce),
+										children: /* @__PURE__ */ jsx(ArrowUpRight, { size: 14 })
+									})
+								]
 							}) })
 						] }, rce.id || rce.rceNo);
 					}),

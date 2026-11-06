@@ -219,9 +219,10 @@ test("the methodology editor approves only Lead, Head, or Admin and round-trips 
 	const imported = await importDocxBlocks(xmlToDocxBytes(xml));
 	assert.equal(imported.some((row) => String(row.text || "").includes("Title") || (row.rows || []).flat().includes("A")), true);
 	assert.equal(editor.includes("useEditor"), true);
-	for (const label of ["Methodology editor", "Bold", "Bullets", "Equation", "Symbol"]) {
+	for (const label of ["Methodology editor", "Bold", "Bullets", "Symbol"]) {
 		assert.equal(editor.includes(label), true, label);
 	}
+	assert.equal(editor.includes("Equation"), false);
 	assert.equal(app.includes("methodologyEditor: false"), true);
 	assert.equal(seed.includes("methodologyEditor: true"), true);
 	assert.equal(app.includes("libraryMethodologies: false"), true);
