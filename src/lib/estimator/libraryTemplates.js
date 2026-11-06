@@ -188,6 +188,22 @@ export function docxXmlToBlocks(xml) {
 export const PDF_IMPORT_NOTE = "PDF import brings text only; Word keeps formatting.";
 
 /**
+ * Plain methodology text becomes paragraphs. HTML is left as written.
+ * @param {unknown} body
+ */
+export function bodyToHtml(body) {
+	const text = String(body || "");
+	if (!text.trim()) return "<p></p>";
+	if (/<[a-z][\s\S]*>/i.test(text)) return text;
+	const amp = "&" + "amp;";
+	const lt = "&" + "lt;";
+	const gt = "&" + "gt;";
+	/** @param {unknown} value */
+	const esc = (value) => String(value || "").replace(/&/g, amp).replace(/</g, lt).replace(/>/g, gt);
+	return text.split("\n").map((line) => `<p>${esc(line) || "<br>"}</p>`).join("");
+}
+
+/**
  * @param {any[]} list
  * @param {any} doc
  */
@@ -313,4 +329,47 @@ export async function importDocxBlocks(bytes) {
 	const buffer = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 	const result = await mammoth.convertToHtml({ buffer: Buffer.from(buffer) });
 	return htmlToBlocks(result.value);
+}
+
+const DECISION_LEVELS = ["lead", "head", "admin"];
+
+/**
+ * @param {any} doc
+ * @param {{ by?: unknown, now?: unknown }} [input]
+ */
+export function submitMethodology(doc, input) {
+	if (!doc || !String(doc.body || "").trim()) return { ok: false, message: "Write the methodology before submitting." };
+	const by = String(input?.by || "").trim();
+	if (!by) return { ok: false, message: "An account is required." };
+	const at = String(input?.now || new Date().toISOString());
+	return {
+		ok: true,
+		doc: {
+			...doc,
+			approval: { status: "For approval", by, at, decidedBy: "", level: "" },
+			versions: [{ at, body: String(doc.body || ""), html: String(doc.html || ""), status: "For approval" }, ...(doc.versions || [])].slice(0, 20),
+		},
+	};
+}
+
+/**
+ * Lead, Head, or Admin. Anyone else is refused.
+ * @param {any} doc
+ * @param {{ actor?: unknown, level?: unknown, decision?: unknown, now?: unknown }} input
+ */
+export function decideMethodology(doc, input) {
+	const level = String(input?.level || "").trim().toLowerCase();
+	if (!DECISION_LEVELS.includes(level)) return { ok: false, message: "Only Lead, Head, or Admin can decide." };
+	if (String(doc?.approval?.status || "") !== "For approval") return { ok: false, message: "This methodology is not waiting for approval." };
+	const decision = String(input?.decision || "").toLowerCase() === "approve" ? "Approved" : "Rejected";
+	const at = String(input?.now || new Date().toISOString());
+	const actor = String(input?.actor || "").trim();
+	return {
+		ok: true,
+		doc: {
+			...doc,
+			approval: { status: decision, by: doc.approval?.by || "", at, decidedBy: actor, level },
+			versions: [{ at, body: String(doc.body || ""), html: String(doc.html || ""), status: decision }, ...(doc.versions || [])].slice(0, 20),
+		},
+	};
 }

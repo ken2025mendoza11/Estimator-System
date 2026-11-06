@@ -19,7 +19,7 @@ import {
   type RevisionMap,
   type StoredDoc,
 } from "./workspace-docs";
-import { missingDocNumberRpc, payloadDocNumber } from "./docNumbers";
+import { isDocNumberClash, missingDocNumberRpc, payloadDocNumber, rewritePayloadNumber } from "./docNumbers";
 import { missingSuffixRpc } from "./docSuffixes";
 import {
   downloadDataUrl,
@@ -1301,16 +1301,30 @@ export async function saveWorkspaceToSupabase(
         : null;
     const numbered = write.kind === "rce" || write.kind === "ce" || write.kind === "inspection" || write.kind === "markup";
     if (numbered && !write.touchOnly) {
-      const number = payloadDocNumber(write.kind, stored, write.id);
-      if (number) {
+      let number = payloadDocNumber(write.kind, stored, write.id);
+      let guard = 0;
+      while (number && guard < 8) {
         const claimed = await claimUserDocNo(write.kind, write.id, number);
-        if (!claimed.ok && !claimed.skipped) {
+        if (claimed.ok || claimed.skipped) break;
+        const clash = isDocNumberClash(claimed);
+        if (!clash || guard === 7) {
           throw new WorkspaceSaveError(
             claimed.message || "That number is already used.",
             [...conflicts, { kind: write.kind, id: write.id, reason: "exists" }],
             revisions,
           );
         }
+        guard += 1;
+        const fresh = await allocateDocNumber(write.kind === "inspection" ? "oif" : write.kind, "", new Date().getFullYear());
+        if (!fresh) {
+          throw new WorkspaceSaveError(
+            claimed.message || "That number is already used.",
+            [...conflicts, { kind: write.kind, id: write.id, reason: "exists" }],
+            revisions,
+          );
+        }
+        stored = rewritePayloadNumber(write.kind, stored, fresh);
+        number = fresh;
       }
     }
     let result: RpcResult;

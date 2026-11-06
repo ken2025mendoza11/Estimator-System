@@ -133,25 +133,37 @@ export function offerDirectSwitch(opts) {
 }
 
 /**
- * Map a stored day type onto the DOLE rows. Existing values stay: Regular,
- * Sun/Special (rest day / Sunday / special day), Holiday (regular holiday).
- * Compound types are recognized when already stored. No new field is added.
+ * Map a stored day type onto the DOLE rows.
+ * Source: DOLE / NWPC Handbook on Workers' Statutory Monetary Benefits (2024 Edition)
+ * https://nwpc.dole.gov.ph/wp-content/uploads/2024/11/Workers-Statutory-Monetary-Benefits-Handbook-2024-Edition.pdf
+ * Labor Code Arts. 87 and 93.
+ * Existing Regular, Sun/Special, and Holiday values stay on the same premiums.
  * @param {unknown} dayType
  */
 function resolveDoleDay(dayType) {
   const t = String(dayType || "Regular").trim().toLowerCase().replace(/[_/]+/g, " ").replace(/\s+/g, " ");
   if (!t || t === "regular" || t === "ordinary" || t === "regular day" || t === "ordinary day") return "regular";
-  if (/holiday/.test(t) && /rest|sunday/.test(t)) return "holiday-rest";
-  if (/special/.test(t) && /rest/.test(t) && !/sun/.test(t)) return "special-rest";
-  if (t === "special rest" || t === "special on rest" || t === "special day on rest day" || t === "specialrest") return "special-rest";
-  if (t === "holiday" || t === "regular holiday" || t === "legal holiday") return "holiday";
-  if (t.includes("sun") || t.includes("special") || t.includes("rest")) return "rest";
+  const double = /\bdouble\b/.test(t);
+  const holiday = /\bholiday\b/.test(t);
+  // "on rest" is the handbook row (special on rest, holiday on rest).
+  // "Sun/Special" stays the 130% rest-or-special row. It is not special-on-rest.
+  const onRest = /\bon rest\b/.test(t);
+  const special = /\bspecial\b/.test(t);
+  if (double && holiday && onRest) return "double-holiday-rest";
+  if (double) return "double-holiday";
+  if (holiday && onRest) return "holiday-rest";
+  if (special && onRest) return "special-rest";
+  if (holiday) return "holiday";
+  if (special || /\brest\b/.test(t) || /\bsunday\b/.test(t) || /\bsun\b/.test(t)) return "rest";
   return "regular";
 }
 
 /**
- * One DOLE pay helper. Regular OT is 1.25. Rest day, special day, and holiday OT are 1.30 of that day's rate.
- * Night differential is +10% on the day rate and on OT. Compound rest-day rows use the handbook premiums.
+ * One DOLE pay helper. First 8 hours: ordinary 100%, rest/Sun or special 130%,
+ * special on rest 150%, regular holiday 200%, holiday on rest 260%,
+ * double holiday 300%, double holiday on rest 390%.
+ * Night (10pm–6am) is ×1.10 on that day rate.
+ * OT beyond 8h: ordinary ×1.25 of hourly; rest/special/holiday OT is the day rate × 1.30.
  * @param {number} rate
  * @param {string} dayType
  * @param {string} shift
@@ -165,6 +177,8 @@ function dolePay(rate, dayType, shift, formula) {
   else if (kind === "holiday") premium = f.holidayMultiplier;
   else if (kind === "special-rest") premium = 1.5;
   else if (kind === "holiday-rest") premium = 2.6;
+  else if (kind === "double-holiday") premium = 3;
+  else if (kind === "double-holiday-rest") premium = 3.9;
   const night = /^night/i.test(String(shift || "")) ? f.nightDiffPct / 100 : 0;
   const hourly = rate / f.hoursPerDay;
   const otFactor = kind === "regular" ? f.regularOtFactor : f.premiumDayOtFactor;

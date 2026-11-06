@@ -32,12 +32,12 @@ import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatr
 import { cachedSignature, ceBlocksInspectionLines, loadSignatureImage, needsDraftWatermark, rememberSignature, shouldLoadExportSignatures, signaturePeople, storeSignatureImage } from "../lib/estimator/signatures";
 import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
 import { phStamp, phYear } from "../lib/estimator/phTime";
-import { DOC_NUMBER_OFFLINE, DOC_NUMBER_RETRY, blockedNumberReason, issueDocNo, numberIdentityClash } from "../lib/estimator/docNumbers";
+import { DOC_NUMBER_OFFLINE, DOC_NUMBER_RETRY, allocateUntilFree, blockedNumberReason, isDocNumberClash, issueDocNo, numberIdentityClash, rceNeedsNumber, rceNumberLabel } from "../lib/estimator/docNumbers";
 import { remapCloneIds } from "../lib/estimator/cloneIds";
 import { brandingVars, cleanBranding } from "../lib/estimator/branding";
 import { combinedTotal, familyKey, isAwarded, missingSuffixRpc, parseCeNumber, planSuffix, stemOf, urgentPlan } from "../lib/estimator/docSuffixes";
 import { foldFamilyRows } from "../lib/estimator/monitoringFamilies";
-import { cleanHolidayDate } from "../lib/estimator/phCalendar";
+import { cleanHolidayDate, companyCalendar } from "../lib/estimator/phCalendar";
 import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/estimator/priceCheck";
 import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
 import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr, claimUserDocNo, releaseProposalPr } from "../lib/estimator/supabase-workspace";
@@ -55,7 +55,7 @@ import { ceApprovedNotice, salesOwnerAccountId } from "../lib/estimator/salesVie
 import { release1WriteAllowed } from "../lib/estimator/ceLock";
 import { askReason } from "../lib/estimator/reasonBox";
 import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
-import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, salesGateFields, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
+import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, nextMarkupRevision, salesGateFields, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
 import { MarkupPanel } from "./MarkupPanel";
 import { canGenerateProposal, cancelProposal, claimProposalNumber, createProposal, decideProposal, deleteDraftProposal, markProposalExpired, markProposalLost, markProposalSent, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
 import { ProposalPanel } from "./ProposalPanel";
@@ -89,7 +89,7 @@ import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex
 import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, costNodes, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
 import { applyRouteSignatories, signatorySlots } from "../lib/estimator/ceSignatories";
 import { winRate as awardWinRate } from "../lib/estimator/reports";
-import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
+import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, gridsFromWorkbook, importCostWorkbook, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
 import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
 import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
 import { applyAttachmentEdits, attachmentFilesInOrder, removeAttachment, renameAttachment, reorderAttachments, splitAttachmentName } from "../lib/estimator/ceAttachOrder";
@@ -132,11 +132,12 @@ let salesPipelineMonitoringOn = false;
 let ceThreadsOn = false;
 let notificationsBellOn = false;
 let libraryMethodologiesOn = false;
+let methodologyEditorOn = false;
 let templatesFromDocsOn = false;
 let monitoringExportOn = false;
 let salesDocPreviewOn = false;
 let personalActorId = "";
-let personalNewConfig = { weekendDays: [0, 6], holidays: [] };
+let personalNewConfig = { saturdayWorking: true, weekendDays: [0], holidays: [] };
 let saveCeTemplateNow = (_row, _tpl) => {};
 let saveThreadNow = (_ceId, _thread) => {};
 let notifyThreadNow = (_rows, _ceId) => {};
@@ -3470,21 +3471,20 @@ async function takeDocNo(kind, company) {
 		throw new Error(DOC_NUMBER_RETRY);
 	}
 	const claimKind = kind === "oif" ? "inspection" : kind;
-	const claimIssued = async (number) => {
-		try {
-			return await claimUserDocNo(claimKind, number, number);
-		} catch {
-			throw new Error(DOC_NUMBER_RETRY);
-		}
-	};
-	const issued = await issueDocNo(() => allocateDocNumber(kind, company || "", phYear()));
-	const claimed = await claimIssued(issued);
-	if (claimed.ok || claimed.skipped) return issued;
-	if (!/already used/i.test(claimed.message || "")) throw new Error(claimed.message || DOC_NUMBER_RETRY);
-	const again = await issueDocNo(() => allocateDocNumber(kind, company || "", phYear()));
-	const second = await claimIssued(again);
-	if (second.ok || second.skipped) return again;
-	throw new Error(second.message || DOC_NUMBER_RETRY);
+	const result = await allocateUntilFree(
+		() => issueDocNo(() => allocateDocNumber(kind, company || "", phYear())),
+		async (number) => {
+			try {
+				return await claimUserDocNo(claimKind, number, number);
+			} catch (err) {
+				if (isDocNumberClash(err)) throw err;
+				throw new Error(DOC_NUMBER_RETRY);
+			}
+		},
+		{ tries: 8 }
+	);
+	if (result.ok && result.number) return result.number;
+	throw new Error(result.message || DOC_NUMBER_RETRY);
 }
 function companyDesignationName(companyKey, documentControl) {
 	const dc = documentControl || {};
@@ -4767,6 +4767,12 @@ function MonChipContext({ parts }) {
 		children: parts.map((part) => /* @__PURE__ */ jsxs("span", { children: [part.label, " ", /* @__PURE__ */ jsx("strong", { children: part.value })] }, part.label))
 	});
 }
+function normalizeWorkingDays(raw) {
+	const src = raw && typeof raw === "object" ? raw : {};
+	const holidays = Array.isArray(src.holidays) ? src.holidays.map((item) => cleanHolidayDate(item)).filter(Boolean) : [];
+	const saturdayWorking = typeof src.saturdayWorking === "boolean" ? src.saturdayWorking : true;
+	return { saturdayWorking, weekendDays: saturdayWorking ? [0] : [0, 6], holidays };
+}
 function defaultAdminConfig() {
 	return {
 		users: [
@@ -4976,6 +4982,7 @@ function defaultAdminConfig() {
 			ceThreads: false,
 			notificationsBell: false,
 			libraryMethodologies: false,
+			methodologyEditor: false,
 			templatesFromDocs: false,
 			monitoringExport: false,
 			salesDocPreview: false
@@ -5122,12 +5129,13 @@ function normalizeAdminConfig(raw) {
 			ceThreads: src.features?.ceThreads === true,
 			notificationsBell: src.features?.notificationsBell === true,
 			libraryMethodologies: src.features?.libraryMethodologies === true,
+			methodologyEditor: src.features?.methodologyEditor === true,
 			templatesFromDocs: src.features?.templatesFromDocs === true,
 			monitoringExport: src.features?.monitoringExport === true,
 			salesDocPreview: src.features?.salesDocPreview === true
 		},
 		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
-		workingDays: src.workingDays && typeof src.workingDays === "object" ? src.workingDays : { weekendDays: [0, 6], holidays: [] },
+		workingDays: normalizeWorkingDays(src.workingDays),
 		methodologies: Array.isArray(src.methodologies) ? src.methodologies : [],
 		rceTemplates: Array.isArray(src.rceTemplates) ? src.rceTemplates : [],
 		oifTemplates: Array.isArray(src.oifTemplates) ? src.oifTemplates : [],
@@ -7775,7 +7783,11 @@ function useLimitNotes() {
 var DAY_TYPES = [
 	"Regular",
 	"Sun/Special",
-	"Holiday"
+	"Special on rest",
+	"Holiday",
+	"Holiday on rest",
+	"Double holiday",
+	"Double holiday on rest"
 ];
 var DAY_TYPE_MULT = {
 	Regular: 1,
@@ -19245,7 +19257,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			previous: state.schedule,
 			tasks: taskPlan(state.tasks),
 			startDate: state.schedule?.startDate || state.projectInfo?.date || "",
-			holidays: adminConfig?.phHolidays || [],
+			holidays: companyCalendar(adminConfig),
 			status: ceStatus
 		});
 		if (checkerOn && report?.findings) {
@@ -19436,7 +19448,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				previous: state.schedule,
 				tasks: taskPlan(state.tasks),
 				startDate: state.schedule?.startDate || state.projectInfo?.date || "",
-				holidays: adminConfig?.phHolidays || [],
+				holidays: companyCalendar(adminConfig),
 				status: ceStatus
 			})));
 			const ordered = orderExportSections(sections);
@@ -19606,6 +19618,16 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		const reader = new FileReader();
 		reader.onload = () => {
 			const book = XLSX.read(reader.result, { type: "array" });
+			const ken = importCostWorkbook(gridsFromWorkbook(XLSX, book));
+			if (ken.kind === "ken-ce" || ken.kind === "old-export") {
+				setImportWizard({
+					step: "map",
+					fileName: file.name,
+					sheetName: ken.kind,
+					mapped: ken.mapped
+				});
+				return;
+			}
 			const sheetName = book.SheetNames.find((name) => /bocm|bol|bote|ppe|misc/i.test(name)) || book.SheetNames[0];
 			const grid = XLSX.utils.sheet_to_json(book.Sheets[sheetName], { header: 1, raw: false, defval: "" });
 			const headerAt = Math.max(0, (grid || []).findIndex((row) => (row || []).some((cell) => /desc|qty|role|item|u\/m|rate/i.test(String(cell || "")))));
@@ -19636,9 +19658,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			window.alert("Add a task before importing rows.");
 			return;
 		}
-		const items = mapped.rows.filter((row) => row.selected && !row.skip).map((row) => {
-			const price = Number(String(row.unitPrice).replace(/[^0-9.-]/g, "")) || 0;
-			const qty = Number(String(row.qty).replace(/[^0-9.-]/g, "")) || 0;
+		const toItem = (row) => {
+			const written = row.ken && row.total != null ? Number(row.total) || 0 : 0;
+			const price = written || Number(String(row.unitPrice).replace(/[^0-9.-]/g, "")) || 0;
+			const qty = written ? 1 : Number(String(row.qty).replace(/[^0-9.-]/g, "")) || 0;
 			return {
 				id: uid3("imp"),
 				description: row.description,
@@ -19647,17 +19670,23 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				unit: row.unit,
 				unitCost: price,
 				rate: price,
-				days: 1,
+				days: written ? 1 : Number(row.days) || 1,
+				otHrs: written ? 0 : Number(row.otHrs) || 0,
 				dayType: "Regular",
 				shift: "Day"
 			};
-		});
-		dispatch({
-			type: "ADD_ITEMS",
-			taskId: task.id,
-			subtaskId: sub.id,
-			category: sheetCategory(importWizard.sheetName),
-			items
+		};
+		const sections = Array.isArray(mapped.kenSections) && mapped.kenSections.length ? mapped.kenSections : [{ category: sheetCategory(importWizard.sheetName), rows: mapped.rows || [] }];
+		sections.forEach((section) => {
+			const items = (section.rows || []).filter((row) => row.selected && !row.skip).map(toItem);
+			if (!items.length) return;
+			dispatch({
+				type: "ADD_ITEMS",
+				taskId: task.id,
+				subtaskId: sub.id,
+				category: section.category || sheetCategory(importWizard.sheetName),
+				items
+			});
 		});
 		setImportWizard(null);
 	};
@@ -20239,7 +20268,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						onRecords: (records) => masterlist.setPendingRecords(records),
 						level: actingLevel,
 						actor: editingUser,
-						holidays: adminConfig?.phHolidays || [],
+						holidays: companyCalendar(adminConfig),
 						escalateAfter: adminConfig?.pendingEscalateDays || 3,
 						unticked: annexOff,
 						onUntick: (id, off) => setAnnexOff((prev) => ({ ...prev, [id]: off })),
@@ -20780,7 +20809,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								}) : null,
 								ceTpl9On === true ? /* @__PURE__ */ jsx(SowPlanPanel, {
 									lines: state.sowPlan || [],
-									holidays: adminConfig?.phHolidays || [],
+									holidays: companyCalendar(adminConfig),
 									onChange: (lines) => dispatch({ type: "SET_SOW_PLAN", lines })
 								}) : null
 							] }),
@@ -26706,7 +26735,7 @@ var SCOPE_JOBS = [
 function scopeJobLabel(id) {
 	return SCOPE_JOBS.find((j) => j.id === id)?.label || "Onsite";
 }
-function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mode = "library", taskTemplates = [], onTaskTemplatesChange, ceList = [], documents = {}, rceList = [], scopeTemplates = [], onScopeTemplatesChange, onEditScopeTemplate, currentUserName = "", documentControl = {}, scopeV2 = false, methodologies = [], onMethodologiesChange, onInsertMethodology }) {
+function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mode = "library", taskTemplates = [], onTaskTemplatesChange, ceList = [], documents = {}, rceList = [], scopeTemplates = [], onScopeTemplatesChange, onEditScopeTemplate, currentUserName = "", actorLevel = "", documentControl = {}, scopeV2 = false, methodologies = [], onMethodologiesChange, onInsertMethodology }) {
 	const [activeTab, setActiveTab] = useState(mode === "archive" ? "archive" : "task-templates");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [selectedCE, setSelectedCE] = useState(null);
@@ -26854,7 +26883,10 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 			activeTab === "methodologies" && libraryMethodologiesOn === true ? /* @__PURE__ */ jsx(MethodologiesPanel, {
 				items: methodologies,
 				onChange: onMethodologiesChange,
-				onInsert: onInsertMethodology
+				onInsert: onInsertMethodology,
+				rich: methodologyEditorOn === true,
+				actor: currentUserName,
+				level: actorLevel
 			}) : null,
 			activeTab === "templates" && /* @__PURE__ */ jsxs("div", {
 				className: "scope-lib",
@@ -27270,54 +27302,54 @@ var RCE_CHECKLIST_ITEMS = [
 	},
 	{
 		key: "item8",
-		num: "8",
+		num: "7",
 		desc: "ASSET AND EQUIPMENT DETAILS (DRAWING, PHOTOS, ETC.)"
 	},
 	{
 		key: "item9",
-		num: "9",
+		num: "8",
 		desc: "MATERIAL SPECIFICATION"
 	},
 	{
 		key: "item10",
-		num: "10",
+		num: "9",
 		desc: "CONSUMABLES AND SPARE (IF ANY)"
 	},
 	{
 		key: "item11",
-		num: "11",
+		num: "10",
 		desc: "ACCEPTANCE CRITERIA"
 	},
 	{
 		key: "item12",
-		num: "12",
+		num: "11",
 		desc: "COMPLETION LEAD TIME / WORK DURATION"
 	},
 	{
 		key: "item13",
-		num: "13",
+		num: "12",
 		desc: "IMPLEMENTATION SCHEDULE"
 	},
 	{
 		key: "item14",
-		num: "14",
+		num: "13",
 		desc: "RECOMMENDATION"
 	},
 	{
 		key: "item14_1",
-		num: "14.1",
+		num: "13.1",
 		desc: "TO PROCEED THE RCE",
 		indent: true
 	},
 	{
 		key: "item14_2",
-		num: "14.2",
+		num: "13.2",
 		desc: "TO SECURE COMPLETE REFERENCE DATA",
 		indent: true
 	},
 	{
 		key: "item14_3",
-		num: "14.3",
+		num: "13.3",
 		desc: "TO DECLINE / NO QUOTE",
 		indent: true
 	}
@@ -27454,19 +27486,6 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	});
 	const rceListRef = useRef(rceList);
 	rceListRef.current = rceList;
-	useEffect(() => {
-		if (initialData || readOnly) return;
-		let cancelled = false;
-		takeDocNo("rce", "").then((rceNo) => {
-			if (cancelled || !rceNo) return;
-			setForm((prev) => prev.rceNo ? prev : { ...prev, rceNo });
-		}).catch((err) => {
-			if (!cancelled) setFieldErrors([err?.message || DOC_NUMBER_RETRY]);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [initialData, readOnly]);
 	const [checklist, setChecklist] = useState(() => ({
 		...emptyRceChecklist(),
 		...initialData?.checklist || {}
@@ -27647,11 +27666,17 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}, [form, checklist, company, readOnly, draftKey]);
 	const handleSubmit = async () => {
 		if (readOnly) return;
-		if (!String(form.rceNo || "").trim()) {
-			setFieldErrors([DOC_NUMBER_RETRY]);
-			return;
+		let rceNo = String(form.rceNo || "").trim();
+		if (rceNeedsNumber(rceNo)) {
+			try {
+				rceNo = await takeDocNo("rce", "");
+				setForm((prev) => ({ ...prev, rceNo }));
+			} catch (err) {
+				setFieldErrors([err?.message || DOC_NUMBER_RETRY]);
+				return;
+			}
 		}
-		const hard = rceHardBlocks(form, company);
+		const hard = rceHardBlocks({ ...form, rceNo }, company);
 		setFieldErrors(hard);
 		if (hard.length) {
 			requestAnimationFrame(() => {
@@ -27681,8 +27706,8 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			client: form.customer,
 			customer: form.customer,
 			address: form.address,
-			id: form.rceNo,
-			rceNo: form.rceNo,
+			id: rceNo,
+			rceNo,
 			checklist,
 			attachments: savedFiles.map((a) => a.name || a),
 			attachmentFiles: savedFiles.map((a) => ({
@@ -27843,7 +27868,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 										children: "RCE no."
 									}), /* @__PURE__ */ jsx("input", {
 										className: "ce-input",
-										value: form.rceNo,
+										value: rceNumberLabel(form.rceNo),
 										readOnly: true
 									})]
 								}), /* @__PURE__ */ jsxs("label", {
@@ -27890,7 +27915,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								className: "ce-field rce-fl rce-cell-rceNo",
 								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "RCE no." }), /* @__PURE__ */ jsx("input", {
 									className: "ce-input",
-									value: form.rceNo,
+									value: rceNumberLabel(form.rceNo),
 									readOnly: true
 								})]
 							}) : null,
@@ -29577,6 +29602,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	ceThreadsOn = adminConfig.features?.ceThreads === true;
 	notificationsBellOn = adminConfig.features?.notificationsBell === true;
 	libraryMethodologiesOn = adminConfig.features?.libraryMethodologies === true;
+	methodologyEditorOn = adminConfig.features?.methodologyEditor === true;
 	templatesFromDocsOn = adminConfig.features?.templatesFromDocs === true;
 	monitoringExportOn = adminConfig.features?.monitoringExport === true;
 	salesDocPreviewOn = adminConfig.features?.salesDocPreview === true;
@@ -29801,8 +29827,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const release1Note = (message) => setRelease1Message(String(message || "That was not saved."));
 	const markupForCe = (ceId) => {
-		const stored = (markups || []).find((row) => row && row.ceId === ceId);
-		if (stored) return stored;
+		const family = (markups || []).filter((row) => row && row.ceId === ceId);
+		if (family.length) return family.reduce((best, row) => (Number(row.revision) || 0) >= (Number(best.revision) || 0) ? row : best);
 		const legacy = (ceList || []).find((row) => row && row.id === ceId)?.markup;
 		return legacy && typeof legacy === "object" ? legacy : null;
 	};
@@ -29810,7 +29836,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		const row = { ...markup, kind: "markup", id: markup.markupNo || markup.id || `${markup.ceNo || markup.ceId || "markup"}-MK` };
 		setMarkups((prev) => {
 			const list = Array.isArray(prev) ? prev : [];
-			const index = list.findIndex((item) => item && (item.id === row.id || row.ceId && item.ceId === row.ceId));
+			const index = list.findIndex((item) => item && item.id === row.id);
 			if (index < 0) return [row, ...list];
 			return list.map((item, i) => i === index ? row : item);
 		});
@@ -29845,7 +29871,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				previous: doc?.schedule || prior.schedule,
 				tasks: taskPlan(doc?.tasks),
 				startDate: doc?.schedule?.startDate || doc?.projectInfo?.date || prior.schedule?.startDate || "",
-				holidays: adminConfig?.phHolidays || [],
+				holidays: companyCalendar(adminConfig),
 				status: nextStatus
 			}) : doc?.schedule;
 			const priorTimeline = Array.isArray(prior.timeline) ? prior.timeline : [];
@@ -31876,7 +31902,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			if (current) return;
 			const doc = documents[ceId] || {};
 			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || ceId;
-			result = createMarkup({ ceId, ceNo, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100", ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) });
+			result = createMarkup({ ceId, ceNo, revision: 0, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100", ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) });
+		} else if (action === "revise") {
+			const doc = documents[ceId] || {};
+			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || current?.ceNo || ceId;
+			const revision = nextMarkupRevision(markups, ceId);
+			result = createMarkup({ ceId, ceNo, revision, byUserId: release1ActorId, directCost: current?.directCost || payload?.directCost, parts: current?.parts, preset: current?.preset || payload?.preset || "100", ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) });
 		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
 		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
 		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
@@ -32645,7 +32676,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 								schedule: doc.schedule || refreshSchedule({
 									tasks: taskPlan(doc.tasks),
 									startDate: doc.projectInfo?.date || "",
-									holidays: adminConfig.phHolidays || [],
+									holidays: companyCalendar(adminConfig),
 									status: ce.status || doc.ceStatus || ""
 								})
 							};
@@ -33117,6 +33148,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onMethodologiesChange: (list) => {
 							setAdminConfig((prev) => normalizeAdminConfig({ ...prev, methodologies: list || [] }));
 						},
+						actorLevel: actingLevel,
 						onInsertMethodology: (text) => {
 							notice({ type: "Library", title: "Methodology", body: String(text || "").slice(0, 180) || "Empty methodology.", view: "scope" });
 						}

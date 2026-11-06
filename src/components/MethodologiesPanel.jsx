@@ -1,12 +1,31 @@
 import { useState } from "react";
-import { PDF_IMPORT_NOTE, blocksToDocxXml, docxXmlToBlocks, importDocxBlocks, saveMethodology, xmlToDocxBytes } from "../lib/estimator/libraryTemplates";
+import { PDF_IMPORT_NOTE, blocksToDocxXml, bodyToHtml, decideMethodology, docxXmlToBlocks, htmlToBlocks, importDocxBlocks, saveMethodology, submitMethodology, xmlToDocxBytes } from "../lib/estimator/libraryTemplates";
+import { MethodologyEditor } from "./MethodologyEditor";
+import jsPDFDefault, { jsPDF as jsPDFNamed } from "jspdf";
 
 const TAGS = ["On-site", "Shopwork", "Trading", "Electrical", "Mechanical"];
 
 /**
- * @param {{ items?: any[], onChange?: (items: any[]) => void, onInsert?: (text: string) => void }} props
+ * @param {unknown} html
  */
-export function MethodologiesPanel({ items = [], onChange, onInsert }) {
+function plainBody(html) {
+	const amp = "&" + "amp;";
+	const lt = "&" + "lt;";
+	const gt = "&" + "gt;";
+	return String(html || "")
+		.replace(/<br\s*\/?>/gi, "\n")
+		.replace(/<\/p>/gi, "\n")
+		.replace(/<[^>]+>/g, "")
+		.split(amp).join("&")
+		.split(lt).join("<")
+		.split(gt).join(">")
+		.trim();
+}
+
+/**
+ * @param {{ items?: any[], onChange?: (items: any[]) => void, onInsert?: (text: string) => void, rich?: boolean, actor?: string, level?: string }} props
+ */
+export function MethodologiesPanel({ items = [], onChange, onInsert, rich = false, actor = "", level = "" }) {
 	const [query, setQuery] = useState("");
 	const [currentId, setCurrentId] = useState(items[0]?.id || "");
 	const [note, setNote] = useState("");
@@ -17,9 +36,31 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 		setNote("Saved");
 	}
 	function add() {
-		const doc = { id: `method-${Date.now()}`, name: "New methodology", tags: [], body: "", versions: [] };
+		const doc = { id: `method-${Date.now()}`, name: "New methodology", tags: [], body: "", html: "<p></p>", versions: [], page: { margin: "2.54cm", pageNumbers: false } };
 		onChange?.(saveMethodology(items, doc));
 		setCurrentId(doc.id);
+	}
+	function exportDocx() {
+		if (!current) return;
+		const blocks = current.blocks?.length ? current.blocks : htmlToBlocks(current.html || bodyToHtml(current.body || ""));
+		const bytes = xmlToDocxBytes(blocksToDocxXml(blocks.length ? blocks : [{ type: "p", text: current.body || "", bold: true }]));
+		const part = /** @type {BlobPart} */ (/** @type {unknown} */ (bytes));
+		const blob = new Blob([part], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = `${current.name || "methodology"}.docx`;
+		link.click();
+		URL.revokeObjectURL(url);
+	}
+	function exportPdf() {
+		if (!current) return;
+		const Pdf = typeof jsPDFNamed === "function" ? jsPDFNamed : jsPDFDefault;
+		const pdf = new Pdf();
+		const lines = plainBody(current.html || current.body).split("\n");
+		lines.forEach((line, index) => pdf.text(line || " ", 14, 20 + index * 8));
+		if (current.page?.pageNumbers) pdf.text(String(pdf.getNumberOfPages()), 180, 280);
+		pdf.save(`${current.name || "methodology"}.pdf`);
 	}
 	return (
 		<div className="method-wrap">
@@ -43,18 +84,25 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 							}}>{tag}</button>
 						))}
 					</div>
-					<div className="method-tools">
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}\n# Heading` })}>Heading</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}**bold**` })}>Bold</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}*italic*` })}>Italic</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}__underline__` })}>Underline</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}\n- item` })}>List</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}\n| A | B |` })}>Table</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}\n[image]` })}>Image</button>
-						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => write({ ...current, body: `${current.body || ""}\n::center::` })}>Align</button>
-					</div>
-					<textarea className="ce-input method-body" aria-label="Methodology" value={current.body || ""} onChange={(event) => write({ ...current, body: event.target.value })} />
+					{rich ? (
+						<MethodologyEditor
+							html={current.html || current.body || ""}
+							page={current.page}
+							onChange={(html) => write({ ...current, html, body: plainBody(html), blocks: htmlToBlocks(html) })}
+							onPage={(page) => write({ ...current, page })}
+						/>
+					) : (
+						<textarea className="ce-input method-body" aria-label="Methodology" value={current.body || ""} onChange={(event) => write({ ...current, body: event.target.value })} />
+					)}
 					<p className="wiz-hint">{note || "Edits save on this account."} {PDF_IMPORT_NOTE}</p>
+					<p className="wiz-hint">Approval: {current.approval?.status || "Draft"}{current.approval?.decidedBy ? ` · ${current.approval.decidedBy}` : ""}</p>
+					{(current.versions || []).length ? (
+						<ul aria-label="Version history">
+							{(current.versions || []).slice(0, 8).map((/** @type {any} */ row) => (
+								<li key={`${row.at}-${row.status || ""}`}>{row.status || "Saved"} · {row.at}</li>
+							))}
+						</ul>
+					) : null}
 					<div className="ce-header-actions">
 						<label className="ce-btn-ghost ce-btn-sm">Import
 							<input type="file" accept=".xml,.docx,.pdf,text/xml,application/pdf" hidden onChange={(event) => {
@@ -66,7 +114,7 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 										if (file.name.toLowerCase().endsWith(".docx")) {
 											const blocks = await importDocxBlocks(/** @type {ArrayBuffer} */ (reader.result));
 											const body = blocks.map((/** @type {any} */ block) => block.type === "table" ? (block.rows || []).map((/** @type {any} */ row) => row.join(" | ")).join("\n") : block.text || "").filter(Boolean).join("\n");
-											write({ ...current, body: `${current.body || ""}\n${body}`.trim(), blocks });
+											write({ ...current, body: `${current.body || ""}\n${body}`.trim(), html: bodyToHtml(body), blocks });
 											return;
 										}
 										const text = String(reader.result || "");
@@ -81,7 +129,7 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 											return;
 										}
 										const blocks = docxXmlToBlocks(text);
-										write({ ...current, body: blocks.map((block) => block.text || "").filter(Boolean).join("\n") || current.body });
+										write({ ...current, body: blocks.map((block) => block.text || "").filter(Boolean).join("\n") || current.body, blocks });
 									};
 									void run();
 								};
@@ -89,18 +137,25 @@ export function MethodologiesPanel({ items = [], onChange, onInsert }) {
 								else reader.readAsText(file);
 							}} />
 						</label>
+						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={exportDocx}>Export .docx</button>
+						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={exportPdf}>Export PDF</button>
 						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => {
-							const bytes = xmlToDocxBytes(blocksToDocxXml([{ type: "p", text: current.body || "", bold: true }]));
-							const part = /** @type {BlobPart} */ (/** @type {unknown} */ (bytes));
-							const blob = new Blob([part], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-							const url = URL.createObjectURL(blob);
-							const link = document.createElement("a");
-							link.href = url;
-							link.download = `${current.name || "methodology"}.docx`;
-							link.click();
-							URL.revokeObjectURL(url);
-						}}>Export .docx</button>
-						<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onInsert?.(current.body || "")}>Insert into CE / proposal</button>
+							const result = submitMethodology(current, { by: actor || "sales" });
+							if (!result.ok || !result.doc) { setNote(result.message || "Not submitted"); return; }
+							write(result.doc);
+							setNote("Submitted for approval");
+						}}>Submit for approval</button>
+						<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => {
+							const result = decideMethodology(current, { actor: actor || "approver", level, decision: "approve" });
+							if (!result.ok || !result.doc) { setNote(result.message || "Not approved"); return; }
+							write(result.doc);
+						}}>Approve</button>
+						<button type="button" className="ce-btn-ghost ce-btn-sm" onClick={() => {
+							const result = decideMethodology(current, { actor: actor || "approver", level, decision: "reject" });
+							if (!result.ok || !result.doc) { setNote(result.message || "Not rejected"); return; }
+							write(result.doc);
+						}}>Reject</button>
+						<button type="button" className="ce-btn-primary ce-btn-sm" onClick={() => onInsert?.(current.body || plainBody(current.html))}>Insert into CE / proposal</button>
 					</div>
 				</div>
 			) : <p className="ce-empty">No methodologies yet.</p>}

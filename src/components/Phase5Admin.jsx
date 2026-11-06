@@ -69,11 +69,26 @@ export function Phase5Admin({ cfg, patch }) {
 			) : null}
 			{features.branding === true ? (
 				<LineList
-					label="Philippine holidays (YYYY-MM-DD, one per line). Sundays are already off. Saturday counts unless listed."
+					label="Philippine holidays (YYYY-MM-DD, one per line). Sundays are already off. Saturday counts unless the switch below is off."
 					value={cfg.phHolidays}
 					onCommit={(phHolidays) => patch({ phHolidays })}
 				/>
 			) : null}
+			<label className="ce-picker-row">
+				<input
+					type="checkbox"
+					checked={cfg.workingDays?.saturdayWorking !== false}
+					onChange={(e) => patch({
+						workingDays: {
+							...(cfg.workingDays || {}),
+							saturdayWorking: e.target.checked === true,
+							weekendDays: e.target.checked === true ? [0] : [0, 6],
+							holidays: cfg.workingDays?.holidays || [],
+						},
+					})}
+				/>
+				<span>Saturday is a working day</span>
+			</label>
 			{features.branding === true ? (
 				<div className="wiz-grid">
 					{["bg", "card", "ink", "ledger", "brass"].map((key) => (

@@ -1,6 +1,7 @@
 /** RCE screen helpers. Answers, remarks, and row files stay on the RCE JSON. */
 
 import { routeSignatories, signatoryPending } from "./ceSignatories.js";
+import { estWorkingDays } from "./phCalendar.js";
 
 /**
  * @param {unknown} value
@@ -91,6 +92,16 @@ export function clearAnswers(checklist, keys) {
 export function estDaysRequired(form, flagOn) {
 	if (flagOn === true) return false;
 	return !!(form?.onsite && !(Number(form?.estDurationDays) > 0));
+}
+
+/**
+ * Estimated days from a date span. Uses the same working-day helper as NEW and the SOW schedule.
+ * @param {unknown} start
+ * @param {unknown} end
+ * @param {unknown} [config]
+ */
+export function estDaysFromSpan(start, end, config) {
+	return estWorkingDays(start, end, config);
 }
 
 /**
