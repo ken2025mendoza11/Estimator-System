@@ -1220,6 +1220,37 @@ td.ce-cell-missing[data-miss]:not([data-miss=""])::after {
 @media (prefers-reduced-motion: reduce) {
   .ce-login-stamp { animation: none; }
 }
+
+/* Option A: brand panel + sign-in card. Access screens keep the plain .ce-login layout. */
+.ce-login.ce-login-split {
+  display: grid;
+  grid-template-columns: minmax(15rem, 22rem) minmax(18rem, 28rem);
+  gap: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  background:
+    radial-gradient(900px 420px at 12% 0%, #2d7562 0%, transparent 58%),
+    linear-gradient(165deg, #14382e 0%, #18170f 72%);
+}
+.ce-login-brand { color: #f6f4ee; min-width: 0; }
+.ce-login-split .ce-login-brand .ce-login-kicker { color: #d5e4dc; }
+.ce-login-split .ce-login-brand .ce-login-title { color: #f6f4ee; margin-bottom: 0.7rem; }
+.ce-login-split .ce-login-brand .ce-login-copy { color: #e7e2d4; }
+.ce-login-split .ce-login-logo { width: 3.4rem; height: 3.4rem; background: #fff; border-radius: 0.55rem; padding: 0.25rem; }
+.ce-login-greet { margin: 0 0 0.2rem; font-size: 1.7rem; line-height: 1.15; }
+.ce-login-ph { margin: 0 0 1rem; color: #9f1239; font-weight: 700; letter-spacing: 0.03em; font-size: 0.82rem; }
+.ce-login-form { display: flex; flex-direction: column; margin: 0 0 0.85rem; }
+.ce-login-label { letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-soft); font-size: 0.68rem; font-weight: 700; }
+.ce-login-split .ce-login-btn-social { background: #fff; color: var(--ink); }
+.ce-login-divider { display: flex; align-items: center; gap: 0.65rem; margin: 0.15rem 0 0.75rem; color: var(--ink-soft); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; }
+.ce-login-divider::before, .ce-login-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.ce-login-field select.ce-input { width: 100%; }
+@media (max-width: 800px) {
+  .ce-login.ce-login-split { grid-template-columns: 1fr; align-items: stretch; padding: 1rem 0.85rem 1.5rem; }
+  .ce-login-greet { font-size: 1.45rem; }
+}
+
 .ce-sealed input, .ce-sealed textarea, .ce-sealed select, .ce-sealed .ProseMirror, .ce-sealed .ce-add-row, .ce-sealed .ce-iconbtn { pointer-events: none; }
 .ce-sealed .ce-award-box, .ce-sealed .ce-award-box * { pointer-events: auto; }
 
