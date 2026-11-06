@@ -1,0 +1,841 @@
+{
+  "note": "Section D lines. No pricing.model, so totals stay legacy. Shop welders are sequential, so the BOL sheet merges them into Welder 2 x 8 regular days. Onsite day-types are sequential and the 2x2 rigger follows them, so the regular-day sheet is Rigger 4 x 8 days at the first line's 2 OT hours. Support is parallel and has no labour. Toll days 0 still costs 600 today. Benefits are not in the grand.",
+  "shop": {
+    "id": "CE-EX-SHOP",
+    "status": "Draft",
+    "tasks": [
+      {
+        "id": "task-shop",
+        "title": "Shop fabrication",
+        "expanded": true,
+        "notes": "",
+        "files": [],
+        "duration": 8,
+        "predecessor": null,
+        "workType": "shop",
+        "subtasks": [
+          {
+            "id": "sub-shop-weld-5",
+            "title": "Weld 5 days",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-welder-5",
+                  "role": "Welder",
+                  "qty": 2,
+                  "days": 5,
+                  "rate": 800,
+                  "otHrs": 0,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 0,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [
+                {
+                  "id": "bote-machine",
+                  "description": "Welding machine",
+                  "qty": 1,
+                  "days": 5,
+                  "rate": 500,
+                  "powerKw": 5,
+                  "hoursPerDay": 8,
+                  "kwhRate": 12
+                }
+              ],
+              "BOCM": [
+                {
+                  "id": "bocm-e7018",
+                  "description": "E7018",
+                  "qty": 10,
+                  "unitCost": 180
+                }
+              ],
+              "PPE": [
+                {
+                  "id": "ppe-gloves",
+                  "item": "Gloves",
+                  "qty": 4,
+                  "unitCost": 85.5
+                }
+              ],
+              "MISC": [
+                {
+                  "id": "misc-shop-delivery",
+                  "description": "Delivery",
+                  "qty": 1,
+                  "days": 1,
+                  "unitCost": 3500,
+                  "section": "B"
+                }
+              ]
+            },
+            "children": []
+          },
+          {
+            "id": "sub-shop-weld-3",
+            "title": "Weld 3 days",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-shop-weld-5",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-welder-3",
+                  "role": "Welder",
+                  "qty": 2,
+                  "days": 3,
+                  "rate": 800,
+                  "otHrs": 0,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 0,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": [
+                {
+                  "id": "misc-shop-permit",
+                  "description": "Permit",
+                  "qty": 1,
+                  "days": 1,
+                  "unitCost": 1200,
+                  "section": ""
+                }
+              ]
+            },
+            "children": []
+          }
+        ]
+      }
+    ],
+    "commercial": {
+      "contingencyPct": 0,
+      "discountPct": 0
+    },
+    "summaryOverrides": {}
+  },
+  "onsite": {
+    "id": "CE-EX-ONSITE",
+    "status": "Draft",
+    "tasks": [
+      {
+        "id": "task-onsite",
+        "title": "Onsite works",
+        "expanded": true,
+        "notes": "",
+        "files": [],
+        "duration": 13,
+        "predecessor": null,
+        "workType": "onsite",
+        "subtasks": [
+          {
+            "id": "sub-rig-reg",
+            "title": "Rigger regular",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-reg",
+                  "role": "Rigger",
+                  "qty": 4,
+                  "days": 6,
+                  "rate": 700,
+                  "otHrs": 2,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-rig-sun",
+            "title": "Rigger sun",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-rig-reg",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-sun",
+                  "role": "Rigger",
+                  "qty": 4,
+                  "days": 1,
+                  "rate": 700,
+                  "otHrs": 2,
+                  "dayType": "Sun/Special",
+                  "shift": "Day",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-rig-hol",
+            "title": "Rigger holiday",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-rig-sun",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-hol",
+                  "role": "Rigger",
+                  "qty": 4,
+                  "days": 1,
+                  "rate": 700,
+                  "otHrs": 2,
+                  "dayType": "Holiday",
+                  "shift": "Day",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-elec",
+            "title": "Electrician night",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-rig-hol",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-elec",
+                  "role": "Electrician",
+                  "qty": 2,
+                  "days": 3,
+                  "rate": 900,
+                  "otHrs": 1,
+                  "dayType": "Regular",
+                  "shift": "Night",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-rig-2",
+            "title": "Rigger 2x2",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-elec",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-2",
+                  "role": "Rigger",
+                  "qty": 2,
+                  "days": 2,
+                  "rate": 700,
+                  "otHrs": 0,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 0,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-support",
+            "title": "Support",
+            "expanded": true,
+            "type": "Parallel",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [],
+              "BOTE": [
+                {
+                  "id": "bote-gen",
+                  "description": "Generator",
+                  "qty": 1,
+                  "days": 8,
+                  "rate": 1500,
+                  "powerKw": 20,
+                  "hoursPerDay": 8,
+                  "kwhRate": 12
+                }
+              ],
+              "BOCM": [],
+              "PPE": [
+                {
+                  "id": "ppe-coverall",
+                  "item": "Coverall",
+                  "qty": 6,
+                  "unitCost": 450
+                }
+              ],
+              "MISC": [
+                {
+                  "id": "misc-acc",
+                  "description": "Accommodation",
+                  "qty": 1,
+                  "days": 8,
+                  "unitCost": 1500,
+                  "section": "A"
+                },
+                {
+                  "id": "misc-van",
+                  "description": "Van",
+                  "qty": 2,
+                  "days": 1,
+                  "unitCost": 2500,
+                  "section": "B"
+                },
+                {
+                  "id": "misc-toll",
+                  "description": "Toll",
+                  "qty": 2,
+                  "days": 0,
+                  "unitCost": 300,
+                  "section": "B"
+                }
+              ]
+            },
+            "children": []
+          }
+        ]
+      }
+    ],
+    "commercial": {
+      "contingencyPct": 0,
+      "discountPct": 0
+    },
+    "summaryOverrides": {}
+  },
+  "trading": {
+    "id": "CE-EX-TRADING",
+    "status": "Draft",
+    "tasks": [
+      {
+        "id": "task-trading",
+        "title": "Trading supply",
+        "expanded": true,
+        "notes": "",
+        "files": [],
+        "duration": 1,
+        "predecessor": null,
+        "workType": "trading",
+        "subtasks": [
+          {
+            "id": "sub-trade",
+            "title": "Supply",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [],
+              "BOTE": [
+                {
+                  "id": "bote-fork",
+                  "description": "Forklift",
+                  "qty": 1,
+                  "days": 1,
+                  "rate": 2500
+                }
+              ],
+              "BOCM": [
+                {
+                  "id": "bocm-valve",
+                  "description": "Valve",
+                  "qty": 20,
+                  "unitCost": 1234.565
+                },
+                {
+                  "id": "bocm-gasket",
+                  "description": "Gasket",
+                  "qty": 3,
+                  "unitCost": 0.335
+                }
+              ],
+              "PPE": [],
+              "MISC": [
+                {
+                  "id": "misc-trade-del",
+                  "description": "Delivery",
+                  "qty": 1,
+                  "days": 1,
+                  "unitCost": 4500,
+                  "section": "B"
+                }
+              ]
+            },
+            "children": []
+          }
+        ]
+      }
+    ],
+    "commercial": {
+      "contingencyPct": 0,
+      "discountPct": 0
+    },
+    "summaryOverrides": {}
+  },
+  "hybrid": {
+    "id": "CE-EX-HYBRID",
+    "status": "Draft",
+    "tasks": [
+      {
+        "id": "task-shop",
+        "title": "Shop fabrication",
+        "expanded": true,
+        "notes": "",
+        "files": [],
+        "duration": 8,
+        "predecessor": null,
+        "workType": "shop",
+        "subtasks": [
+          {
+            "id": "sub-shop-weld-5",
+            "title": "Weld 5 days",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-welder-5",
+                  "role": "Welder",
+                  "qty": 2,
+                  "days": 5,
+                  "rate": 800,
+                  "otHrs": 0,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 0,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [
+                {
+                  "id": "bote-machine",
+                  "description": "Welding machine",
+                  "qty": 1,
+                  "days": 5,
+                  "rate": 500,
+                  "powerKw": 5,
+                  "hoursPerDay": 8,
+                  "kwhRate": 12
+                }
+              ],
+              "BOCM": [
+                {
+                  "id": "bocm-e7018",
+                  "description": "E7018",
+                  "qty": 10,
+                  "unitCost": 180
+                }
+              ],
+              "PPE": [
+                {
+                  "id": "ppe-gloves",
+                  "item": "Gloves",
+                  "qty": 4,
+                  "unitCost": 85.5
+                }
+              ],
+              "MISC": [
+                {
+                  "id": "misc-shop-delivery",
+                  "description": "Delivery",
+                  "qty": 1,
+                  "days": 1,
+                  "unitCost": 3500,
+                  "section": "B"
+                }
+              ]
+            },
+            "children": []
+          },
+          {
+            "id": "sub-shop-weld-3",
+            "title": "Weld 3 days",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-shop-weld-5",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-welder-3",
+                  "role": "Welder",
+                  "qty": 2,
+                  "days": 3,
+                  "rate": 800,
+                  "otHrs": 0,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 0,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": [
+                {
+                  "id": "misc-shop-permit",
+                  "description": "Permit",
+                  "qty": 1,
+                  "days": 1,
+                  "unitCost": 1200,
+                  "section": ""
+                }
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": "task-onsite",
+        "title": "Onsite works",
+        "expanded": true,
+        "notes": "",
+        "files": [],
+        "duration": 13,
+        "predecessor": null,
+        "workType": "onsite",
+        "subtasks": [
+          {
+            "id": "sub-rig-reg",
+            "title": "Rigger regular",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-reg",
+                  "role": "Rigger",
+                  "qty": 4,
+                  "days": 6,
+                  "rate": 700,
+                  "otHrs": 2,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-rig-sun",
+            "title": "Rigger sun",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-rig-reg",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-sun",
+                  "role": "Rigger",
+                  "qty": 4,
+                  "days": 1,
+                  "rate": 700,
+                  "otHrs": 2,
+                  "dayType": "Sun/Special",
+                  "shift": "Day",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-rig-hol",
+            "title": "Rigger holiday",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-rig-sun",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-hol",
+                  "role": "Rigger",
+                  "qty": 4,
+                  "days": 1,
+                  "rate": 700,
+                  "otHrs": 2,
+                  "dayType": "Holiday",
+                  "shift": "Day",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-elec",
+            "title": "Electrician night",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-rig-hol",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-elec",
+                  "role": "Electrician",
+                  "qty": 2,
+                  "days": 3,
+                  "rate": 900,
+                  "otHrs": 1,
+                  "dayType": "Regular",
+                  "shift": "Night",
+                  "perDiem": 350,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-rig-2",
+            "title": "Rigger 2x2",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": "sub-elec",
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [
+                {
+                  "id": "bol-rig-2",
+                  "role": "Rigger",
+                  "qty": 2,
+                  "days": 2,
+                  "rate": 700,
+                  "otHrs": 0,
+                  "dayType": "Regular",
+                  "shift": "Day",
+                  "perDiem": 0,
+                  "allowance": 0
+                }
+              ],
+              "BOTE": [],
+              "BOCM": [],
+              "PPE": [],
+              "MISC": []
+            },
+            "children": []
+          },
+          {
+            "id": "sub-support",
+            "title": "Support",
+            "expanded": true,
+            "type": "Parallel",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [],
+              "BOTE": [
+                {
+                  "id": "bote-gen",
+                  "description": "Generator",
+                  "qty": 1,
+                  "days": 8,
+                  "rate": 1500,
+                  "powerKw": 20,
+                  "hoursPerDay": 8,
+                  "kwhRate": 12
+                }
+              ],
+              "BOCM": [],
+              "PPE": [
+                {
+                  "id": "ppe-coverall",
+                  "item": "Coverall",
+                  "qty": 6,
+                  "unitCost": 450
+                }
+              ],
+              "MISC": [
+                {
+                  "id": "misc-acc",
+                  "description": "Accommodation",
+                  "qty": 1,
+                  "days": 8,
+                  "unitCost": 1500,
+                  "section": "A"
+                },
+                {
+                  "id": "misc-van",
+                  "description": "Van",
+                  "qty": 2,
+                  "days": 1,
+                  "unitCost": 2500,
+                  "section": "B"
+                },
+                {
+                  "id": "misc-toll",
+                  "description": "Toll",
+                  "qty": 2,
+                  "days": 0,
+                  "unitCost": 300,
+                  "section": "B"
+                }
+              ]
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": "task-trading",
+        "title": "Trading supply",
+        "expanded": true,
+        "notes": "",
+        "files": [],
+        "duration": 1,
+        "predecessor": null,
+        "workType": "trading",
+        "subtasks": [
+          {
+            "id": "sub-trade",
+            "title": "Supply",
+            "expanded": true,
+            "type": "Sequential",
+            "predecessor": null,
+            "notes": "",
+            "files": [],
+            "items": {
+              "BOL": [],
+              "BOTE": [
+                {
+                  "id": "bote-fork",
+                  "description": "Forklift",
+                  "qty": 1,
+                  "days": 1,
+                  "rate": 2500
+                }
+              ],
+              "BOCM": [
+                {
+                  "id": "bocm-valve",
+                  "description": "Valve",
+                  "qty": 20,
+                  "unitCost": 1234.565
+                },
+                {
+                  "id": "bocm-gasket",
+                  "description": "Gasket",
+                  "qty": 3,
+                  "unitCost": 0.335
+                }
+              ],
+              "PPE": [],
+              "MISC": [
+                {
+                  "id": "misc-trade-del",
+                  "description": "Delivery",
+                  "qty": 1,
+                  "days": 1,
+                  "unitCost": 4500,
+                  "section": "B"
+                }
+              ]
+            },
+            "children": []
+          }
+        ]
+      }
+    ],
+    "commercial": {
+      "contingencyPct": 5,
+      "discountPct": 0
+    },
+    "summaryOverrides": {
+      "C": 20000
+    }
+  }
+}

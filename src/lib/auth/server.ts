@@ -47,6 +47,7 @@ import {
   PREVIEW_CLIENT_ID,
   PREVIEW_CLIENT_SECRET,
 } from "./preview";
+import { extraTrustedOrigins, resolvedAuthBaseURL } from "./preview-origins";
 
 // Kick (and share) PGLite bootstrap as soon as the auth server module loads.
 void ensureDbReady();
@@ -93,11 +94,18 @@ if (authSetupError) console.error(`[auth] ${authSetupError}`);
 const googleClientId = env("GOOGLE_CLIENT_ID");
 const googleClientSecret = env("GOOGLE_CLIENT_SECRET");
 const googleConfigured = authMode.mode === "google";
+const microsoftClientId = env("MICROSOFT_CLIENT_ID");
+const microsoftClientSecret = env("MICROSOFT_CLIENT_SECRET");
+// Beside Google only. Not added to accountLinking.trustedProviders, so a
+// Microsoft sign-in is not attached to an existing Google account.
+const microsoftConfigured =
+  authMode.mode !== "grok" && Boolean(microsoftClientId && microsoftClientSecret);
 
 /** True when federated sign-in is active (real auth is enforced). */
 export const authConfigured =
   !authDisabled &&
   (googleConfigured ||
+    microsoftConfigured ||
     (authMode.mode === "grok" && Boolean(grokClientId && grokClientSecret)));
 
 // This app's own Better Auth origin. When deployed the deployer injects the
@@ -106,7 +114,7 @@ export const authConfigured =
 // it derives the origin per-request from the (proxied) host, validated against the
 // preview allowlist, which makes the OAuth `redirect_uri` the concrete preview URL
 // the broker's preview client accepts.
-const explicitBaseURL = env("BETTER_AUTH_URL");
+const explicitBaseURL = resolvedAuthBaseURL(process.env) || env("BETTER_AUTH_URL");
 // Explicit `string[]` (not a readonly tuple) — Better Auth's DynamicBaseURLConfig
 // requires a mutable `allowedHosts: string[]`.
 const previewAllowedHosts: string[] = [...PREVIEW_ALLOWED_HOSTS];
@@ -130,15 +138,13 @@ const baseURL = explicitBaseURL ?? {
 
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
-const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
-  : [
-      // Host wildcards (matched against Origin's host)
-      ...previewAllowedHosts,
-      // Full-origin wildcards (matched against Origin)
-      ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
-      ...LOCAL_DEV_ORIGINS,
-    ];
+const trustedOrigins: string[] = [
+  ...(explicitBaseURL ? [explicitBaseURL] : []),
+  ...extraTrustedOrigins(process.env),
+  ...previewAllowedHosts,
+  ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+  ...LOCAL_DEV_ORIGINS,
+];
 
 const databaseUrl = env("DATABASE_URL");
 
@@ -198,15 +204,29 @@ export const auth = betterAuth({
   database,
 
   // Built-in Google sign-in, only when Grok broker vars are absent.
-  // Callback: <BETTER_AUTH_URL>/api/auth/callback/google
-  ...(googleConfigured
+  // Microsoft is added only when its own client is set, and is not auto-linked.
+  // Callbacks: <BETTER_AUTH_URL>/api/auth/callback/google and /callback/microsoft
+  ...(googleConfigured || microsoftConfigured
     ? {
         socialProviders: {
-          google: {
-            clientId: googleClientId as string,
-            clientSecret: googleClientSecret as string,
-            prompt: "select_account" as const,
-          },
+          ...(googleConfigured
+            ? {
+                google: {
+                  clientId: googleClientId as string,
+                  clientSecret: googleClientSecret as string,
+                  prompt: "select_account" as const,
+                },
+              }
+            : {}),
+          ...(microsoftConfigured
+            ? {
+                microsoft: {
+                  clientId: microsoftClientId as string,
+                  clientSecret: microsoftClientSecret as string,
+                  prompt: "select_account" as const,
+                },
+              }
+            : {}),
         },
       }
     : {}),

@@ -19,6 +19,8 @@ import {
   type RevisionMap,
   type StoredDoc,
 } from "./workspace-docs";
+import { isDocNumberClash, missingDocNumberRpc, payloadDocNumber, rewritePayloadNumber } from "./docNumbers";
+import { missingSuffixRpc } from "./docSuffixes";
 import {
   downloadDataUrl,
   fileBody,
@@ -264,6 +266,69 @@ async function readAllDocs(): Promise<StoredDoc[]> {
   return rows;
 }
 
+function missingSaveRpc(error: { message?: string; code?: string } | null): boolean {
+  const message = String(error?.message || "");
+  const code = String(error?.code || "");
+  if (code === "PGRST202" || code === "42883") return true;
+  return /save_workspace_doc/i.test(message) && /does not exist|could not find|schema cache/i.test(message);
+}
+
+/** Prefer the save function. A direct write is only the fallback when that function is not deployed. */
+async function writeWorkspaceDoc(input: {
+  kind: string;
+  id: string;
+  payload: Json;
+  ord: number;
+  expectedVersion: number | null;
+  ignoreExists?: boolean;
+}): Promise<void> {
+  const { data, error } = await supabase.rpc("save_workspace_doc", {
+    p_kind: input.kind,
+    p_doc_id: input.id,
+    p_payload: input.payload,
+    p_ord: input.ord,
+    p_expected: input.expectedVersion,
+    p_force: false,
+    p_delete: false,
+    p_mirror: null,
+  });
+  if (error) {
+    if (!missingSaveRpc(error)) throw error;
+    if (input.expectedVersion == null) {
+      const { error: writeError } = await supabase.from("workspace_docs").upsert(
+        {
+          kind: input.kind,
+          doc_id: input.id,
+          payload: input.payload,
+          version: 1,
+          ord: input.ord,
+          deleted_at: null,
+        },
+        { onConflict: "kind,doc_id", ignoreDuplicates: true },
+      );
+      if (writeError) throw writeError;
+      return;
+    }
+    const { data: updated, error: writeError } = await supabase
+      .from("workspace_docs")
+      .update({ payload: input.payload })
+      .eq("kind", input.kind)
+      .eq("doc_id", input.id)
+      .eq("version", input.expectedVersion)
+      .select("version");
+    if (writeError) throw writeError;
+    if (!updated?.length) {
+      throw new Error("A record changed while attachments were being moved. Reload before editing.");
+    }
+    return;
+  }
+  const result = (data || {}) as RpcResult;
+  if (input.ignoreExists && result.conflict === "exists") return;
+  if (result.forbidden || result.ok === false) {
+    throw new Error(result.reason || "The document could not be saved.");
+  }
+}
+
 async function importBlobDocs(payload: WorkspacePayload): Promise<void> {
   const docs = splitWorkspace(jsonSafe(payload));
   for (const doc of docs) {
@@ -275,18 +340,14 @@ async function importBlobDocs(payload: WorkspacePayload): Promise<void> {
         stored = doc.payload;
       }
     }
-    const { error } = await supabase.from("workspace_docs").upsert(
-      {
-        kind: doc.kind,
-        doc_id: doc.id,
-        payload: stored,
-        version: 1,
-        ord: doc.ord,
-        deleted_at: null,
-      },
-      { onConflict: "kind,doc_id", ignoreDuplicates: true },
-    );
-    if (error) throw error;
+    await writeWorkspaceDoc({
+      kind: doc.kind,
+      id: doc.id,
+      payload: stored as Json,
+      ord: doc.ord,
+      expectedVersion: null,
+      ignoreExists: true,
+    });
   }
 }
 
@@ -294,19 +355,13 @@ async function migrateFilePayloads(rows: StoredDoc[]): Promise<void> {
   for (const row of rows) {
     if (row.deleted || !payloadHasFileBodies(row.payload)) continue;
     const next = await rewritePayloadFiles(row.kind, row.id, row.payload);
-    const { data, error } = await supabase
-      .from("workspace_docs")
-      .update({ payload: next })
-      .eq("kind", row.kind)
-      .eq("doc_id", row.id)
-      .eq("version", row.version)
-      .select("version");
-    if (error) throw error;
-    if (!data?.length) {
-      throw new Error(
-        "A record changed while attachments were being moved. Reload before editing.",
-      );
-    }
+    await writeWorkspaceDoc({
+      kind: row.kind,
+      id: row.id,
+      payload: next,
+      ord: row.ord,
+      expectedVersion: row.version,
+    });
     row.payload = next;
   }
 }
@@ -410,19 +465,18 @@ async function foldOifBlob(rows: StoredDoc[]): Promise<void> {
     const storedPayload = payloadHasFileBodies(nextPayload)
       ? await rewritePayloadFiles("inspection", id, nextPayload as Json)
       : (nextPayload as Json);
-    const { data: updated, error: updateError } = await supabase
-      .from("workspace_docs")
-      .update({ payload: storedPayload })
-      .eq("kind", "inspection")
-      .eq("doc_id", id)
-      .eq("version", row.version)
-      .select("version");
-    if (updateError) throw updateError;
-    if (!updated?.length) {
+    try {
+      await writeWorkspaceDoc({
+        kind: "inspection",
+        id,
+        payload: storedPayload,
+        ord: row.ord,
+        expectedVersion: row.version,
+      });
+      row.payload = storedPayload;
+    } catch {
       remaining[id] = groups[id];
-      continue;
     }
-    row.payload = storedPayload;
   }
   const { error: writeError } = await supabase.from("app_settings").upsert(
     {
@@ -529,6 +583,19 @@ function overlayUnmigrated(
   app.scopeTemplates = (next as { scopeTemplates?: Json[] }).scopeTemplates || app.scopeTemplates || [];
   if ((next as { adminConfig?: Json }).adminConfig) {
     app.adminConfig = (next as { adminConfig?: Json }).adminConfig as Json;
+  }
+  const blobProposals = Array.isArray(blobApp.proposals) ? (blobApp.proposals as Json[]) : [];
+  const currentProposals = Array.isArray(app.proposals) ? (app.proposals as Json[]) : [];
+  if (blobProposals.length) {
+    const ids = new Set(currentProposals.map((item) => String(asRecord(item).id || asRecord(item).controlNo || "")));
+    const merged = currentProposals.slice();
+    for (const item of blobProposals) {
+      const id = String(asRecord(item).id || asRecord(item).controlNo || "");
+      if (!id || ids.has(id) || gone("proposal", id)) continue;
+      merged.push(item);
+      ids.add(id);
+    }
+    app.proposals = merged;
   }
   next.schemaConfig = { ...asRecord(next.schemaConfig), __app: app } as WorkspacePayload["schemaConfig"];
   return next;
@@ -796,12 +863,16 @@ type SaveOptions = {
   revisions: RevisionMap;
   force?: string[];
   canWriteAdmin?: boolean;
+  /** False while hydrating so a local backup cannot delete server documents. */
+  tombstones?: boolean;
 };
 
 type RpcResult = {
   ok?: boolean;
   skipped?: boolean;
-  conflict?: "version" | "deleted";
+  forbidden?: boolean;
+  reason?: string;
+  conflict?: "version" | "deleted" | "exists";
   version?: number;
 };
 
@@ -997,6 +1068,165 @@ function remember(
   revisions[docKey(kind, id)] = { version, hash: deleted ? "" : hash, synced, deleted };
 }
 
+/** 3-digit job-order sequence for one year. Falls back to the older global sequence when the year function is not applied yet. */
+export async function allocateJobOrderSeq(year?: string | number): Promise<number | null> {
+  await ensureSupabaseAccess();
+  const digits = String(year ?? "").replace(/\D/g, "");
+  const yearKey = digits.length >= 2 ? digits.slice(-2) : "";
+  if (yearKey) {
+    const yearRpc = await supabase.rpc("next_job_order_seq_for_year", { p_year: yearKey });
+    if (!yearRpc.error) {
+      const body = yearRpc.data && typeof yearRpc.data === "object" ? (yearRpc.data as { ok?: boolean, seq?: number, reason?: string }) : {};
+      if (body.ok === false) throw new Error(body.reason || "Could not take a job order number.");
+      const seq = Number(body.seq);
+      return Number.isFinite(seq) && seq > 0 ? seq : null;
+    }
+    const message = String(yearRpc.error.message || "");
+    const code = String(yearRpc.error.code || "");
+    const missing = code === "PGRST202" || code === "42883" || /next_job_order_seq_for_year/i.test(message);
+    if (!missing) throw yearRpc.error;
+  }
+  const { data, error } = await supabase.rpc("next_job_order_seq");
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /next_job_order_seq/i.test(message)) return null;
+    throw error;
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, seq?: number, reason?: string }) : {};
+  if (body.ok === false) throw new Error(body.reason || "Could not take a job order number.");
+  const seq = Number(body.seq);
+  return Number.isFinite(seq) && seq > 0 ? seq : null;
+}
+
+/** Register the full job-order number. Skipped when claim_job_order_no is not applied yet. */
+export async function claimJobOrderNo(joNo: string, controlNo: string, ceIds: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("claim_job_order_no", {
+    p_jo_no: joNo,
+    p_control: controlNo,
+    p_ces: ceIds || "",
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /claim_job_order_no/i.test(message)) return { ok: true, skipped: true };
+    return { ok: false, message: message || "Could not save that job order number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "That job order number is already used." };
+  return { ok: true };
+}
+
+/** Server proposal control number. Null means next_proposal_control_no is not applied yet. */
+export async function allocateProposalControl(): Promise<string | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_proposal_control_no");
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /next_proposal_control_no/i.test(message)) return null;
+    throw error;
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, controlNo?: string, reason?: string }) : {};
+  if (body.ok === false) throw new Error(body.reason || "Could not take a proposal number.");
+  return typeof body.controlNo === "string" && body.controlNo ? body.controlNo : null;
+}
+
+/** Register the client's PR number. Skipped when claim_proposal_pr is not applied yet. */
+export async function claimProposalPr(controlNo: string, prNo: string, ceId: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("claim_proposal_pr", {
+    p_control: controlNo,
+    p_pr: prNo,
+    p_ce: ceId || "",
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /claim_proposal_pr/i.test(message)) return { ok: true, skipped: true };
+    return { ok: false, message: message || "Could not save that PR number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "That PR number is already used." };
+  return { ok: true };
+}
+
+/** Register a user-entered or issued document number. Skipped when claim_user_doc_no is not applied yet. Does not overwrite another document. */
+export async function claimUserDocNo(kind: string, docId: string, number: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("claim_user_doc_no", {
+    p_kind: kind,
+    p_doc_id: docId,
+    p_number: number || "",
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /claim_user_doc_no/i.test(message)) return { ok: true, skipped: true };
+    if (code === "23505" || /already used/i.test(message)) return { ok: false, message: "That number is already used." };
+    return { ok: false, message: message || "Could not save that document number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "That number is already used." };
+  return { ok: true };
+}
+
+/** Clear a proposal's PR claim. Does not delete the proposal. Skipped when release_proposal_pr is not applied yet. */
+export async function releaseProposalPr(controlNo: string): Promise<{ ok: boolean, message?: string, skipped?: boolean }> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("release_proposal_pr", {
+    p_control: controlNo,
+  });
+  if (error) {
+    const message = String(error.message || "");
+    const code = String(error.code || "");
+    if (code === "PGRST202" || code === "42883" || /release_proposal_pr/i.test(message)) return { ok: true, skipped: true };
+    return { ok: false, message: message || "Could not release that PR number." };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean, reason?: string }) : {};
+  if (body.ok === false) return { ok: false, message: body.reason || "Could not release that PR number." };
+  return { ok: true };
+}
+
+/** Server counter. Null means the SQL function is not applied yet and the caller uses the local format. */
+export async function allocateDocNumber(kind: string, company: string, year: number): Promise<string | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_doc_no", {
+    p_kind: kind,
+    p_company: company || "",
+    p_year: year,
+  });
+  if (error) {
+    if (missingDocNumberRpc(error)) return null;
+    throw error;
+  }
+  return typeof data === "string" && data ? data : null;
+}
+
+/** Atomic alternate / addendum / update number. Null means next_ce_suffix is not applied yet. */
+export async function allocateCeSuffix(
+  base: string,
+  kind: string,
+  stem: string,
+  awarded: boolean,
+  reason: string,
+): Promise<string | null> {
+  await ensureSupabaseAccess();
+  const { data, error } = await supabase.rpc("next_ce_suffix", {
+    p_base: base,
+    p_kind: kind,
+    p_stem: stem,
+    p_awarded: awarded,
+    p_reason: reason || "",
+  });
+  if (error) {
+    if (missingSuffixRpc(error)) return null;
+    throw error;
+  }
+  return typeof data === "string" && data ? data : null;
+}
+
 export async function saveWorkspaceToSupabase(
   payload: WorkspacePayload,
   options: SaveOptions,
@@ -1016,12 +1246,13 @@ export async function saveWorkspaceToSupabase(
     }
     throw err;
   }
-  const plan = planSave(local, revisions, force, hold);
-  const kindOrder: Record<string, number> = { rce: 0, masterlist: 1, ce: 2 };
+  const plan = planSave(local, revisions, force, hold, options?.tombstones !== false);
+  // Job orders live on the schema document. Save that before the estimate so an award can see the job order.
+  const kindOrder: Record<string, number> = { rce: 0, masterlist: 1, schema: 2, ce: 3 };
   plan.writes.sort(
     (a, b) => (kindOrder[a.kind] ?? 5) - (kindOrder[b.kind] ?? 5),
   );
-  const conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" }> = [];
+  const conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" | "exists" }> = [];
   const rceIds = new Set(
     local.filter((doc) => doc.kind === "rce").map((doc) => doc.id),
   );
@@ -1068,6 +1299,34 @@ export async function saveWorkspaceToSupabase(
       : write.kind === "ce"
         ? ceMirror(stored, rceIds)
         : null;
+    const numbered = write.kind === "rce" || write.kind === "ce" || write.kind === "inspection" || write.kind === "markup";
+    if (numbered && !write.touchOnly) {
+      let number = payloadDocNumber(write.kind, stored, write.id);
+      let guard = 0;
+      while (number && guard < 8) {
+        const claimed = await claimUserDocNo(write.kind, write.id, number);
+        if (claimed.ok || claimed.skipped) break;
+        const clash = isDocNumberClash(claimed);
+        if (!clash || guard === 7) {
+          throw new WorkspaceSaveError(
+            claimed.message || "That number is already used.",
+            [...conflicts, { kind: write.kind, id: write.id, reason: "exists" }],
+            revisions,
+          );
+        }
+        guard += 1;
+        const fresh = await allocateDocNumber(write.kind === "inspection" ? "oif" : write.kind, "", new Date().getFullYear());
+        if (!fresh) {
+          throw new WorkspaceSaveError(
+            claimed.message || "That number is already used.",
+            [...conflicts, { kind: write.kind, id: write.id, reason: "exists" }],
+            revisions,
+          );
+        }
+        stored = rewritePayloadNumber(write.kind, stored, fresh);
+        number = fresh;
+      }
+    }
     let result: RpcResult;
     try {
       result = await callSaveDoc(
@@ -1090,11 +1349,23 @@ export async function saveWorkspaceToSupabase(
       if (current) remember(revisions, write.kind, write.id, current.version, current.hash, true);
       continue;
     }
+    if (result.forbidden) {
+      throw new WorkspaceSaveError(
+        result.reason || "You cannot save that change.",
+        conflicts,
+        revisions,
+      );
+    }
     if (!result.ok || result.conflict) {
+      const reason = result.conflict === "deleted"
+        ? "deleted"
+        : result.conflict === "exists"
+          ? "exists"
+          : "version";
       conflicts.push({
         kind: write.kind,
         id: write.id,
-        reason: result.conflict === "deleted" ? "deleted" : "version",
+        reason,
       });
       continue;
     }
@@ -1137,8 +1408,11 @@ export async function saveWorkspaceToSupabase(
   }
 
   if (conflicts.length) {
+    const exists = conflicts.some((item) => item.reason === "exists");
     throw new WorkspaceSaveError(
-      "This was changed by someone else — Reload / Keep mine",
+      exists
+        ? "That document number already exists. Reload and create it again."
+        : "This was changed by someone else — Reload / Keep mine",
       conflicts,
       revisions,
     );

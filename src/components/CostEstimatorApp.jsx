@@ -2,26 +2,161 @@
 'use client';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { Activity, AlertCircle, Award, Bell, BookOpen, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsDownUp, ChevronsUpDown, ClipboardList, Clock, Copy, Database, Download, Eye, EyeOff, FileText, Filter, Flag, FolderPlus, GripVertical, HardHat, Layers, LayoutDashboard, Library, Package, Paperclip, Pencil, Pin, Plus, RefreshCw, Search, Settings, Shield, Tag, Trash2, Undo2, Upload, UploadCloud, Users, Wrench, X } from "lucide-react";
+import { Activity, AlertCircle, ArrowUpRight, Award, Bell, BookOpen, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsDownUp, ChevronsUpDown, ClipboardList, Clock, Copy, Database, Download, Eye, EyeOff, FileText, Filter, Flag, FolderPlus, GripVertical, HardHat, Layers, LayoutDashboard, Library, MessageCircle, Package, Paperclip, Pencil, Pin, Plus, RefreshCw, Search, Settings, Shield, Tag, Trash2, Undo2, Upload, UploadCloud, Users, Wrench, X } from "lucide-react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import TextStyle from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
-import jsPDF from "jspdf";
+import jsPDFModule, { jsPDF as jsPDFNamed } from "jspdf";
+const jsPDF = typeof jsPDFNamed === "function" ? jsPDFNamed : typeof jsPDFModule === "function" ? jsPDFModule : jsPDFModule?.jsPDF || jsPDFModule?.default;
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import Papa from "papaparse";
 import CeOfficialSummary, { notesForTemplates, SheetNotesEditor, honorificName } from "./CeOfficialSummary";
 import { ElCalculatorView as ElCalculatorView$1 } from "./staffModules";
+import { AddToCeDialog } from "./AddToCeDialog";
 import { SystemManual } from "./SystemManual";
 import { addDaysLocal, applyApprovalDecision, markNoticesRead, nextCeRevision, noticeVisible, todayLocal, unreadNotices } from "../lib/estimator/workflow";
-import { checksumTotal, commercialNet, miscAmount, qtyUnitAmount, roundMoney } from "../lib/estimator/money";
+import { ceEditorOpen } from "../lib/estimator/phase8";
+import { actingLevelFor, ceOnMyList } from "../lib/estimator/previewAccess";
+import { signOut } from "../lib/auth/client";
+import { readReminderStamps, signOutEstimator, writeReminderStamps } from "../lib/estimator/clientSession";
+import { showDecisionButtons } from "../lib/estimator/decisionAccess";
+import { canShowHeaderEdit, leaveNeedsPrompt, sameDocument, shouldSendDocChange, stableJson } from "../lib/estimator/viewOnlySave";
+import { actorCanDecide, approvalEngineOn, beginEngineApproval, decideApproval, fixComment, openStepIndexes, planEdit, planRevise, planUpdate, validateFlowSteps } from "../lib/estimator/approvalEngine";
+import { canDecideTakeover, ceCreateAllowed, decideTakeover, dueReminderSlots, pendingClosingStatus, planClosing, planTakeover, rceChanged as rceWasChanged, rceStamp } from "../lib/estimator/reminders";
+import { matrixAllows, normalizeNotifyMatrix } from "../lib/estimator/notifyMatrix";
+import { cachedSignature, ceBlocksInspectionLines, loadSignatureImage, needsDraftWatermark, rememberSignature, shouldLoadExportSignatures, signaturePeople, storeSignatureImage } from "../lib/estimator/signatures";
+import { checksumTotal, commercialNet, roundMoney } from "../lib/estimator/money";
+import { phStamp, phYear } from "../lib/estimator/phTime";
+import { DOC_NUMBER_OFFLINE, DOC_NUMBER_RETRY, allocateUntilFree, blockedNumberReason, isDocNumberClash, issueDocNo, numberIdentityClash, rceNeedsNumber, rceNumberLabel } from "../lib/estimator/docNumbers";
+import { remapCloneIds } from "../lib/estimator/cloneIds";
+import { brandingVars, cleanBranding } from "../lib/estimator/branding";
+import { combinedTotal, familyKey, isAwarded, missingSuffixRpc, parseCeNumber, planSuffix, stemOf, urgentPlan } from "../lib/estimator/docSuffixes";
+import { foldFamilyRows } from "../lib/estimator/monitoringFamilies";
+import { cleanHolidayDate, companyCalendar } from "../lib/estimator/phCalendar";
+import { applyLineRates, constantDrift, priceDrifts, resyncPlan } from "../lib/estimator/priceCheck";
+import { bumpScopeUsage, resourceSeed, saveAsScope } from "../lib/estimator/scopeLibrary";
+import { allocateCeSuffix, allocateDocNumber, allocateJobOrderSeq, allocateProposalControl, claimJobOrderNo, claimProposalPr, claimUserDocNo, releaseProposalPr } from "../lib/estimator/supabase-workspace";
+import { Phase5Admin, PriceCheckPanel } from "./Phase5Admin";
+import { Phase6Admin } from "./Phase6Admin";
+import { Phase6Reports } from "./Phase6Reports";
+import { MobileDocScreen } from "./MobileDocScreen";
+import { Phase7Admin } from "./Phase7Admin";
+import { Phase8Admin } from "./Phase8Admin";
+import { Phase9Admin } from "./Phase9Admin";
+import { Phase10Admin } from "./Phase10Admin";
+import { Release1Admin } from "./Release1Admin";
+import { accountId, findAccount, isAdminDepartment, isCostEstimating, isSales, isSalesManager, normalizeApproverLists, personName } from "../lib/estimator/departments";
+import { ceApprovedNotice, salesOwnerAccountId } from "../lib/estimator/salesView";
+import { release1WriteAllowed } from "../lib/estimator/ceLock";
+import { askReason } from "../lib/estimator/reasonBox";
+import { acceptSalesCeRequest, actorMayAcceptCeRequest, costingApproverForRequest, planSalesCeRequest, rceWithdrawAllowed, withdrawLog } from "../lib/estimator/ceRequest";
+import { applyMarkupPreset, canGenerateMarkup, createMarkup, decideMarkup, nextMarkupRevision, salesGateFields, setMarkupParts, submitMarkup } from "../lib/estimator/markup";
+import { MarkupPanel } from "./MarkupPanel";
+import { canGenerateProposal, cancelProposal, claimProposalNumber, createProposal, decideProposal, deleteDraftProposal, markProposalExpired, markProposalLost, markProposalSent, noRevisionNeeded, patchProposal, reviseProposal, submitProposal } from "../lib/estimator/proposal";
+import { ProposalPanel } from "./ProposalPanel";
+import { applyAward, applyCancel, canCancelJobOrder, canGenerateJobOrder, cancelJobOrder, createJobOrder, decideJobOrder, patchJobOrder, reviseJobOrder, submitJobOrder } from "../lib/estimator/jobOrder";
+import { JobOrderPanel } from "./JobOrderPanel";
+import { SalesUserCard } from "./SalesUserCard";
+import { StickyTable } from "./StickyTable";
+import { monitorDashboard, pendingApprovals, reassignDoc, salesWorklist, takeOverApproved } from "../lib/estimator/release1Monitor";
+import { salesPipelineRows } from "../lib/estimator/salesStage";
+import { CeExportDialog } from "./CeExportDialog";
+import { RceRemarkCell } from "./RceRemarkCell";
+import { applyRemarkMark, clearAnswers, copyAnswers, estDaysRequired, fileStartPage, prefillRceSigns, remarkFont, remarkPlain, rowFilesInOrder } from "../lib/estimator/rceTemplate";
+import { chosenTemplate, libraryTabLabel, salesSafeExport, stripCeTemplate, stripOifTemplate, stripRceTemplate, templateChoices } from "../lib/estimator/libraryTemplates";
+import { markSeen, openStage, showNewForUser } from "../lib/estimator/personalNew";
+import { documentTitle } from "../lib/estimator/notifyBell";
+import { threadParticipants, unreadCount } from "../lib/estimator/ceThread";
+import { followLabel } from "../lib/estimator/stageBui";
+import { CeThreadPanel } from "./CeThreadPanel";
+import { MethodologiesPanel } from "./MethodologiesPanel";
+import { Phase10Schedule, Phase10Sow, GanttChart } from "./Phase10Panels";
+import { AccessQueue } from "./AccessQueue";
+import { Phase8CePanel } from "./Phase8Panels";
+import { CheckerPanel, CheckerReportList } from "./CheckerPanel";
+import { boteLineSnapshot, matchEquipmentItem, normalizeEquipmentFormula, normalizeEquipmentItem } from "../lib/estimator/equipmentRates";
+import { blocksFinalApproval, canSubmit, normalizeCheckerConfig, runChecker, versionWithReport } from "../lib/estimator/checker";
+import { browserSpell } from "../lib/estimator/spellBrowser";
+import { annexesForExport, availabilityKeysFrom, listMasterlistItems } from "../lib/estimator/phase8";
+import { normalizeFuelPrices, normalizeTolls, normalizeVehicles } from "../lib/estimator/routeFuel";
+import { orderExportSections, planSowSchedule, refreshSchedule, scheduleExportSection, sowGanttSchedule } from "../lib/estimator/phase10";
+import { stitchPdfAttachments as stitchAnnexes } from "../lib/estimator/pdfAnnex";
+import { boteElectricityCost, botePowerOnTask, buildOfficialBaseRows, calcBOCM, calcBOL, calcBOTE, calcMISC, calcPPE, categoryOnTask, categoryTotal, costNodes, directBolGroups, directColumnTotals, directFormula, dolePay, flattenSubs, isDirectPricing, itemSubtotal, offerDirectSwitch, projectTotal, screenOfficialTotal, setFormulaFns, shownOfficialAmount, subtaskTotal, taskTotal } from "../lib/estimator/ceTotals";
+import { applyRouteSignatories, signatorySlots } from "../lib/estimator/ceSignatories";
+import { winRate as awardWinRate } from "../lib/estimator/reports";
+import { applyExportPlan, classifyImportMatch, defaultExportPlan, EXPORT_PARTS, gridsFromWorkbook, importCostWorkbook, importedTotal, mapCeSheet, monitoringExportRequest, setRowSelection, sheetCategory } from "../lib/estimator/csvImport";
+import { ceWithdrawAllowed, planCeWithdraw, withdrawRecipients } from "../lib/estimator/ceWithdraw";
+import { approveMasterItem, lineDbState, masterAddDraft, requestMasterItem } from "../lib/estimator/ceLineDb";
+import { applyAttachmentEdits, attachmentFilesInOrder, removeAttachment, renameAttachment, reorderAttachments, splitAttachmentName } from "../lib/estimator/ceAttachOrder";
+import { miscShowAllPref } from "../lib/estimator/ceMiscView";
+import { applyHeaderEdit, HEADER_EDIT_FIELDS, HEADER_JOB_TYPES, headerEditDraft, listHeaderValues } from "../lib/estimator/ceHeaderEdit";
+import { buildCeExcelModel, fillCeTemplate } from "../lib/estimator/ceExcelTemplate";
+import { constantsDiffer, defaultCalcConstants, normalizeCalcConstants, ongoingTargets, planCalcInsert } from "../lib/estimator/elCalcs";
 import { filterRows, groupSortNotes, itemLocations, keyFor, newLineFor, overrideOr, planMergeIntoScope, scheduleDays, summaryItemKey } from "../lib/estimator/summaryTools";
 
-//#region src/components/CostEstimatorApp.jsx
+let reopenCalcLine = null;
+let calcConstantsNow = null;
+let equipmentRatesOn = false;
+let release1DepartmentsOn = false;
+let release1SalesViewOn = false;
+let release1SalesActor = false;
+let release1WithdrawRequestOn = false;
+let release1MarkupOn = false;
+let release1MarkupSales = false;
+let release1ProposalOn = false;
+let release1ProposalSales = false;
+let release1JobOrderOn = false;
+let release1JobOrderSales = false;
+let release1MonitorOn = false;
+let ceTpl1On = false;
+let ceTpl2On = false;
+let ceTpl3On = false;
+let ceTpl4On = false;
+let ceTpl5On = false;
+let ceTpl6On = false;
+let ceTpl7On = false;
+let ceTpl8On = false;
+let ceTpl9On = false;
+let ceTpl10On = false;
+let salesProfileOn = false;
+let rceTplOn = false;
+let rceRouteNow = [];
+let rceUsersNow = [];
+let personalNewTagOn = false;
+let salesPipelineMonitoringOn = false;
+let ceThreadsOn = false;
+let notificationsBellOn = false;
+let libraryMethodologiesOn = false;
+let methodologyEditorOn = false;
+let templatesFromDocsOn = false;
+let monitoringExportOn = false;
+let salesDocPreviewOn = false;
+let personalActorId = "";
+let personalNewConfig = { saturdayWorking: true, weekendDays: [0], holidays: [] };
+let saveCeTemplateNow = (_row, _tpl) => {};
+let saveThreadNow = (_ceId, _thread) => {};
+let notifyThreadNow = (_rows, _ceId) => {};
+let saveTaskTemplateNow = (_task) => {};
+let openAsNewCe = (_row) => {};
+let pendingCloneCeId = "";
+let saveRceTemplateNow = (_tpl) => {};
+let rceTemplatesNow = [];
+let saveOifTemplateNow = (_tpl) => {};
+let oifTemplatesNow = [];
+let teamAlertCount = 0;
+let miscShowMemory = {};
+let pendingMasterNow = [];
+let submitPendingMaster = (_draft) => {};
+let applyPendingMaster = (_pending) => {};
+let release1MonitorSales = false;
+let release1CanReassign = false;
+let release1ActorId = "";
+let equipmentCatalogNow = null;
 function interpolateDocTokens(template, vars) {
 	return String(template ?? "").replace(/\{(\w+)\}/g, (_, key) => {
 		const value = vars[key];
@@ -80,7 +215,17 @@ function drawExportChrome(doc, data, opts = {}) {
 	doc.rect(m + logoW, m, midW, headH);
 	doc.rect(pageWidth - m - infoW, m, infoW, headH);
 	if (logo) try {
-		doc.addImage(logo, logoFormat(logo), 10, 11, logoW - 4, Math.min(14, headH - 6));
+		const boxW = logoW - 1.6;
+		const boxH = headH - 1.6;
+		let drawW = boxW;
+		let drawH = boxH;
+		try {
+			const props = doc.getImageProperties(logo);
+			const ratio = props.width && props.height ? props.width / props.height : boxW / boxH;
+			if (boxW / boxH > ratio) drawW = boxH * ratio;
+			else drawH = boxW / ratio;
+		} catch { /* unknown size: stretch to the box */ }
+		doc.addImage(logo, logoFormat(logo), m + .8 + (boxW - drawW) / 2, m + .8 + (boxH - drawH) / 2, drawW, drawH);
 	} catch {
 		doc.setFontSize(8);
 		doc.text("LOGO", 14, 20);
@@ -94,19 +239,19 @@ function drawExportChrome(doc, data, opts = {}) {
 	}
 	doc.setFont(void 0, "bold");
 	doc.setFontSize(10);
-	const titleTop = m + Math.max(5.5, (headH - lines.length * 4.4) / 2 + 3.2);
+	const titleTop = m + Math.max(5, (headH - lines.length * 4.4) / 2 + 3.2);
 	lines.forEach((line, i) => {
 		doc.text(line, m + logoW + midW / 2, titleTop + i * 4.4, { align: "center" });
 	});
 	doc.setFont(void 0, "normal");
 	doc.setFontSize(7);
 	const infoX = pageWidth - m - infoW + 2;
-	doc.text("Document No.", infoX, 14);
-	doc.text(isoDocNo, infoX + 24, 14);
-	doc.text("Revision No.", infoX, 20);
-	doc.text(isoRev, infoX + 24, 20);
-	doc.text("Revision Date", infoX, 26);
-	doc.text(isoRevDate, infoX + 24, 26);
+	const rowGap = 3.6;
+	const firstRow = m + headH / 2 - rowGap + 1;
+	[["Document No.:", isoDocNo], ["Revision No.:", isoRev], ["Revision Date:", isoRevDate]].forEach(([label, value], i) => {
+		doc.text(label, infoX, firstRow + i * rowGap);
+		doc.text(value, infoX + 22, firstRow + i * rowGap);
+	});
 }
 function drawSummaryInfo(doc, info, x, y, width) {
 	const font = doc.getFont()?.fontName || "helvetica";
@@ -115,7 +260,7 @@ function drawSummaryInfo(doc, info, x, y, width) {
 	const c4 = Math.round(width * .2 * 10) / 10;
 	const c2 = Math.round((width - c1 - c3 - c4) * 10) / 10;
 	const ceCell = {
-		content: `COST ESTIMATE (CE) NUMBER\n${info.docNo || ""}`,
+		content: `${info.ceLabel || "COST ESTIMATE (CE) NUMBER"}\n${info.docNo || ""}${info.markupNo ? `\nMARKUP NO.\n${info.markupNo}` : ""}`,
 		colSpan: 2,
 		styles: {
 			fontStyle: "bold",
@@ -123,14 +268,13 @@ function drawSummaryInfo(doc, info, x, y, width) {
 			valign: "middle"
 		}
 	};
-	const revCell = {
-		content: `REVISION NO.      ${info.revNo || ""}\nREVISION DATE      ${info.revDate || ""}`,
-		colSpan: 2,
-		styles: {
-			fontStyle: "bold",
-			halign: "left",
-			valign: "middle"
-		}
+	const revLabel = {
+		content: "REVISION NO.\nREVISION DATE",
+		styles: { fontStyle: "bold", halign: "left", valign: "middle" }
+	};
+	const revValue = {
+		content: `${info.revNo || ""}\n${info.revDate || ""}`,
+		styles: { fontStyle: "normal", halign: "left", valign: "middle" }
 	};
 	autoTable(doc, {
 		startY: y,
@@ -196,7 +340,8 @@ function drawSummaryInfo(doc, info, x, y, width) {
 			[
 				"CLIENT NAME:",
 				String(info.client || ""),
-				revCell
+				revLabel,
+				revValue
 			],
 			[
 				"CLIENT LOCATION:",
@@ -241,6 +386,8 @@ var PDF_FONT_FILES = [
 ];
 var exportFontCache = null;
 var exportFontReady = false;
+var exportEngineOn = false;
+var exportUsers = [];
 async function ensureExportFonts() {
 	if (exportFontReady) return;
 	const cache = {};
@@ -279,7 +426,7 @@ function exportHeadSpec(doc, title) {
 	const logoW = 42;
 	const infoW = 62;
 	const midW = pageWidth - 16 - logoW - infoW;
-	const lines = doc.splitTextToSize(String(title || "COST ESTIMATE SUMMARY"), Math.max(20, midW - 8)).slice(0, 3);
+	const lines = doc.splitTextToSize(String(title || "COST ESTIMATE SUMMARY").toUpperCase(), Math.max(20, midW - 8)).slice(0, 3);
 	return {
 		pageWidth,
 		m,
@@ -287,7 +434,7 @@ function exportHeadSpec(doc, title) {
 		infoW,
 		midW,
 		lines,
-		headH: Math.max(22, 7 + lines.length * 4.5)
+		headH: Math.max(16, 6 + lines.length * 4.5)
 	};
 }
 function exportHeaderBottom(doc, title) {
@@ -304,7 +451,7 @@ function drawExportNotes(doc, notes, y, margin, opts = {}) {
 		const body = `${opts.numbered ? `${i + 1}. ` : ""}${String(text || "")}`;
 		const lines = doc.splitTextToSize(body, pageW - margin * 2);
 		doc.text(lines, margin, yy);
-		yy += lines.length * 3.8 + 1.2;
+		yy += lines.length * 3.3 + .3;
 	});
 	doc.setTextColor(0, 0, 0);
 	doc.setFont(void 0, "normal");
@@ -320,15 +467,16 @@ function splitExportStamp(stamp) {
 		time: m[3]
 	};
 }
-function drawExportSigns(doc, signs, y, margin) {
-	const colW = (doc.internal.pageSize.getWidth() - margin * 2) / 4;
+function drawExportSigns(doc, signs, y, margin, opts = {}) {
+	const cols = opts.cols || 4;
+	const colW = (doc.internal.pageSize.getWidth() - margin * 2) / cols;
 	const bodyFont = doc.getFont()?.fontName || "helvetica";
 	const fontList = typeof doc.getFontList === "function" ? doc.getFontList() : {};
 	const hasScript = !!(fontList.Signature || fontList.signature);
 	let yy = y + 3;
 	(signs || []).forEach((slot, i) => {
-		if (i > 0 && i % 4 === 0) yy += 36;
-		const x = margin + i % 4 * colW;
+		if (i > 0 && i % cols === 0) yy += 27;
+		const x = margin + i % cols * colW;
 		if (!slot?.label) return;
 		doc.setFont(bodyFont, "bold");
 		doc.setFontSize(8);
@@ -336,10 +484,23 @@ function drawExportSigns(doc, signs, y, margin) {
 		doc.text(String(slot.label), x + 1.5, yy);
 		const parts = splitExportStamp(slot.stamp);
 		const script = (slot.stamp && (parts.who || String(slot.name || "").replace(/^(mr|mrs|ms|miss)\.?\s+/i, "").trim())) || "";
-		const stampW = parts.date ? 15 : 0;
-		const scriptY = yy + 8.2;
-		if (script) {
-			const maxW = Math.max(12, colW - stampW - 2);
+		const stampW = parts.date ? 13 : 0;
+		const scriptY = yy + 9;
+		const centerX = x + colW / 2;
+		let sigRight = centerX;
+		let drewImage = false;
+		if (exportEngineOn) {
+			const image = cachedSignature({ name: slot.name });
+			if (image) try {
+				const imgW = Math.min(30, Math.max(12, colW - stampW - 6));
+				const imgX = centerX - (imgW + (stampW ? 1 + stampW : 0)) / 2;
+				doc.addImage(image, "PNG", imgX, scriptY - 6.5, imgW, 8);
+				sigRight = imgX + imgW;
+				drewImage = true;
+			} catch { /* script font if the image cannot be drawn */ }
+		}
+		if (script && !drewImage) {
+			const maxW = Math.max(12, colW - stampW - 4);
 			try {
 				doc.setFont(hasScript ? "Signature" : bodyFont, hasScript ? "normal" : "italic");
 			} catch {
@@ -352,33 +513,44 @@ function drawExportSigns(doc, signs, y, margin) {
 				size -= .5;
 				doc.setFontSize(size);
 			}
-			doc.text(script, x + (colW - stampW) / 2, scriptY, { align: "center" });
+			const w = doc.getTextWidth(script);
+			const sx = centerX - (w + (stampW ? 1 + stampW : 0)) / 2;
+			doc.text(script, sx, scriptY);
+			sigRight = sx + w;
 		}
 		if (parts.date) {
+			// Date/time stamp sits immediately right of the signature.
 			doc.setFont(bodyFont, "italic");
 			doc.setFontSize(6);
 			doc.setTextColor(155, 28, 28);
-			doc.text(parts.date, x + colW - 1.2, scriptY - 1.2, { align: "right" });
-			doc.text(parts.time, x + colW - 1.2, scriptY + 1.2, { align: "right" });
+			doc.text(parts.date, sigRight + 1, scriptY - 2.6);
+			doc.text(parts.time, sigRight + 1, scriptY - .2);
 		}
+		// Name: always one line, shrink the font until it fits the column.
 		doc.setTextColor(0, 0, 0);
 		doc.setFont(bodyFont, "normal");
-		doc.setFontSize(7.5);
-		const nameLines = doc.splitTextToSize(String(slot.name || ""), colW - stampW - 1).slice(0, 2);
-		const nameY = scriptY + 5.4;
-		doc.text(nameLines, x + (colW - stampW) / 2, nameY, { align: "center" });
-		const lineW = Math.min(24, (colW - stampW) * .62);
-		const lineY = nameY + nameLines.length * 2.4 + 1.2;
-		const lineX = x + (colW - stampW - lineW) / 2;
+		const name = String(slot.name || "");
+		let nameSize = 7.5;
+		doc.setFontSize(nameSize);
+		while (nameSize > 5 && doc.getTextWidth(name) > colW - 3) {
+			nameSize -= .25;
+			doc.setFontSize(nameSize);
+		}
+		const nameY = scriptY + 3.6;
+		doc.text(name, centerX, nameY, { align: "center" });
+		const lineW = Math.min(colW - 6, Math.max(26, doc.getTextWidth(name) + 4));
+		const lineY = nameY + 1;
 		doc.setDrawColor(0, 0, 0);
-		doc.setLineWidth(.45);
-		doc.line(lineX, lineY, lineX + lineW, lineY);
+		doc.setLineWidth(.35);
+		doc.line(centerX - lineW / 2, lineY, centerX + lineW / 2, lineY);
+		doc.setFont(bodyFont, "normal");
 		doc.setFontSize(6.5);
 		const titleLines = doc.splitTextToSize(String(slot.title || ""), colW - 3).slice(0, 2);
-		doc.text(titleLines, x + (colW - stampW) / 2, lineY + 3.4, { align: "center" });
+		doc.text(titleLines, centerX, lineY + 3, { align: "center" });
 	});
 	doc.setTextColor(0, 0, 0);
 	doc.setFont(bodyFont, "normal");
+	return yy + 22;
 }
 function sowFontStyle(bold, italic) {
 	if (bold && italic) return "bolditalic";
@@ -430,27 +602,46 @@ function sowBlocksFromHtml(html) {
 				});
 				return out;
 			};
-			const walk = (node, list) => {
+			const walk = (node, list, depth = 0) => {
 				node.childNodes.forEach((child) => {
 					if (child.nodeType !== 1) {
 						const text = String(child.textContent || "").trim();
-						if (text) blocks.push({ runs: [{ text, bold: false, italic: false }], list, heading: false });
+						if (text) blocks.push({ runs: [{ text, bold: false, italic: false }], list, heading: false, depth });
 						return;
 					}
 					const tag = child.tagName.toLowerCase();
 					if (tag === "ul" || tag === "ol") {
-						walk(child, true);
+						walk(child, true, depth + 1);
 						return;
 					}
-					if (tag === "li" || tag === "p" || tag === "div" || tag === "blockquote" || /^h[1-6]$/.test(tag)) {
+					if (tag === "li") {
+						// A list item's own text is one block; nested lists under it are its sub-tasks.
+						const own = parsed.createElement("div");
+						const nested = [];
+						Array.from(child.childNodes).forEach((n) => {
+							const t = n.nodeType === 1 ? n.tagName.toLowerCase() : "";
+							if (t === "ul" || t === "ol") nested.push(n);
+							else own.appendChild(n.cloneNode(true));
+						});
+						blocks.push({
+							runs: runsFrom(own, { bold: false, italic: false, underline: false, color: "" }),
+							list: true,
+							heading: false,
+							depth: Math.max(1, depth)
+						});
+						nested.forEach((n) => walk(n, true, Math.max(1, depth) + 1));
+						return;
+					}
+					if (tag === "p" || tag === "div" || tag === "blockquote" || /^h[1-6]$/.test(tag)) {
 						blocks.push({
 							runs: runsFrom(child, { bold: /^h[1-6]$/.test(tag), italic: false, underline: false, color: "" }),
-							list: list || tag === "li",
-							heading: /^h[1-6]$/.test(tag)
+							list,
+							heading: /^h[1-6]$/.test(tag),
+							depth
 						});
 						return;
 					}
-					walk(child, list);
+					walk(child, list, depth);
 				});
 			};
 			walk(root, false);
@@ -459,9 +650,10 @@ function sowBlocksFromHtml(html) {
 	}
 	const text = raw.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|h[1-6]|li|blockquote|tr)>/gi, "\n").replace(/<li\b[^>]*>/gi, "\n• ").replace(/<[^>]+>/g, "").replace(/&nbsp;/gi, " ").replace(/&/gi, "&").replace(/</gi, "<").replace(/>/gi, ">").replace(/"/gi, "\"").replace(/&#39;/gi, "'");
 	return text.split(/\n/).map((line) => ({
-		runs: [{ text: line.replace(/^[•]\s*/, ""), bold: false, italic: false, underline: false, color: "" }],
-		list: /^\s*•/.test(line),
-		heading: false
+		runs: [{ text: line.replace(/^\s*[•–-]\s*/, ""), bold: false, italic: false, underline: false, color: "" }],
+		list: /^\s*[•–-]/.test(line),
+		heading: false,
+		depth: /^\s*[•]/.test(line) ? 1 : /^\s+[–-]/.test(line) ? 2 : 0
 	}));
 }
 function sowPlainLines(html) {
@@ -472,64 +664,92 @@ function sowPlainLines(html) {
 	}).filter((line) => line);
 }
 function drawSowBody(doc, data, html, startY, margin, font, title) {
+	// Formal scope layout: padded from the page frame, main tasks numbered in bold
+	// black, sub-tasks indented beneath them in a smaller regular font, tight rows.
 	const pageW = doc.internal.pageSize.getWidth();
-	const maxW = pageW - margin * 2;
-	const lineH = 4.6;
-	let y = startY;
+	const left = margin + 4;
+	const maxW = pageW - left - (margin + 4);
+	let y = startY + 5;
+	let mainNo = 0;
+	let subNo = 0;
+	let prevList = false;
 	const ensure = (need) => {
 		const pageH = doc.internal.pageSize.getHeight();
 		if (y + need <= pageH - 16) return;
 		doc.addPage("a4", "portrait");
 		drawExportChrome(doc, data, { first: false, title });
-		y = exportHeaderBottom(doc, title) + 4;
+		y = 8 + 9;
 	};
-	sowBlocksFromHtml(html).forEach((block) => {
+	const blocks = sowBlocksFromHtml(html);
+	blocks.forEach((block) => {
 		const runs = block.runs || [];
+		const plain = runs.map((r) => r.text || "").join("").trim();
+		if (!plain) {
+			y += 1.2;
+			return;
+		}
+		if (prevList && !block.list) y += 2;
+		const depth = block.list ? Math.max(1, block.depth || 1) : 0;
+		const isMain = depth === 1;
+		const isSub = depth >= 2;
+		const allBold = runs.filter((r) => String(r.text || "").trim()).every((r) => r.bold);
+		const isTitle = !block.list && (block.heading || allBold);
+		const size = isTitle ? 10.5 : isMain ? 9.5 : isSub ? 8.5 : 9;
+		const lineH = isTitle ? 4.6 : isMain ? 4.1 : isSub ? 3.6 : 4;
+		let marker = "";
+		let markerX = left;
+		let textX = left;
+		if (isMain) {
+			if (mainNo > 0) y += 1;
+			mainNo += 1;
+			subNo = 0;
+			marker = `${mainNo}.`;
+			markerX = left + 1;
+			textX = left + 7;
+		} else if (isSub) {
+			subNo += 1;
+			marker = `${String.fromCharCode(96 + Math.min(26, subNo))}.`;
+			markerX = left + 7 + (depth - 2) * 5;
+			textX = markerX + 5;
+		}
+		const limit = maxW - (textX - left);
 		const words = [];
 		runs.forEach((run) => {
-			String(run.text || "").split("\n").forEach((part, index, parts) => {
+			String(run.text || "").split("\n").forEach((part, index) => {
 				if (index > 0) words.push({ break: true });
 				part.split(/(\s+)/).forEach((piece) => {
 					if (piece) words.push({
 						text: piece,
-						bold: !!run.bold,
+						bold: isMain || isTitle ? true : isSub ? false : !!run.bold,
 						italic: !!run.italic,
 						underline: !!run.underline,
-						color: run.color || "",
-						heading: !!block.heading
+						color: isMain || isTitle ? "" : run.color || ""
 					});
 				});
 			});
 		});
-		if (!words.some((word) => String(word.text || "").trim())) {
-			y += 2.2;
-			return;
-		}
-		const indent = block.list ? 5 : 0;
-		const x0 = margin + indent;
-		const limit = maxW - indent;
 		let line = [];
 		let width = 0;
-		let bullet = !block.list;
+		let first = true;
 		const measure = (word) => {
 			doc.setFont(font, sowFontStyle(word.bold, word.italic));
-			doc.setFontSize(word.heading ? 11 : 10);
+			doc.setFontSize(size);
 			return doc.getTextWidth(word.text);
 		};
 		const flush = () => {
 			if (!line.length) return;
 			ensure(lineH);
-			if (!bullet) {
-				doc.setFont(font, "normal");
-				doc.setFontSize(10);
+			if (first && marker) {
+				doc.setFont(font, isMain ? "bold" : "normal");
+				doc.setFontSize(size);
 				doc.setTextColor(0, 0, 0);
-				doc.text("•", margin + 0.6, y);
-				bullet = true;
+				doc.text(marker, markerX, y);
 			}
-			let x = x0;
+			first = false;
+			let x = textX;
 			line.forEach((word) => {
 				doc.setFont(font, sowFontStyle(word.bold, word.italic));
-				doc.setFontSize(word.heading ? 11 : 10);
+				doc.setFontSize(size);
 				const rgb = word.color ? cssColorToRgb(word.color) : null;
 				doc.setTextColor(rgb ? rgb[0] : 0, rgb ? rgb[1] : 0, rgb ? rgb[2] : 0);
 				doc.text(word.text, x, y);
@@ -559,12 +779,13 @@ function drawSowBody(doc, data, html, startY, margin, font, title) {
 			width += w;
 		});
 		flush();
-		y += block.heading ? 1.8 : 1.3;
+		y += isTitle ? 1.6 : isMain ? .7 : isSub ? .2 : 1;
+		prevList = !!block.list;
 	});
 	return y;
 }
 var BOL_LIGHT_BLUE = [173, 216, 230];
-function drawSheetBanner(doc, text, y, margin, fill, fontName) {
+function drawSheetBanner(doc, text, y, margin, fill, fontName, textColor) {
 	const pageW = doc.internal.pageSize.getWidth();
 	const w = pageW - margin * 2;
 	const h = 7;
@@ -574,9 +795,67 @@ function drawSheetBanner(doc, text, y, margin, fill, fontName) {
 	doc.rect(margin, y, w, h, "FD");
 	doc.setFont(fontName || "helvetica", "bold");
 	doc.setFontSize(8.5);
-	doc.setTextColor(0, 0, 0);
+	const tc = textColor || [0, 0, 0];
+	doc.setTextColor(tc[0], tc[1], tc[2]);
 	doc.text(String(text || ""), margin + w / 2, y + 4.6, { align: "center" });
+	doc.setTextColor(0, 0, 0);
 	return y + h;
+}
+function planExportColumns(doc, font, columns, body, rowMeta, descIdx, fontSize, block) {
+	// Item No. stays narrow (its header wraps "Item / No."), numbers never wrap,
+	// no word is ever split mid-word, and the description column takes the rest.
+	if (block.keepWidths || descIdx < 0) return block.columnStyles || {};
+	const pad = 1.15 * 2 + .8;
+	const tableW = doc.internal.pageSize.getWidth() - 20;
+	const spanned = (meta) => meta && (meta.kind === "group" || meta.kind === "shift" || meta.kind === "total" || meta.kind === "labelled-total");
+	const width = (text, bold) => {
+		doc.setFont(font, bold ? "bold" : "normal");
+		doc.setFontSize(fontSize);
+		return doc.getTextWidth(String(text ?? ""));
+	};
+	const longestWord = (text, bold) => String(text ?? "").split(/\s+/).reduce((mx, w) => Math.max(mx, width(w, bold)), 0);
+	const styles = {};
+	let fixed = 0;
+	columns.forEach((col, i) => {
+		const base = { ...(block.columnStyles?.[i] || {}) };
+		delete base.cellWidth;
+		if (i === descIdx) {
+			let minW = longestWord(col, true);
+			body.forEach((row, r) => {
+				if (!spanned(rowMeta[r])) minW = Math.max(minW, longestWord(row[i]));
+			});
+			styles[i] = { ...base, minCellWidth: minW + pad };
+			return;
+		}
+		let w = longestWord(col, true);
+		body.forEach((row, r) => {
+			const meta = rowMeta[r];
+			if (!spanned(meta)) w = Math.max(w, width(row[i], true));
+			else if (meta.kind === "labelled-total" && meta.labelCol === i && !meta.labelSpan) w = Math.max(w, width(row[i], true));
+			else if ((meta.kind === "labelled-total" || meta.kind === "total") && i === columns.length - 1) w = Math.max(w, width(row[i], true));
+			else if (meta.kind === "total" && i === block.totalQtyCol) w = Math.max(w, width(row[i], true));
+		});
+		const cw = Math.max(i === 0 ? 7 : 9, w + pad);
+		styles[i] = { ...base, cellWidth: cw };
+		fixed += cw;
+	});
+	// Spare width first lets headers sit on one line, the rest goes to the description.
+	const descKeep = Math.max(styles[descIdx].minCellWidth, tableW * .34);
+	let spare = tableW - fixed - descKeep;
+	if (spare > 0) {
+		const wants = columns.map((col, i) => i === descIdx || i === 0 ? 0 : Math.max(0, width(col, true) + pad - styles[i].cellWidth));
+		const need = wants.reduce((a, b) => a + b, 0);
+		if (need > 0) {
+			const share = Math.min(1, spare / need);
+			wants.forEach((want, i) => {
+				if (!want) return;
+				styles[i].cellWidth += want * share;
+				fixed += want * share;
+			});
+		}
+	}
+	styles[descIdx].cellWidth = Math.max(styles[descIdx].minCellWidth, tableW - fixed);
+	return styles;
 }
 function paintSheetTable(doc, data, section, block, startY, margin, font, pageState) {
 	const columns = block.columns || [];
@@ -587,9 +866,12 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 		return cells.slice(0, columns.length);
 	});
 	if (!columns.length) return startY;
-	const descIdx = columns.findIndex((c) => /description|role|manpower|category/i.test(String(c)));
+	const descIdx = columns.findIndex((c) => /description|designation|role|manpower|category/i.test(String(c)));
 	const moneyIdx = columns.map((c, i) => /cost|rate|subtotal|total|price|amount/i.test(String(c)) ? i : -1).filter((i) => i >= 0);
 	const headFill = block.headFill || [255, 255, 255];
+	const tableFont = block.fontSize || (columns.length > 8 ? 7 : 8);
+	const planBody = block.planRows ? block.planRows.map((row) => (row || []).map(pdfCell)) : body;
+	const columnStyles = planExportColumns(doc, font, columns, planBody, block.planMeta || rowMeta, descIdx, tableFont, block);
 	autoTable(doc, {
 		head: [columns.map(pdfCell)],
 		showHead: block.hideHead ? "never" : "everyPage",
@@ -610,7 +892,7 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 			],
 			lineWidth: .35,
 			cellPadding: 1.15,
-			fontSize: block.fontSize || (columns.length > 8 ? 7 : 8),
+			fontSize: tableFont,
 			valign: "middle",
 			halign: "center",
 			textColor: [
@@ -645,11 +927,29 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 				0
 			]
 		},
-		columnStyles: block.columnStyles || {},
+		columnStyles,
 		didParseCell: (hook) => {
 			if (hook.section !== "body") return;
 			const meta = rowMeta[hook.row.index] || {};
 			const last = columns.length - 1;
+			if (meta.kind === "labelled-total") {
+				// MISC style: "SUB TOTAL:" sits in the label column, amount in the last column.
+				const lc = meta.labelCol;
+				if (hook.column.index === 0 && lc > 0) {
+					hook.cell.colSpan = lc;
+					hook.cell.styles.lineWidth = meta.open ? 0 : .35;
+					hook.cell.styles.fillColor = meta.fill || [255, 255, 255];
+				}
+				if (hook.column.index === lc) {
+					if (meta.labelSpan) hook.cell.colSpan = meta.labelSpan;
+					hook.cell.styles.halign = "right";
+					hook.cell.styles.fontStyle = "bold";
+				}
+				if (hook.column.index === last) hook.cell.styles.fontStyle = "bold";
+				if (meta.fill) hook.cell.styles.fillColor = meta.fill;
+				if (hook.column.index === last || hook.column.index === lc) hook.cell.styles.halign = "right";
+				return;
+			}
 			if ((meta.kind === "group" || meta.kind === "shift") && hook.column.index === 0) {
 				hook.cell.colSpan = columns.length;
 				hook.cell.styles.halign = "left";
@@ -685,11 +985,16 @@ function paintSheetTable(doc, data, section, block, startY, margin, font, pageSt
 			if (meta.kind === "sum-main" && (hook.column.index === 1 || hook.column.index === last)) hook.cell.styles.fontStyle = "bold";
 			if ((meta.kind === "sum-sub" || meta.kind === "sum-break" || meta.kind === "sum-custom") && hook.column.index === 1) hook.cell.styles.fontStyle = "italic";
 			if ((meta.kind === "sum-sub" || meta.kind === "sum-break" || meta.kind === "sum-custom" || meta.kind === "sum-line") && hook.column.index === last) hook.cell.styles.fontStyle = "bold";
-			if (meta.kind === "sum-blue") {
+			if (meta.kind === "sum-blue" || meta.kind === "sum-final") {
 				hook.cell.styles.fillColor = [173, 216, 230];
+				hook.cell.styles.textColor = [0, 0, 0];
+				if (hook.column.index === 1) {
+					hook.cell.styles.halign = "right";
+					hook.cell.styles.fontStyle = "bold";
+				}
 				if (hook.column.index === last && String(hook.cell.text || "").trim()) hook.cell.styles.fontStyle = "bold";
 			}
-			if (descIdx >= 0 && hook.column.index === descIdx && meta.kind !== "total" && meta.kind !== "group") hook.cell.styles.halign = "left";
+			if (descIdx >= 0 && hook.column.index === descIdx && meta.kind !== "total" && meta.kind !== "group" && meta.kind !== "sum-final") hook.cell.styles.halign = "left";
 			if (moneyIdx.includes(hook.column.index) || hook.column.index === last) hook.cell.styles.halign = "right";
 		},
 		didDrawPage: () => {
@@ -735,11 +1040,76 @@ function pdfHandle(blob) {
 		}
 	};
 }
+function stampDraftWatermark(doc) {
+	if (!doc || typeof doc.getNumberOfPages !== "function") return;
+	const total = doc.getNumberOfPages();
+	for (let i = 1; i <= total; i++) {
+		doc.setPage(i);
+		const pageW = doc.internal.pageSize.getWidth();
+		const pageH = doc.internal.pageSize.getHeight();
+		const body = doc.getFont()?.fontName || "helvetica";
+		let pushed = false;
+		try {
+			if (typeof doc.saveGraphicsState === "function") {
+				doc.saveGraphicsState();
+				pushed = true;
+			}
+			if (typeof doc.GState === "function" && typeof doc.setGState === "function") doc.setGState(new doc.GState({ opacity: 0.16 }));
+		} catch { /* draw the mark even if opacity is unavailable */ }
+		try {
+			doc.setFont(body, "bold");
+		} catch {
+			try { doc.setFont(body, "normal"); } catch { /* keep the current font */ }
+		}
+		doc.setFontSize(52);
+		doc.setTextColor(170, 170, 170);
+		try {
+			doc.text("DRAFT", pageW / 2, pageH / 2, { align: "center", angle: 32 });
+		} catch {
+			doc.text("DRAFT", pageW / 2, pageH / 2, { align: "center" });
+		}
+		if (pushed) try { doc.restoreGraphicsState(); } catch { /* page state already restored */ }
+		doc.setTextColor(0, 0, 0);
+		try { doc.setFont(body, "normal"); } catch { /* keep the current font */ }
+		doc.setFontSize(8);
+	}
+}
+async function warmExportSignatures(names, extra) {
+	if (!shouldLoadExportSignatures(exportEngineOn)) return;
+	const people = signaturePeople({
+		names,
+		users: exportUsers,
+		approval: extra?.approval || null,
+		approvals: extra?.approvals || []
+	});
+	const seen = new Set();
+	for (const person of people) {
+		const key = person.userId;
+		if (!key || seen.has(key) || cachedSignature(key) || cachedSignature({ name: person.name })) continue;
+		seen.add(key);
+		const image = await loadSignatureImage(key);
+		if (image) rememberSignature(key, image, person.name);
+	}
+}
 async function renderCostEstimatePdf(data) {
 	try {
 		await ensureExportFonts();
 	} catch {
 		exportFontReady = false;
+	}
+	if (shouldLoadExportSignatures(exportEngineOn)) {
+		const names = [];
+		const approvals = [];
+		(data.sections || []).forEach((section) => {
+			(section.signs || []).forEach((slot) => slot?.name && names.push(slot.name));
+			if (section.rceForm) {
+				names.push(section.rceForm.preparedBy, section.rceForm.reviewedBy, section.rceForm.approvedBy);
+				if (section.rceForm.approval) approvals.push(section.rceForm.approval);
+			}
+		});
+		["preparedBy", "reviewedBy", "approvedBy"].forEach((key) => data.cover?.[key] && names.push(data.cover[key]));
+		if (data.approval) approvals.push(data.approval);
+		await warmExportSignatures(names, { approval: data.approval, approvals });
 	}
 	const sections = data.sections || [];
 	const doc = new jsPDF({
@@ -800,16 +1170,34 @@ async function renderCostEstimatePdf(data) {
 				first: true,
 				title: title || "SCOPE OF WORK"
 			});
-			drawSowBody(doc, data, section.sowHtml, startY + 1, margin, font, title || "SCOPE OF WORK");
+			drawSowBody(doc, data, section.sowHtml, startY + 2, margin, font, title || "SCOPE OF WORK");
 			return;
 		}
 		if (section.projectBlock) startY = drawSummaryInfo(doc, section.projectBlock, margin, startY, doc.internal.pageSize.getWidth() - 20) + 2;
 		const pageState = { first: true };
+		// Tables of one sheet that share a header get the same column widths, so they line up.
+		const shared = new Map();
+		(section.blocks || []).forEach((block) => {
+			if (!block.columns?.length || !Array.isArray(block.rows)) return;
+			const key = block.columns.join("|");
+			const hit = shared.get(key) || { rows: [], meta: [] };
+			hit.rows.push(...block.rows);
+			hit.meta.push(...block.rows.map((_, i) => (block.rowMeta || [])[i] || {}));
+			shared.set(key, hit);
+		});
+		(section.blocks || []).forEach((block) => {
+			const hit = block.columns?.length ? shared.get(block.columns.join("|")) : null;
+			if (hit && !block.planRows) {
+				block.planRows = hit.rows;
+				block.planMeta = hit.meta;
+			}
+		});
 		(section.blocks?.length ? section.blocks : [{
 			columns: section.columns,
 			rows: section.rows,
 			rowMeta: section.rowMeta,
-			columnStyles: section.columnStyles
+			columnStyles: section.columnStyles,
+			keepWidths: section.keepWidths
 		}]).forEach((block) => {
 			const pageH = doc.internal.pageSize.getHeight();
 			const need = (block.banner ? 8 : 0) + (block.columns?.length ? 22 : 0);
@@ -818,7 +1206,7 @@ async function renderCostEstimatePdf(data) {
 				startY = exportHeaderBottom(doc, title) + 2;
 				pageState.first = true;
 			}
-			if (block.banner) startY = drawSheetBanner(doc, block.banner, startY, margin, block.bannerFill || BOL_LIGHT_BLUE, font);
+			if (block.banner) startY = drawSheetBanner(doc, block.banner, startY, margin, block.bannerFill || BOL_LIGHT_BLUE, font, block.bannerText);
 			if (block.heading) {
 				if (startY > pageH - 28) {
 					doc.addPage("a4", orientation);
@@ -832,8 +1220,8 @@ async function renderCostEstimatePdf(data) {
 				doc.setFont(font, "bold");
 				doc.setFontSize(9);
 				doc.setTextColor(0, 0, 0);
-				doc.text(String(block.heading), margin, startY + 4);
-				startY += 6;
+				doc.text(String(block.heading), margin + .5, startY + 3.6);
+				startY += block.headingTight ? 4.6 : 6;
 			}
 			if (block.columns?.length && Array.isArray(block.rows) && block.rows.length) {
 				startY = paintSheetTable(doc, data, section, block, startY, margin, font, pageState) + (block.afterTight ? .6 : 3);
@@ -855,11 +1243,15 @@ async function renderCostEstimatePdf(data) {
 		doc.setFontSize(8);
 		doc.setTextColor(0, 0, 0);
 		doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 11, { align: "right" });
+		if (data?.footerTag) {
+			doc.setFont(font, "bold");
+			doc.setTextColor(155, 28, 28);
+			doc.text(String(data.footerTag), pageWidth / 2, pageHeight - 11, { align: "center" });
+			doc.setTextColor(0, 0, 0);
+		}
 	}
+	if (data?.draftWatermark) stampDraftWatermark(doc);
 	return pdfHandle(await stitchPdfAttachments(doc, inserts));
-}
-function sheetName(title) {
-	return String(title || "Sheet").replace(/[\\/?*[\]]/g, " ").slice(0, 31);
 }
 function issuePdfData(data = {}) {
 	const ceNumber = data.ceNumber || data.cover?.ceNumber || "CE";
@@ -901,121 +1293,42 @@ async function previewIssuePdf(data = {}) {
 }
 async function exportIssuePdf(data = {}) {
 	const pdfData = issuePdfData(data);
-	(await renderCostEstimatePdf(pdfData)).save(`Cost_Estimate_${pdfData.ceNumber || "export"}.pdf`);
+	const doc = await renderCostEstimatePdf(pdfData);
+	const annexes = (Array.isArray(data.annexes) ? data.annexes : []).filter((file) => file && file.include !== false && (file.dataUrl || file.bytes));
+	const name = `Cost_Estimate_${pdfData.ceNumber || "export"}.pdf`;
+	if (!annexes.length) {
+		doc.save(name);
+		return;
+	}
+	const merged = await stitchAnnexes(doc.output("arraybuffer"), annexes);
+	const blob = new Blob([merged], { type: "application/pdf" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = name;
+	link.click();
+	URL.revokeObjectURL(url);
 }
-function exportIssueExcel(data = {}) {
-	const cover = data.cover || {};
-	const grand = Number(cover.grandTotal) || 0;
-	const checksum = Math.round(grand * 100) / 100;
-	const stamp = cover.exportedAt || (/* @__PURE__ */ new Date()).toISOString();
-	const ceNumber = data.ceNumber || cover.ceNumber || "CE";
-	const rceLabel2 = cover.rceLabel || "";
-	const wb = XLSX.utils.book_new();
-	const letter = resolvedLetterhead(data, "&P");
-	const categorySheets = (data.sections || []).filter((s) => s.title && s.title !== "Cover" && Array.isArray(s.columns) && !s.rceForm && !s.imageData && !s.pdfData);
-	const coverAoA = [
-		[
-			letter.headerLeft,
-			"",
-			letter.headerRight
-		],
-		[],
-		["Project cover — formulas sum category sheets. Do not paste over the net."],
-		["Client", cover.client || ""],
-		["Site", cover.location || ""],
-		["CE #", ceNumber],
-		["RCE #", rceLabel2],
-		["Date", cover.date || ""],
-		["Validity days", cover.validityDays || 30],
-		["Prepared", cover.preparedBy || ""],
-		["Reviewed", cover.reviewedBy || ""],
-		["Approved", cover.approvedBy || ""],
-		[],
-		[
-			"Category",
-			"Onsite",
-			"Shop",
-			"Trading",
-			"Total"
-		]
-	];
-	const catNames = [
-		"BOL",
-		"BOTE",
-		"BOCM",
-		"PPE",
-		"MISC",
-		"MOB"
-	];
-	catNames.forEach((name, i) => {
-		const row = 15 + i;
-		coverAoA.push([
-			name,
-			{ f: `IFERROR('${name}'!B2,0)` },
-			{ f: `IFERROR('${name}'!C2,0)` },
-			{ f: `IFERROR('${name}'!D2,0)` },
-			{ f: `B${row}+C${row}+D${row}` }
-		]);
-	});
-	const first = 15;
-	const last = 14 + catNames.length;
-	coverAoA.push([]);
-	coverAoA.push([
-		"Grand",
-		"",
-		"",
-		"",
-		{ f: `SUM(E${first}:E${last})` }
-	]);
-	coverAoA.push(["Contingency %", cover.contingencyPct || 0]);
-	coverAoA.push(["Discount %", cover.discountPct || 0]);
-	coverAoA.push([
-		"Net",
-		"",
-		"",
-		"",
-		{ f: `E${last + 2}*(1+B${last + 3}/100)*(1-B${last + 4}/100)` }
-	]);
-	coverAoA.push([]);
-	coverAoA.push(["Assumptions / exclusions", cover.assumptions || ""]);
-	const coverWs = XLSX.utils.aoa_to_sheet(coverAoA);
-	coverWs["!freeze"] = {
-		xSplit: 0,
-		ySplit: 1
-	};
-	XLSX.utils.book_append_sheet(wb, coverWs, "Cover");
-	categorySheets.forEach((section) => {
-		const wsData = [
-			[
-				letter.headerLeft,
-				"",
-				letter.headerRight
-			],
-			section.columns,
-			...section.rows
-		];
-		const ws = XLSX.utils.aoa_to_sheet(wsData);
-		ws["!freeze"] = {
-			xSplit: 0,
-			ySplit: 2
-		};
-		ws["!cols"] = (section.columns || []).map((col, i) => ({ wch: Math.max(String(col || "").length, ...section.rows.map((row) => row[i] ? String(row[i]).length : 0), 8) }));
-		XLSX.utils.book_append_sheet(wb, ws, sheetName(section.title));
-	});
-	const meta = XLSX.utils.aoa_to_sheet([
-		["CE #", ceNumber],
-		["RCE", rceLabel2],
-		["Exported by", cover.exportedBy || ""],
-		["Timestamp", stamp],
-		["Grand total checksum", checksum],
-		["Net", cover.netTotal || checksum]
-	]);
-	XLSX.utils.book_append_sheet(wb, meta, "ExportMeta");
-	XLSX.writeFile(wb, `Issue_Pack_${ceNumber}.xlsx`);
-	return {
-		checksum,
-		stamp
-	};
+async function exportIssueExcel(data = {}) {
+	const ceNumber = data.ceNumber || data.cover?.ceNumber || "CE";
+	try {
+		const ExcelJS = (await import("exceljs")).default;
+		const res = await fetch("/templates/ce-template.xlsx");
+		if (!res.ok) throw new Error("template");
+		const buffer = await res.arrayBuffer();
+		const filled = await fillCeTemplate(ExcelJS, buffer, buildCeExcelModel(data));
+		const blob = new Blob([filled.buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = `CE_${ceNumber}.xlsx`;
+		link.click();
+		URL.revokeObjectURL(url);
+		return { checksum: filled.total, unresolved: filled.unresolved, totals: filled.totals };
+	} catch {
+		alert("Couldn't get a workbook, try again");
+		return null;
+	}
 }
 function rceMark(doc, x, y, on) {
 	doc.setLineWidth(.3);
@@ -1025,6 +1338,34 @@ function rceMark(doc, x, y, on) {
 		doc.line(x + .5, y - 1.1, x + 1.3, y + .2);
 		doc.line(x + 1.3, y + .2, x + 2.7, y - 2.3);
 	}
+}
+// RCE form document control. The official RCE form number is not known yet:
+// set docControlNo / revisionNo / revisionDate here (or pass rce.docControl /
+// documentControl.rceDocControl) once Document Control issues them.
+const RCE_DOC_CONTROL = {
+	docControlNo: "F-____",
+	revisionNo: "",
+	revisionDate: ""
+};
+// Vector marks for the YES / NO / N/A columns (no font glyphs needed).
+function rceDrawTick(doc, cx, cy) {
+	doc.setDrawColor(16, 150, 64);
+	doc.setLineWidth(.75);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("round");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("round");
+	doc.lines([[1.15, 1.35], [2.35, -3.1]], cx - 1.75, cy + .05, [1, 1], "S", false);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("butt");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("miter");
+	doc.setDrawColor(0, 0, 0);
+}
+function rceDrawCross(doc, cx, cy) {
+	doc.setDrawColor(210, 28, 28);
+	doc.setLineWidth(.75);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("round");
+	doc.line(cx - 1.35, cy - 1.35, cx + 1.35, cy + 1.35);
+	doc.line(cx - 1.35, cy + 1.35, cx + 1.35, cy - 1.35);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("butt");
+	doc.setDrawColor(0, 0, 0);
 }
 function exportRceToPDF(rce = {}, hostDoc) {
 	const doc = hostDoc || new jsPDF({
@@ -1036,34 +1377,87 @@ function exportRceToPDF(rce = {}, hostDoc) {
 	const pageH = doc.internal.pageSize.getHeight();
 	const m = 10;
 	const innerW = pageW - 20;
+	const startPage = doc.getCurrentPageInfo?.().pageNumber || doc.getNumberOfPages();
+	const fontName = doc.getFont()?.fontName || "helvetica";
+	const fontStyles = (typeof doc.getFontList === "function" ? doc.getFontList()[fontName] : null) || ["normal", "bold", "italic"];
+	const italicStyle = fontStyles.includes("italic") ? "italic" : "normal";
+	doc.setDrawColor(0, 0, 0);
+	doc.setTextColor(0, 0, 0);
 	doc.setLineWidth(.5);
 	doc.rect(m, m, innerW, pageH - 20);
-	let y = 14;
-	const logo = rce.companyLogo;
-	if (logo) try {
-		doc.addImage(logo, logoFormat(logo), 14, y, 42, 14);
-	} catch {
-		doc.setFontSize(11);
-		doc.setFont(void 0, "bold");
-		doc.text("LOGO", 16, y + 9);
-	}
-	else {
-		doc.setFontSize(11);
-		doc.setFont(void 0, "bold");
-		doc.text("LOGO", 16, y + 9);
-	}
-	y += 18;
+	// ---- Header: logo (fills its box) + document control block (upper right) ----
+	const headH = 22;
+	const dcLabelW = 27;
+	const dcValueW = 31;
+	const dcX = pageW - m - dcLabelW - dcValueW;
+	const dcRowH = headH / 4;
+	const dcCfg = { ...RCE_DOC_CONTROL, ...(rce.docControl || {}) };
 	doc.setLineWidth(.3);
+	doc.line(dcX, m, dcX, m + headH);
+	doc.line(dcX + dcLabelW, m, dcX + dcLabelW, m + dcRowH * 3);
+	for (let i = 1; i < 4; i += 1) doc.line(dcX, m + dcRowH * i, pageW - m, m + dcRowH * i);
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(7.5);
+	[
+		["Doc. Control No.:", dcCfg.docControlNo],
+		["Revision No.:", dcCfg.revisionNo],
+		["Revision Date:", dcCfg.revisionDate]
+	].forEach(([label, value], i) => {
+		const ty = m + dcRowH * i + dcRowH / 2 + 1;
+		doc.text(label, dcX + 1.5, ty);
+		doc.text(String(value || ""), dcX + dcLabelW + 1.5, ty);
+	});
+	const pageRowY = m + dcRowH * 3 + dcRowH / 2 + 1;
+	const logoBoxW = 42; // same logo cell as the CE header
+	const logo = rce.companyLogo;
+	const pad = 1.2;
+	const boxW = logoBoxW - pad * 2;
+	const boxH = headH - pad * 2;
+	let drewLogo = false;
+	if (logo) try {
+		let drawW = boxW;
+		let drawH = boxH;
+		try {
+			const props = doc.getImageProperties(logo);
+			const ratio = props.width && props.height ? props.width / props.height : boxW / boxH;
+			if (boxW / boxH > ratio) drawW = boxH * ratio;
+			else drawH = boxW / ratio;
+		} catch { /* unknown size: use the whole box */ }
+		doc.addImage(logo, logoFormat(logo), m + pad + (boxW - drawW) / 2, m + pad + (boxH - drawH) / 2, drawW, drawH);
+		drewLogo = true;
+	} catch { /* fall through to the text placeholder */ }
+	if (!drewLogo) {
+		doc.setFontSize(11);
+		doc.setFont(void 0, "bold");
+		doc.text("LOGO", m + logoBoxW / 2, m + headH / 2 + 1.5, { align: "center" });
+	}
+	doc.setLineWidth(.3);
+	doc.line(m + logoBoxW, m, m + logoBoxW, m + headH);
+	let y = m + headH;
+	doc.setFillColor(173, 216, 230);
+	doc.rect(m, y, innerW, 11, "F");
 	doc.line(m, y, pageW - m, y);
-	y += 8;
+	y += 7;
 	doc.setFontSize(13);
 	doc.setFont(void 0, "bold");
 	doc.text("REQUEST FOR COSTING (RCE) CHECKLIST FORM", pageW / 2, y, { align: "center" });
-	y += 5;
+	y += 4;
 	doc.line(m, y, pageW - m, y);
-	const leftW = innerW * .58;
+	// ---- Info block: wide left values, compact right labels with values beside them ----
+	const leftW = Math.round(innerW * .665 * 10) / 10;
 	const rightX = m + leftW;
-	const rowH = 8;
+	const rightW = innerW - leftW;
+	const leftLabelW = 26;
+	const leftValX = m + leftLabelW + 1.5;
+	const leftValW = leftW - leftLabelW - 4;
+	const rLabelW = 25;
+	const rDivX = rightX + 1.8 + rLabelW + .6;
+	const rValX = rDivX + 1.6;
+	const rValW = rightX + rightW - rValX - 1.5;
+	const LBL = 7;
+	const LBL_LH = 2.9;
+	const VAL = 8;
+	const VAL_LH = 3.4;
 	const box = (x, yy, w, h) => {
 		doc.setLineWidth(.25);
 		doc.rect(x, yy, w, h);
@@ -1074,94 +1468,77 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		doc.setFont(void 0, "normal");
 		doc.text(label, x + 4.5, yy);
 	};
+	const wrap = (text, width, size, style) => {
+		doc.setFont(void 0, style);
+		doc.setFontSize(size);
+		return String(text || "").split("\n").flatMap((part) => doc.splitTextToSize(part, width));
+	};
+	const rightCell = (label, value) => ({ label: wrap(label, rLabelW, LBL, "bold"), value: wrap(value, rValW, VAL, "normal") });
+	const rightH = (cell) => Math.max(cell.label.length * LBL_LH, cell.value.length * VAL_LH);
+	const drawRight = (cell, rowY, rowH) => {
+		const top = rowY + (rowH - rightH(cell)) / 2 + 2.5;
+		doc.setFont(void 0, "bold");
+		doc.setFontSize(LBL);
+		doc.text(cell.label, rightX + 1.8, top, { lineHeightFactor: LBL_LH / (LBL * .3528) });
+		doc.setFont(void 0, "normal");
+		doc.setFontSize(VAL);
+		doc.text(cell.value, rValX, top + .1, { lineHeightFactor: VAL_LH / (VAL * .3528) });
+	};
+	const rows = [
+		{ kind: "project", right: rightCell("INQUIRY NUMBER & DATE:", [rce.inquiryNumber, rce.inquiryDate].filter(Boolean).join("\n")) },
+		{ kind: "text", label: "CUSTOMER:", value: rce.customer || rce.client || "", right: rightCell("RCE NO.:", rce.rceNo || rce.id || "") },
+		{ kind: "text", label: "ADDRESS:", value: rce.address || "", right: rightCell("RCE DATE:", rce.rceDate || "") },
+		{ kind: "text", label: "PROJECT TITLE:", value: rce.projectTitle || "", right: rightCell("PRIORITY LEVEL:", rce.priorityLevel || "") },
+		{ kind: "type", right: rightCell("CE DEADLINE:", rce.ceDeadline || "") },
+		{ kind: "dept", right: rightCell("SUBMISSION DEADLINE:", rce.submissionDeadline || "") }
+	];
 	let rowY = y;
-	box(m, rowY, leftW, rowH);
-	box(rightX, rowY, innerW - leftW, rowH);
-	drawCheck(13, rowY + 5.2, "NEW PROJECT", rce.projectType === "New Project");
-	drawCheck(52, rowY + 5.2, "EXISTING PROJECT", rce.projectType === "Existing Project");
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("INQUIRY NUMBER & DATE:", rightX + 2, rowY + 3.2);
-	doc.setFont(void 0, "normal");
-	doc.setFontSize(8);
-	doc.text(`${rce.inquiryNumber || ""}   ${rce.inquiryDate || ""}`, rightX + 2, rowY + 6.6);
-	[
-		[
-			"CUSTOMER:",
-			rce.customer || rce.client || "",
-			"RCE NO.:",
-			rce.rceNo || rce.id || ""
-		],
-		[
-			"ADDRESS:",
-			rce.address || "",
-			"RCE DATE:",
-			rce.rceDate || ""
-		],
-		[
-			"PROJECT TITLE:",
-			rce.projectTitle || "",
-			"PRIORITY LEVEL:",
-			rce.priorityLevel || ""
-		]
-	].forEach((row) => {
-		rowY += rowH;
+	rows.forEach((row) => {
+		const valueLines = row.kind === "text" ? wrap(row.value, leftValW, VAL, "normal") : [];
+		const rowH = Math.max(8, valueLines.length * VAL_LH + 3.4, rightH(row.right) + 3.2);
 		box(m, rowY, leftW, rowH);
-		box(rightX, rowY, innerW - leftW, rowH);
-		doc.setFontSize(7);
-		doc.setFont(void 0, "bold");
-		if (row[0]) doc.text(row[0], 12, rowY + 3);
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(8);
-		if (row[0]) doc.text(String(row[1] || ""), 42, rowY + 5.5, { maxWidth: leftW - 34 });
-		doc.setFontSize(7);
-		doc.setFont(void 0, "bold");
-		doc.text(row[2], rightX + 2, rowY + 3);
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(8);
-		doc.text(String(row[3] || ""), rightX + 2, rowY + 6.4);
+		box(rightX, rowY, rightW, rowH);
+		doc.line(rDivX, rowY, rDivX, rowY + rowH);
+		if (row.kind !== "project") doc.line(m + leftLabelW, rowY, m + leftLabelW, rowY + rowH);
+		const midY = rowY + rowH / 2;
+		if (row.kind === "project") {
+			drawCheck(13, midY + 1.2, "NEW PROJECT", rce.projectType === "New Project");
+			drawCheck(52, midY + 1.2, "EXISTING PROJECT", rce.projectType === "Existing Project");
+		} else {
+			doc.setFont(void 0, "bold");
+			doc.setFontSize(LBL);
+			doc.text(row.kind === "type" ? "PROJECT TYPE:" : row.kind === "dept" ? "DEPARTMENT:" : row.label, 12, midY + 1);
+			if (row.kind === "text") {
+				doc.setFont(void 0, "normal");
+				doc.setFontSize(VAL);
+				const top = midY - (valueLines.length * VAL_LH) / 2 + 2.5;
+				doc.text(valueLines, leftValX, top, { lineHeightFactor: VAL_LH / (VAL * .3528) });
+			} else if (row.kind === "type") {
+				drawCheck(leftValX, midY + 1.2, "SHOPWORK", !!rce.shopwork);
+				drawCheck(leftValX + 30, midY + 1.2, "ON-SITE", !!rce.onsite);
+				drawCheck(leftValX + 58, midY + 1.2, "TRADING", !!rce.trading);
+			} else {
+				drawCheck(leftValX, midY + 1.2, "MECHANICAL", !!rce.mechanical);
+				drawCheck(leftValX + 34, midY + 1.2, "ELECTRICAL", !!rce.electrical);
+			}
+		}
+		drawRight(row.right, rowY, rowH);
+		rowY += rowH;
 	});
-	rowY += rowH;
-	box(m, rowY, leftW, 10);
-	box(rightX, rowY, innerW - leftW, 10);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("PROJECT TYPE:", 12, rowY + 3.4);
-	drawCheck(38, rowY + 6.4, "SHOPWORK", !!rce.shopwork);
-	drawCheck(68, rowY + 6.4, "ON-SITE", !!rce.onsite);
-	drawCheck(96, rowY + 6.4, "TRADING", !!rce.trading);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("CE DEADLINE:", rightX + 2, rowY + 3.2);
-	doc.setFont(void 0, "normal");
-	doc.setFontSize(8);
-	doc.text(String(rce.ceDeadline || ""), rightX + 2, rowY + 6.8);
-	rowY += 10;
-	box(m, rowY, leftW, rowH);
-	box(rightX, rowY, innerW - leftW, rowH);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("DEPARTMENT:", 12, rowY + 3.2);
-	drawCheck(38, rowY + 5.6, "MECHANICAL", !!rce.mechanical);
-	drawCheck(72, rowY + 5.6, "ELECTRICAL", !!rce.electrical);
-	doc.setFontSize(7);
-	doc.setFont(void 0, "bold");
-	doc.text("SUBMISSION DEADLINE:", rightX + 2, rowY + 3.2);
-	doc.setFont(void 0, "normal");
-	doc.setFontSize(8);
-	doc.text(String(rce.submissionDeadline || ""), rightX + 2, rowY + 6.8);
-	rowY += 11;
+	rowY += 3.5;
 	doc.setFontSize(7.5);
-	doc.setFont(void 0, "italic");
+	doc.setFont(void 0, italicStyle);
 	doc.text("Note: Please kindly attach files Needed.", 12, rowY);
 	rowY += 2;
-	const body = (rce.checklistItems || []).map((it) => [
+	// ---- Checklist: green tick for YES / N/A, red X for NO, italic wrapped remarks ----
+	const items = rce.checklistItems || [];
+	const body = items.map((it) => [
 		it.num,
 		it.desc,
-		it.complete === "YES" ? "X" : "",
-		it.complete === "NO" ? "X" : "",
-		it.complete === "N/A" ? "X" : "",
-		it.remarks || ""
+		"",
+		"",
+		"",
+		it.remarks ? remarkPlain(it.remarks) : ""
 	]);
 	autoTable(doc, {
 		startY: rowY,
@@ -1180,56 +1557,40 @@ function exportRceToPDF(rce = {}, hostDoc) {
 		]],
 		body,
 		styles: {
-			font: doc.getFont()?.fontName || "helvetica",
+			font: fontName,
 			fontSize: 7.5,
 			cellPadding: 1.2,
+			minCellHeight: 5.6,
 			lineWidth: .25,
-			lineColor: [
-				0,
-				0,
-				0
-			],
-			textColor: [
-				0,
-				0,
-				0
-			],
-			valign: "middle"
+			lineColor: [0, 0, 0],
+			textColor: [0, 0, 0],
+			valign: "middle",
+			overflow: "linebreak"
 		},
 		headStyles: {
-			font: doc.getFont()?.fontName || "helvetica",
-			fillColor: [
-				240,
-				240,
-				240
-			],
-			textColor: [
-				0,
-				0,
-				0
-			],
+			font: fontName,
+			fillColor: [173, 216, 230],
+			textColor: [0, 0, 0],
 			fontStyle: "bold",
 			halign: "center"
 		},
 		columnStyles: {
-			0: {
-				cellWidth: 16,
-				halign: "center"
-			},
-			1: { cellWidth: 88 },
-			2: {
-				cellWidth: 12,
-				halign: "center"
-			},
-			3: {
-				cellWidth: 12,
-				halign: "center"
-			},
-			4: {
-				cellWidth: 12,
-				halign: "center"
-			},
-			5: { cellWidth: "auto" }
+			0: { cellWidth: 16, halign: "center" },
+			1: { cellWidth: 86 },
+			2: { cellWidth: 12, halign: "center" },
+			3: { cellWidth: 12, halign: "center" },
+			4: { cellWidth: 12, halign: "center" },
+			5: { cellWidth: "auto", fontStyle: italicStyle }
+		},
+		didDrawCell: (data) => {
+			if (data.section !== "body" || data.column.index < 2 || data.column.index > 4) return;
+			const mark = String(items[data.row.index]?.complete || "").toUpperCase();
+			const col = { YES: 2, NO: 3, "N/A": 4 }[mark];
+			if (col !== data.column.index) return;
+			const cx = data.cell.x + data.cell.width / 2;
+			const cy = data.cell.y + data.cell.height / 2;
+			if (mark === "NO") rceDrawCross(doc, cx, cy);
+			else rceDrawTick(doc, cx, cy);
 		}
 	});
 	let y2 = (doc.lastAutoTable?.finalY || rowY) + 4;
@@ -1238,63 +1599,50 @@ function exportRceToPDF(rce = {}, hostDoc) {
 	doc.setFontSize(8);
 	doc.setFont(void 0, "bold");
 	doc.text("OTHER REMARKS:", 12, y2 + 4);
-	doc.setFont(void 0, "normal");
+	const otherStyle = remarkFont(rce.otherRemarks);
+	doc.setFont(void 0, otherStyle.font);
+	if (otherStyle.color === "red") doc.setTextColor(180, 30, 30);
 	doc.setFontSize(8);
-	const remarks = doc.splitTextToSize(String(rce.otherRemarks || ""), innerW - 6);
+	const remarks = doc.splitTextToSize(remarkPlain(rce.otherRemarks), innerW - 6);
 	doc.text(remarks, 12, y2 + 8);
+	doc.setTextColor(0, 0, 0);
 	y2 += remarksH;
-	box(m, y2, innerW, remarksH);
+	// Top line only: no horizontal rule between this box and the signatories.
+	doc.setLineWidth(.25);
+	doc.line(m, y2, pageW - m, y2);
 	doc.setFont(void 0, "bold");
 	doc.text("REASON TO DECLINE / NO QUOTE:", 12, y2 + 4);
-	doc.setFont(void 0, "normal");
-	const decline = doc.splitTextToSize(String(rce.declineReason || ""), innerW - 6);
+	const declineStyle = remarkFont(rce.declineReason);
+	doc.setFont(void 0, declineStyle.font);
+	if (declineStyle.color === "red") doc.setTextColor(180, 30, 30);
+	const decline = doc.splitTextToSize(remarkPlain(rce.declineReason), innerW - 6);
 	doc.text(decline, 12, y2 + 8);
+	doc.setTextColor(0, 0, 0);
 	y2 += remarksH;
-	const sigW = innerW / 3;
-	const sigNames = [
-		rce.preparedBy,
-		rce.reviewedBy,
-		rce.approvedBy
-	];
-	const sigTitles = [
-		rce.preparedTitle,
-		rce.reviewedTitle,
-		rce.approvedTitle
-	];
-	const sigStamps = [
-		rce.preparedStamp,
-		rce.reviewedStamp,
-		rce.approvedStamp
-	];
-	const hasSigStamp = sigStamps.some(Boolean);
-	const sigH = hasSigStamp ? 20 : 16;
-	[
-		"Prepared by:",
-		"Reviewed by:",
-		"Approved by:"
-	].forEach((label, i) => {
-		box(m + i * sigW, y2, sigW, sigH);
-		doc.setFontSize(7);
-		doc.setFont(void 0, "bold");
-		doc.text(label, m + i * sigW + 2, y2 + 4);
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(8);
-		doc.text(String(sigNames[i] || ""), m + i * sigW + 2, y2 + (hasSigStamp ? 8.2 : 10));
-		if (!hasSigStamp) return;
-		if (sigTitles[i]) {
-			doc.setFontSize(6.5);
-			doc.text(String(sigTitles[i]), m + i * sigW + 2, y2 + 11.6);
-		}
-		if (sigStamps[i]) {
-			doc.setTextColor(155, 28, 28);
-			doc.setFont(void 0, "italic");
-			doc.setFontSize(6.5);
-			const stampLines = doc.splitTextToSize(String(sigStamps[i]), sigW - 5);
-			doc.text(stampLines.slice(0, 2), m + i * sigW + 2, y2 + 15);
-			doc.setTextColor(0, 0, 0);
-			doc.setFont(void 0, "normal");
-		}
-	});
+	// ---- Signatories: same drawing as the Cost Estimate; one outer box, no column dividers ----
+	const sigH = 25;
+	if (y2 + sigH > pageH - m) {
+		doc.addPage();
+		doc.setLineWidth(.5);
+		doc.rect(m, m, innerW, pageH - 20);
+		y2 = m + 4;
+	}
+	// No box: only the page border's left/right edges frame the signatories.
+	drawExportSigns(doc, [
+		{ label: "Prepared by:", name: rce.preparedBy, title: rce.preparedTitle, stamp: rce.preparedStamp },
+		{ label: "Reviewed by:", name: rce.reviewedBy, title: rce.reviewedTitle, stamp: rce.reviewedStamp },
+		{ label: "Approved by:", name: rce.approvedBy, title: rce.approvedTitle, stamp: rce.approvedStamp }
+	], y2 + 1, m, { cols: 3 });
+	// ---- PAGE X OF Y in the document control block (RCE pages only) ----
+	const endPage = doc.getNumberOfPages();
+	const total = endPage - startPage + 1;
+	doc.setPage(startPage);
+	doc.setTextColor(0, 0, 0);
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(7.5);
+	doc.text(`PAGE 1 OF ${total}`, dcX + (dcLabelW + dcValueW) / 2, pageRowY, { align: "center" });
+	doc.setPage(endPage);
+	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: rce.status, approvalStatus: rce.approval?.status })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`${rce.rceNo || rce.id || "RCE"}_Checklist.pdf`);
 	return doc;
 }
@@ -1397,11 +1745,12 @@ async function addNotePage(pdf, font, file) {
 		color: rgb(.4, .38, .32)
 	});
 }
-async function compileAttachmentsToPdf(files, title = "Compiled Attachments") {
+async function compileAttachmentsToPdf(files, title = "Compiled Attachments", edits = null, openPage = 0) {
+	const ordered = ceTpl7On === true ? applyAttachmentEdits(files, edits) : attachmentFilesInOrder(files);
 	const pdf = await PDFDocument.create();
 	const font = await pdf.embedFont(StandardFonts.Helvetica);
-	await addCoverPage(pdf, font, files, title);
-	for (const file of files) {
+	await addCoverPage(pdf, font, ordered, title);
+	for (const file of ordered) {
 		if (!file?.dataUrl) {
 			await addNotePage(pdf, font, file);
 			continue;
@@ -1448,6 +1797,11 @@ async function compileAttachmentsToPdf(files, title = "Compiled Attachments") {
 	const a = document.createElement("a");
 	const slug = String(title || "attachments").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 	a.href = url;
+	if (openPage > 0) {
+		window.open(`${url}#page=${openPage}`, "_blank", "noopener");
+		window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+		return;
+	}
 	a.download = `${slug || "compiled-attachments"}.pdf`;
 	document.body.appendChild(a);
 	a.click();
@@ -1509,7 +1863,7 @@ function rceProject(rce) {
 function rceClient(rce) {
 	return rce?.client || rce?.customer || "";
 }
-function NewCostEstimateWizard({ rceList = [], ceList = [], initialRce = null, currentUserName, users = [], officialPacks = [], documents = {}, inspectionReports = [], onCancel, onCreate }) {
+function NewCostEstimateWizard({ rceList = [], ceList = [], initialRce = null, currentUserName, users = [], officialPacks = [], documents = {}, inspectionReports = [], onCancel, onCreate, suffixesOn = false, initialSourceCeId = "" }) {
 	const [step, setStep] = useState(initialRce ? 2 : 1);
 	const [rceMode, setRceMode] = useState(initialRce ? "existing" : "existing");
 	const [form, setForm] = useState(() => {
@@ -1522,13 +1876,14 @@ function NewCostEstimateWizard({ rceList = [], ceList = [], initialRce = null, c
 			description: rce?.otherRemarks || rce?.description || ""
 		};
 	});
-	const [templateKind, setTemplateKind] = useState("standard");
+	const [templateKind, setTemplateKind] = useState(initialSourceCeId ? "previous" : "standard");
 	const [standardId, setStandardId] = useState("onsite");
 	const [prebuiltId, setPrebuiltId] = useState("pre-onsite");
-	const [previousCeId, setPreviousCeId] = useState("");
+	const [previousCeId, setPreviousCeId] = useState(initialSourceCeId || "");
 	const [stripNotes, setStripNotes] = useState(true);
 	const [stripAttachments, setStripAttachments] = useState(true);
 	const [seedOif, setSeedOif] = useState(true);
+	const [urgent, setUrgent] = useState(false);
 	const [packId, setPackId] = useState("");
 	const [assignedTo, setAssignedTo] = useState(currentUserName || "");
 	const selectedRce = (rceList || []).find((r) => rceLabel(r) === form.rceId);
@@ -1577,7 +1932,8 @@ function NewCostEstimateWizard({ rceList = [], ceList = [], initialRce = null, c
 			stripNotes: templateKind === "previous" ? stripNotes : false,
 			stripAttachments: templateKind === "previous" ? stripAttachments : false,
 			seedOif: !!oif && seedOif,
-			assignedTo: assignedTo || currentUserName || "Estimator A"
+			assignedTo: assignedTo || currentUserName || "Estimator A",
+			urgent: !!suffixesOn && urgent
 		});
 	}
 	const previousCEs = (ceList || []).filter((ce) => ce.status === "Done" || ce.status === "Awarded" || ce.archived === true);
@@ -1964,6 +2320,15 @@ function NewCostEstimateWizard({ rceList = [], ceList = [], initialRce = null, c
 									]
 								}) : null;
 							})(),
+							suffixesOn ? /* @__PURE__ */ jsxs("label", {
+								className: "ce-field-label",
+								style: { marginRight: "auto" },
+								children: [/* @__PURE__ */ jsx("input", {
+									type: "checkbox",
+									checked: urgent,
+									onChange: (e) => setUrgent(e.target.checked)
+								}), " Urgent — next number, RCE to follow"]
+							}) : null,
 							/* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-primary",
@@ -2118,7 +2483,7 @@ function SignaturePad({ value, onChange }) {
 		})]
 	});
 }
-function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "", checkTemplates = [], onCheckTemplatesChange }) {
+function InspectionFormView({ initial, onBack, onSave, currentUserName = "", priorReports = [], onSendToCe, actingLevel = "", checkTemplates = [], onCheckTemplatesChange, engineOn = false, rceList = [], ceList = [], onSubmitNoting = null, onDecideNoting = null, onStoreSignature = null }) {
 	const clients = useMasterlist().clients || [];
 	const roles = useMasterlist().BOL || [];
 	const materialsList = useMasterlist().BOCM || [];
@@ -2180,6 +2545,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		patch({
 			customerName: value,
 			customerAddress: match && match.address ? match.address : form.customerAddress || "",
+			clientAddress: match && match.address ? match.address : form.clientAddress || form.customerAddress || "",
 			contactNo: contact || form.contactNo || ""
 		});
 	}
@@ -2188,7 +2554,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		if (!String(form.customerName || "").trim()) misses.push("Customer is required.");
 		if (!String(form.projectDescription || "").trim()) misses.push("Project description is required.");
 		if (!form.date) misses.push("Date is required.");
-		if (!String(form.onsiteInspector || "").trim()) misses.push("Inspector is required.");
+		if (!String(form.onsiteInspector || currentUserName || "").trim()) misses.push("Inspector is required.");
 		const svc = form.serviceType || {};
 		if (!Object.entries(svc).some(([key, value]) => key !== "othersText" && value)) misses.push("Tick at least one service type.");
 		setOifErrors(misses);
@@ -2204,7 +2570,14 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 		try {
 			localStorage.removeItem(oifDraftKey(initial));
 		} catch {}
-		onSave(form, opts);
+		onSave({
+			...form,
+			dateInspected: form.dateInspected || form.date,
+			rceNo: form.rceNo || form.rfqNo || "",
+			clientAddress: form.clientAddress || form.customerAddress || "",
+			onsiteInspector: form.onsiteInspector || currentUserName || "",
+			inspectedBy: form.inspectedBy || form.onsiteInspector || currentUserName || ""
+		}, opts);
 	}
 	function copyFromLast() {
 		const tag = String(form.equipmentTag || "").trim().toLowerCase();
@@ -2296,7 +2669,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 			if (!saved?.form) return;
 			const fresh = !initial?.customerName && !initial?.projectDescription && !(initial?.checklist || []).length;
 			if (!fresh) return;
-			const { photos, inspectorSignature, ...textFields } = saved.form || {};
+			const { photos: _photos, inspectorSignature, ...textFields } = saved.form || {};
 			setForm((prev) => ({
 				...prev,
 				...textFields,
@@ -2376,17 +2749,37 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 					className: "ce-btn-ghost",
 					onClick: () => saveReport({ andNew: true }),
 					children: "Save & new for same client"
-				}), /* @__PURE__ */ jsx("button", {
+				}), templatesFromDocsOn === true ? /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: () => saveOifTemplateNow({ id: `oif-tpl-${Date.now()}`, name: form.projectDescription || "OIF template", snapshot: stripOifTemplate(form) }),
+					children: "Save as template"
+				}) : null, templatesFromDocsOn === true && oifTemplatesNow.length ? /* @__PURE__ */ jsx("button", {
 					type: "button",
 					className: "ce-btn-ghost",
 					onClick: () => {
+						const menu = templateChoices(oifTemplatesNow).map((row) => `${row.id} | ${row.name} | ${row.type || "OIF"} | ${row.date}`).join("\n");
+						const id = window.prompt(`Start from template. Type the id:\n${menu}`, "");
+						const picked = chosenTemplate(oifTemplatesNow, id);
+						if (picked?.snapshot) patch(picked.snapshot);
+					},
+					children: "Start from template"
+				}) : null, templatesFromDocsOn === true ? /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: () => onSave?.({ ...stripOifTemplate(form), id: "", oifNo: "" }),
+					children: "Duplicate as new"
+				}) : null, /* @__PURE__ */ jsx("button", {
+					type: "button",
+					className: "ce-btn-ghost",
+					onClick: async () => {
 						const hasPeople = (form.manpower || []).some((row) => String(row.designation || "").trim());
 						const hasMats = (form.materialRows || []).some((row) => String(row.description || "").trim());
 						if (!hasPeople && !hasMats) {
 							window.alert("Add a role or a material row first. The free-text material boxes stay on the report and are not sent as priced lines.");
 							return;
 						}
-						const id = onSendToCe?.(form);
+						const id = await onSendToCe?.(form);
 						if (id) {
 							patch({ ceId: id });
 							setDraftNote(`Lines added on ${id}`);
@@ -2413,17 +2806,35 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							style: { padding: "0.45rem 0.7rem" },
 							children: oifErrors.join(" ")
 						}) : null,
-						/* @__PURE__ */ jsxs("label", { children: ["DATE", /* @__PURE__ */ jsx("input", {
+						/* @__PURE__ */ jsxs("label", { children: ["DATE INSPECTED", /* @__PURE__ */ jsx("input", {
 							className: "ce-input" + (oifBad((m) => m.startsWith("Date")) ? " rce-invalid" : ""),
 							type: "date",
-							value: form.date,
-							onChange: (e) => patch({ date: e.target.value })
+							value: form.dateInspected || form.date,
+							onChange: (e) => patch({ date: e.target.value, dateInspected: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["OIF NO.", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
 							value: form.oifNo,
 							onChange: (e) => patch({ oifNo: e.target.value })
 						})] }),
+						engineOn ? /* @__PURE__ */ jsxs("label", { children: ["LINKED RCE", /* @__PURE__ */ jsx("select", {
+							className: "ce-input",
+							value: form.rceId || "",
+							onChange: (e) => patch({ rceId: e.target.value }),
+							children: [/* @__PURE__ */ jsx("option", { value: "", children: "—" }, "none"), ...(rceList || []).map((rce) => /* @__PURE__ */ jsx("option", {
+								value: rce.id || rce.rceNo,
+								children: rce.rceNo || rce.id
+							}, rce.id || rce.rceNo))]
+						})] }) : null,
+						engineOn ? /* @__PURE__ */ jsxs("label", { children: ["LINKED CE", /* @__PURE__ */ jsx("select", {
+							className: "ce-input",
+							value: form.ceId || "",
+							onChange: (e) => patch({ ceId: e.target.value }),
+							children: [/* @__PURE__ */ jsx("option", { value: "", children: "—" }, "none"), ...(ceList || []).map((ce) => /* @__PURE__ */ jsx("option", {
+								value: ce.id,
+								children: `${ce.id} · ${ce.status || "Draft"}`
+							}, ce.id))]
+						})] }) : null,
 						/* @__PURE__ */ jsxs("label", {
 							className: "oif-span2",
 							children: ["PROJECT DESCRIPTION", /* @__PURE__ */ jsx("input", {
@@ -2432,10 +2843,10 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 								onChange: (e) => patch({ projectDescription: e.target.value })
 							})]
 						}),
-						/* @__PURE__ */ jsxs("label", { children: ["RFQ NO.", /* @__PURE__ */ jsx("input", {
+						/* @__PURE__ */ jsxs("label", { children: ["RCE NO.", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
-							value: form.rfqNo,
-							onChange: (e) => patch({ rfqNo: e.target.value })
+							value: form.rceNo || form.rfqNo || "",
+							onChange: (e) => patch({ rceNo: e.target.value, rfqNo: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CUSTOMER NAME", /* @__PURE__ */ jsx("input", {
 							className: "ce-input" + (oifBad((m) => m.startsWith("Customer")) ? " rce-invalid" : ""),
@@ -2449,10 +2860,10 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 								children: [c.clientCode, c.fullName].filter(Boolean).join(" — ")
 							}, c.id))
 						})] }),
-						/* @__PURE__ */ jsxs("label", { children: ["ADDRESS", /* @__PURE__ */ jsx("input", {
+						/* @__PURE__ */ jsxs("label", { children: ["CLIENT ADDRESS", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
-							value: form.customerAddress || "",
-							onChange: (e) => patch({ customerAddress: e.target.value })
+							value: form.clientAddress || form.customerAddress || "",
+							onChange: (e) => patch({ clientAddress: e.target.value, customerAddress: e.target.value })
 						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["EQUIPMENT TYPE", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
@@ -2481,11 +2892,6 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 							value: form.customerRep,
 							onChange: (e) => patch({ customerRep: e.target.value })
 						})] }),
-						/* @__PURE__ */ jsxs("label", { children: ["ONSITE INSPECTOR", /* @__PURE__ */ jsx("input", {
-							className: "ce-input" + (oifBad((m) => m.startsWith("Inspector")) ? " rce-invalid" : ""),
-							value: form.onsiteInspector,
-							onChange: (e) => patch({ onsiteInspector: e.target.value })
-						})] }),
 						/* @__PURE__ */ jsxs("label", { children: ["CONTACT NO.", /* @__PURE__ */ jsx("input", {
 							className: "ce-input",
 							value: form.contactNo,
@@ -2493,66 +2899,11 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						})] })
 					]
 				}),
-				/* @__PURE__ */ jsx("div", {
-					className: "oif-banner",
-					children: "A. PHOTOS"
-				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "oif-photos",
-					children: [
-						/* @__PURE__ */ jsx("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: () => photoRef.current?.click(),
-							children: "Upload photos"
-						}),
-						/* @__PURE__ */ jsx("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: () => cameraRef.current?.click(),
-							children: "Take photo"
-						}),
-						/* @__PURE__ */ jsx("input", {
-							ref: photoRef,
-							type: "file",
-							accept: "image/*",
-							multiple: true,
-							hidden: true,
-							onChange: addPhotos
-						}),
-						/* @__PURE__ */ jsx("input", {
-							ref: cameraRef,
-							type: "file",
-							accept: "image/*",
-							capture: "environment",
-							hidden: true,
-							onChange: addPhotos
-						}),
-						/* @__PURE__ */ jsx("div", {
-							className: "oif-photo-grid",
-							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
-								className: "oif-photo",
-								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
-									src: p.dataUrl,
-									alt: p.caption || p.name
-								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
-									className: "ce-input oif-caption",
-									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
-									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
-								}), /* @__PURE__ */ jsx("button", {
-									type: "button",
-									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
-									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
-								})]
-							}, p.id))
-						})
-					]
-				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
 					children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("div", {
 						className: "oif-banner",
-						children: "B. SCOPE OF WORK"
+						children: "A. JOB TYPE"
 					}), /* @__PURE__ */ jsxs("div", {
 						className: "oif-block",
 						children: [
@@ -2620,7 +2971,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						]
 					})] }), /* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("div", {
 						className: "oif-banner",
-						children: "C. WORKPIECE MEASUREMENTS"
+						children: "B. WORK PIECE MEASUREMENT"
 					}), /* @__PURE__ */ jsxs("div", {
 						className: "oif-block oif-meas",
 						children: [
@@ -2740,72 +3091,7 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 				}),
 				/* @__PURE__ */ jsx("div", {
 					className: "oif-banner",
-					children: "D. ONSITE ACTIVITY"
-				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "oif-block",
-					children: [
-						/* @__PURE__ */ jsxs("label", { children: ["A. Estimated project duration", /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
-							value: form.duration,
-							onChange: (e) => patch({ duration: e.target.value }),
-							placeholder: "e.g. 12 days"
-						})] }),
-						/* @__PURE__ */ jsxs("table", {
-							className: "ce-table",
-							style: { marginTop: "0.6rem" },
-							children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
-								/* @__PURE__ */ jsx("th", { children: "Manpower designation" }),
-								/* @__PURE__ */ jsx("th", { children: "No. of pax" }),
-								/* @__PURE__ */ jsx("th", { children: "Manpower designation" }),
-								/* @__PURE__ */ jsx("th", { children: "No. of pax" })
-							] }) }), /* @__PURE__ */ jsx("tbody", { children: Array.from({ length: Math.ceil(form.manpower.length / 2) }).map((_, i) => {
-								const a = form.manpower[i * 2];
-								const b = form.manpower[i * 2 + 1];
-								return /* @__PURE__ */ jsxs("tr", { children: [
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
-										category: "BOL",
-										list: roles,
-										value: a.designation,
-										placeholder: "Role or free text",
-										inputClass: "ce-input",
-										onChange: (value) => updateManpower(a.id, "designation", value)
-									}) }),
-									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										inputMode: "decimal",
-										value: a.pax,
-										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
-									}) }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
-										category: "BOL",
-										list: roles,
-										value: b.designation,
-										placeholder: "Role or free text",
-										inputClass: "ce-input",
-										onChange: (value) => updateManpower(b.id, "designation", value)
-									}) : null }),
-									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx("input", {
-										className: "ce-input",
-										inputMode: "decimal",
-										value: b.pax,
-										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
-									}) : null })
-								] }, a.id);
-							}) })]
-						}),
-						/* @__PURE__ */ jsxs("button", {
-							type: "button",
-							className: "ce-btn-ghost ce-btn-sm",
-							onClick: addManpower,
-							style: { marginTop: "0.5rem" },
-							children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manpower row"]
-						})
-					]
-				}),
-				/* @__PURE__ */ jsx("div", {
-					className: "oif-banner",
-					children: "E. SCOPE OF WORK"
+					children: "C. SCOPE OF WORK"
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
@@ -2823,18 +3109,26 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 				}),
 				/* @__PURE__ */ jsx("div", {
 					className: "oif-banner",
-					children: "F. ESTIMATED MATERIALS, CONSUMABLES, TOOLS AND EQUIPMENT"
+					children: "D. MATERIALS · E. CONSUMABLES · F. TOOLS AND EQUIPMENT"
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-split",
 					children: [/* @__PURE__ */ jsx("textarea", {
 						className: "ce-input ce-notes-box",
-						rows: 10,
+						rows: 8,
+						placeholder: "D. Materials",
 						value: form.materialsLeft,
 						onChange: (e) => patch({ materialsLeft: e.target.value })
 					}), /* @__PURE__ */ jsx("textarea", {
 						className: "ce-input ce-notes-box",
-						rows: 10,
+						rows: 8,
+						placeholder: "E. Consumables",
+						value: form.consumablesText || "",
+						onChange: (e) => patch({ consumablesText: e.target.value })
+					}), /* @__PURE__ */ jsx("textarea", {
+						className: "ce-input ce-notes-box",
+						rows: 8,
+						placeholder: "F. Tools and equipment",
 						value: form.materialsRight,
 						onChange: (e) => patch({ materialsRight: e.target.value })
 					})]
@@ -2922,6 +3216,142 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						})]
 					}, row.id))]
 				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "G. ACTIVITY DURATION WITH MANPOWER"
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-block",
+					children: [
+						/* @__PURE__ */ jsxs("label", { children: ["A. Estimated project duration", /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							value: form.duration,
+							onChange: (e) => patch({ duration: e.target.value }),
+							placeholder: "e.g. 12 days"
+						})] }),
+						/* @__PURE__ */ jsxs("table", {
+							className: "ce-table",
+							style: { marginTop: "0.6rem" },
+							children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+								/* @__PURE__ */ jsx("th", { children: "Designation" }),
+								/* @__PURE__ */ jsx("th", { children: "No. of Persons" }),
+								/* @__PURE__ */ jsx("th", { children: "Designation" }),
+								/* @__PURE__ */ jsx("th", { children: "No. of Persons" })
+							] }) }), /* @__PURE__ */ jsx("tbody", { children: Array.from({ length: Math.ceil(form.manpower.length / 2) }).map((_, i) => {
+								const a = form.manpower[i * 2];
+								const b = form.manpower[i * 2 + 1];
+								return /* @__PURE__ */ jsxs("tr", { children: [
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
+										value: a.designation,
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(a.id, "designation", value)
+									}) }),
+									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										inputMode: "decimal",
+										placeholder: "Persons",
+										value: a.pax,
+										onChange: (e) => updateManpower(a.id, "pax", e.target.value)
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										placeholder: "Days / hours",
+										value: a.days || "",
+										onChange: (e) => updateManpower(a.id, "days", e.target.value)
+									})] }) }),
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsx(LineNamePicker, {
+										category: "BOL",
+										list: roles,
+										value: b.designation,
+										placeholder: "Role or free text",
+										inputClass: "ce-input",
+										onChange: (value) => updateManpower(b.id, "designation", value)
+									}) : null }),
+									/* @__PURE__ */ jsx("td", { children: b ? /* @__PURE__ */ jsxs("span", { className: "oif-inline", children: [/* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										inputMode: "decimal",
+										placeholder: "Persons",
+										value: b.pax,
+										onChange: (e) => updateManpower(b.id, "pax", e.target.value)
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										placeholder: "Days / hours",
+										value: b.days || "",
+										onChange: (e) => updateManpower(b.id, "days", e.target.value)
+									})] }) : null })
+								] }, a.id);
+							}) })]
+						}),
+						/* @__PURE__ */ jsxs("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: addManpower,
+							style: { marginTop: "0.5rem" },
+							children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Add manpower row"]
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "H. PHOTOS"
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "oif-photos",
+					children: [
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => photoRef.current?.click(),
+							children: "Upload photos"
+						}),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => cameraRef.current?.click(),
+							children: "Take photo"
+						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: photoRef,
+							type: "file",
+							accept: "image/*",
+							multiple: true,
+							hidden: true,
+							onChange: addPhotos
+						}),
+						/* @__PURE__ */ jsx("input", {
+							ref: cameraRef,
+							type: "file",
+							accept: "image/*",
+							capture: "environment",
+							hidden: true,
+							onChange: addPhotos
+						}),
+						/* @__PURE__ */ jsx("div", {
+							className: "oif-photo-grid",
+							children: (form.photos || []).map((p, photoIndex) => /* @__PURE__ */ jsxs("div", {
+								className: "oif-photo",
+								children: [p.dataUrl ? /* @__PURE__ */ jsx("img", {
+									src: p.dataUrl,
+									alt: p.caption || p.name
+								}) : /* @__PURE__ */ jsx("span", { children: p.name }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input oif-caption",
+									value: p.caption || `Photo ${photoIndex + 1} – Photos`,
+									onChange: (e) => patch({ photos: (form.photos || []).map((row) => row.id === p.id ? { ...row, caption: e.target.value } : row) })
+								}), /* @__PURE__ */ jsx("button", {
+									type: "button",
+									onClick: () => patch({ photos: form.photos.filter((x) => x.id !== p.id) }),
+									children: /* @__PURE__ */ jsx(Trash2, { size: 12 })
+								})]
+							}, p.id))
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("div", {
+					className: "oif-banner",
+					children: "I. REMARKS AND NOTES"
+				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "oif-block",
 					children: [/* @__PURE__ */ jsxs("div", {
@@ -2942,11 +3372,92 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 						onChange: (e) => patch({ remarks: e.target.value })
 					}), /* @__PURE__ */ jsx("span", {
 						className: "ce-field-label",
+						children: "Notes"
+					}), /* @__PURE__ */ jsx("textarea", {
+						className: "ce-input ce-notes-box",
+						rows: 3,
+						placeholder: "One note per line",
+						value: Array.isArray(form.notes) ? form.notes.join("\n") : form.notes || "",
+						onChange: (e) => patch({ notes: e.target.value })
+					}), /* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
+						children: "Signatories"
+					}), /* @__PURE__ */ jsx("div", {
+						className: "oif-meas-row",
+						children: [
+							["preparedBy", "Prepared"],
+							["inspectedBy", "Inspected"],
+							["reviewedBy", "Reviewed"],
+							["checkedBy", "Checked"],
+							["notedBy", "Noted"],
+							["approvedBy", "Approved"]
+						].map(([key, label]) => /* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: label,
+							value: form[key] || "",
+							onChange: (e) => patch({ [key]: e.target.value })
+						}, key))
+					}), /* @__PURE__ */ jsx("span", {
+						className: "ce-field-label",
 						children: "Inspector signature"
 					}), /* @__PURE__ */ jsx(SignaturePad, {
 						value: form.inspectorSignature || "",
 						onChange: (inspectorSignature) => patch({ inspectorSignature })
-					})]
+					}), engineOn ? /* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: async () => {
+								if (!String(form.inspectorSignature || "").startsWith("data:image/png")) {
+									window.alert("Draw the signature first.");
+									return;
+								}
+								const saved = await onStoreSignature?.(form.inspectorSignature);
+								window.alert(saved?.stored ? "Signature image saved." : saved?.path ? "Kept for this session. Storage is not available, so a later export uses the script signature." : saved?.message || "The signature image could not be stored. The script signature will be used on exports.");
+							},
+							children: "Save as my signature"
+						}), /* @__PURE__ */ jsx("span", {
+							className: "wiz-hint",
+							children: "Prepared by the inspector, then noted by the lead."
+						})]
+					}) : null, engineOn ? /* @__PURE__ */ jsxs("div", {
+						className: "oif-inline",
+						children: [form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-primary ce-btn-sm",
+							onClick: () => {
+								const result = onDecideNoting?.(form, "approve", "");
+								if (!result?.ok) return;
+								patch({ status: result.nextStatus || "Noted", approval: result.approval });
+							},
+							children: "Noted"
+						}) : null, form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => {
+								void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+									if (!asked.ok) return;
+									const result = onDecideNoting?.(form, "request-edit", asked.text);
+									if (!result?.ok) return;
+									patch({ status: result.nextStatus || "For revision", approval: result.approval });
+								});
+							},
+							children: "Request edit"
+						}) : null, form.approval?.status === "in-progress" && actorCanDecide(form.approval, { actor: currentUserName, level: actingLevel }) ? null : form.approval?.status !== "in-progress" && form.status !== "Noted" ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-primary ce-btn-sm",
+							onClick: () => {
+								const result = onSubmitNoting?.(form);
+								if (!result?.ok) return;
+								patch({ status: "For approval", approval: result.approval });
+							},
+							children: "Submit for noting"
+						}) : /* @__PURE__ */ jsx("span", {
+							className: "wiz-hint",
+							children: "Waiting for Noted by."
+						})]
+					}) : null]
 				})
 			]
 		})]
@@ -2955,42 +3466,25 @@ function InspectionFormView({ initial, onBack, onSave, currentUserName = "", pri
 function ElCalculatorView(props) {
 	return React.createElement(ElCalculatorView$1, props);
 }
-function nextDocNo(prefix, list, field) {
-	const year = (/* @__PURE__ */ new Date()).getFullYear();
-	const re = new RegExp(`(?:^|\\b)${prefix}-${year}-(\\d+)`, "i");
-	let max = 0;
-	const consider = (raw) => {
-		const m = String(raw || "").trim().match(re);
-		if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
-	};
-	(list || []).forEach((item) => {
-		if (item == null) return;
-		if (typeof item === "string") {
-			consider(item);
-			return;
-		}
-		consider(field ? item?.[field] : "");
-		consider(item?.id);
-		consider(item?.rceNo);
-		consider(item?.oifNo);
-		consider(item?.ceNo);
-		consider(item?.ceNumber);
-		consider(item?.docNo);
-		consider(item?.projectInfo?.docNo);
-	});
-	return `${prefix}-${year}-${String(max + 1).padStart(3, "0")}`;
-}
-function ceNumberSources(list, documents) {
-	const extra = [];
-	const docs = documents && typeof documents === "object" ? documents : {};
-	Object.entries(docs).forEach(([key, doc]) => {
-		extra.push(key);
-		if (doc && typeof doc === "object") {
-			extra.push(doc.projectInfo?.docNo);
-			extra.push(doc.docNo);
-		}
-	});
-	return [...list || [], ...extra];
+async function takeDocNo(kind, company) {
+	if (typeof navigator !== "undefined" && navigator.onLine === false) {
+		throw new Error(DOC_NUMBER_RETRY);
+	}
+	const claimKind = kind === "oif" ? "inspection" : kind;
+	const result = await allocateUntilFree(
+		() => issueDocNo(() => allocateDocNumber(kind, company || "", phYear())),
+		async (number) => {
+			try {
+				return await claimUserDocNo(claimKind, number, number);
+			} catch (err) {
+				if (isDocNumberClash(err)) throw err;
+				throw new Error(DOC_NUMBER_RETRY);
+			}
+		},
+		{ tries: 8 }
+	);
+	if (result.ok && result.number) return result.number;
+	throw new Error(result.message || DOC_NUMBER_RETRY);
 }
 function companyDesignationName(companyKey, documentControl) {
 	const dc = documentControl || {};
@@ -3016,32 +3510,12 @@ function composedCeNumber(raw, companyKey, documentControl) {
 	if (!plain) return id;
 	return `CE-${code}-${plain[1]}-${String(plain[2]).padStart(3, "0")}`;
 }
-function nextCeNoForCompany(companyKey, ceList, documents, rceList, documentControl) {
-	const code = companyCodeFromDesignation(companyKey, documentControl);
-	if (!code) return nextDocNo("CE", ceNumberSources(ceList, documents));
-	const year = (/* @__PURE__ */ new Date()).getFullYear();
-	const reCoded = new RegExp(`^CE-${code}-${year}-(\\d+)$`, "i");
-	const rePlain = new RegExp(`^CE-${year}-(\\d+)$`, "i");
-	let max = 0;
-	const take = (raw, countPlain) => {
-		const s = String(raw || "").trim();
-		const coded = s.match(reCoded);
-		if (coded) max = Math.max(max, parseInt(coded[1], 10) || 0);
-		else if (countPlain) {
-			const plain = s.match(rePlain);
-			if (plain) max = Math.max(max, parseInt(plain[1], 10) || 0);
-		}
-	};
-	(ceList || []).forEach((ce) => {
-		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === (ce?.rceId || ce?.rceNo));
-		const mine = (rce?.company || "") === companyKey;
-		take(ce?.id, mine);
-		take(ce?.docNo, mine);
-		const doc = documents?.[ce?.id];
-		take(doc?.projectInfo?.docNo, mine);
-		take(doc?.docNo, mine);
+function ceIsSealed(status, doc) {
+	const values = [status, doc?.ceStatus, doc?.status, doc?.approval?.status];
+	return values.some((value) => {
+		const key = String(value || "").trim().toLowerCase();
+		return key === "for approval" || key === "done" || key === "accepted" || key.startsWith("pending ") && key.endsWith(" approval");
 	});
-	return `CE-${code}-${year}-${String(max + 1).padStart(3, "0")}`;
 }
 function shortPersonName(name) {
 	const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -3069,26 +3543,33 @@ function estimatorInitials(name, users) {
 	return letters.join("").toUpperCase();
 }
 function salesMembers(users) {
-	return (users || []).filter((user) => /sales/i.test(`${user?.department || ""} ${user?.designation || ""}`) && String(user?.status || "active").toLowerCase() !== "inactive");
+	return (users || []).filter((user) => String(user?.status || "active").toLowerCase() !== "inactive" && isSales(user, release1DepartmentsOn));
 }
 function costingMembers(users) {
-	return (users || []).filter((user) => {
-		if (String(user?.status || "active").toLowerCase() === "inactive") return false;
-		const blob = `${user?.department || ""} ${user?.designation || ""}`;
-		if (/sales/i.test(blob)) return false;
-		return /cost/i.test(blob) || /estimat/i.test(blob);
-	});
+	return (users || []).filter((user) => String(user?.status || "active").toLowerCase() !== "inactive" && isCostEstimating(user, release1DepartmentsOn));
 }
 function ceAmountLabel(doc) {
 	const tasks = doc?.tasks;
 	if (!Array.isArray(tasks) || !tasks.length) return "—";
-	return fmt(projectTotal(tasks));
+	return fmt(projectTotal(tasks, doc?.pricing, doc?.mobSheets));
 }
-function userMayReviseEstimate(users, name, level) {
+function combinedLabelFor(id, list, docs) {
+	if (!id) return "";
+	const key = familyKey(id);
+	const rows = (list || []).filter((ce) => familyKey(ce.id) === key).map((ce) => ({
+		id: ce.id,
+		amount: ceAmountLabel(docs?.[ce.id]),
+		status: ce.status,
+		awardStatus: docs?.[ce.id]?.awardStatus || ce.awardStatus || ""
+	}));
+	if (!rows.some((row) => parseCeNumber(row.id).addendum)) return "";
+	return fmt(combinedTotal(rows));
+}
+function userMayReviseEstimate(users, name, level, userId) {
 	const lvl = String(level || "").toLowerCase();
 	if (lvl === "lead" || lvl === "head" || lvl === "admin") return true;
-	const user = (users || []).find((u) => String(u?.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
-	return /sales/i.test(`${user?.department || ""} ${user?.designation || ""}`);
+	const user = findAccount(users, { userId, name, flagOn: release1DepartmentsOn });
+	return isSales(user, release1DepartmentsOn);
 }
 function ceFullySigned(doc) {
 	const approval = doc?.approval;
@@ -3097,7 +3578,7 @@ function ceFullySigned(doc) {
 	return steps.every((step) => {
 		if (!String(step?.by || "").trim()) return false;
 		const decision = String(step.decision || "").toLowerCase();
-		return decision === "accept" || decision === "accepted" || decision === "approved" || decision === "prepared";
+		return decision === "accept" || decision === "accepted" || decision === "approved" || decision === "prepared" || decision === "approve" || decision === "approve-comment";
 	});
 }
 function monIsNonActive(status) {
@@ -3185,7 +3666,10 @@ function freezeCeSnapshot(doc, extra) {
 		summaryOverrides: doc?.summaryOverrides || {},
 		summaryIncludes: doc?.summaryIncludes || [],
 		thirdPartyShow: doc?.thirdPartyShow || { mode: "off", keys: [] },
+		pricing: doc?.pricing,
 		sowText: doc?.sowText || "",
+		sow: Array.isArray(doc?.sow) ? JSON.parse(JSON.stringify(doc.sow)) : [],
+		...(doc?.schedule && typeof doc.schedule === "object" ? { schedule: JSON.parse(JSON.stringify(doc.schedule)) } : {}),
 		fileAttachments: (() => {
 			try {
 				return JSON.parse(JSON.stringify(doc?.fileAttachments || {}));
@@ -3214,7 +3698,7 @@ function monHistoryEntries(members) {
 				at: ev?.at || "",
 				label: action,
 				detail: [ev?.rev ? `Rev ${ev.rev}` : "", ev?.remarks || ""].filter(Boolean).join(" · "),
-				who: ev?.who || "",
+				who: ev?.whoName || ev?.who || "",
 				rev: ev?.rev || ""
 			});
 		});
@@ -3246,6 +3730,7 @@ function monExportSource(raw) {
 		summaryOverrides: raw?.summaryOverrides || {},
 		summaryIncludes: raw?.summaryIncludes || [],
 		thirdPartyShow: raw?.thirdPartyShow || { mode: "off", keys: [] },
+		pricing: raw?.pricing,
 		sowText: raw?.sowText || ""
 	};
 }
@@ -3264,56 +3749,17 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		columns: ["Scope of Work"],
 		rows: sowLines.map((line) => [line])
 	});
-	const bolSheet = buildBolExportSection(tasks, noteTexts(notes.BOL));
+	const bolSheet = buildBolExportSection(tasks, noteTexts(notes.BOL), src.pricing);
 	if (bolSheet) sections.push(bolSheet);
-	const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(notes.BOTE));
+	const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(notes.BOTE), src.pricing);
 	if (boteSheet) sections.push(boteSheet);
-	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM));
+	const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(notes.BOCM), src.pricing);
 	if (bocmSheet) sections.push(bocmSheet);
-	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "Bill of Personal Protective Equipment", noteTexts(notes.PPE));
+	const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(notes.PPE), src.pricing);
 	if (ppeSheet) sections.push(ppeSheet);
-	const miscColumns = ["Work type", "Section", "Item No.", "Description", "QTY", "Days", "Unit cost", "Subtotal"];
-	const miscBlocks = [];
-	const miscRows = [];
-	const miscMeta = [];
-	let miscGrand = 0;
-	WORK_TYPES.forEach((w) => {
-		const part = [];
-		tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((st) => (st.items.MISC || []).forEach((it, i) => {
-			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
-			part.push([w.label, it.section || "", i + 1, it.description, it.qty, it.days || 1, fmt(it.unitCost), fmt(itemSubtotal("MISC", it))]);
-		})));
-		if (!part.length) return;
-		const partTotal = roundMoney(tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
-			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return s3;
-			return s3 + itemSubtotal("MISC", it);
-		}, 0), 0), 0));
-		miscGrand = roundMoney(miscGrand + partTotal);
-		miscBlocks.push({
-			banner: `${w.letter}. ${w.full}`,
-			bannerFill: BOL_LIGHT_BLUE,
-			columns: miscColumns,
-			rows: part,
-			rowMeta: part.map(() => ({ kind: "line" })),
-			headFill: BOL_LIGHT_BLUE
-		});
-		const sub = Array(miscColumns.length).fill("");
-		sub[0] = `Subtotal — ${w.label}`;
-		sub[miscColumns.length - 1] = fmt(partTotal);
-		miscBlocks.push({ columns: miscColumns, rows: [sub], rowMeta: [{ kind: "total" }], hideHead: true, totalFill: BOL_LIGHT_BLUE, gapAfter: 10 });
-		miscRows.push(...part, sub);
-		miscMeta.push(...part.map(() => ({ kind: "line" })), { kind: "total" });
-	});
-	if (miscBlocks.length) {
-		const total = Array(miscColumns.length).fill("");
-		total[0] = "GRAND TOTAL";
-		total[miscColumns.length - 1] = fmt(miscGrand);
-		miscBlocks.push({ columns: miscColumns, rows: [total], rowMeta: [{ kind: "total" }], hideHead: true, totalFill: BOL_LIGHT_BLUE });
-		miscRows.push(total);
-		miscMeta.push({ kind: "total" });
-		sections.push({ title: "MISC", exportTitle: "MISCELLANEOUS", columns: miscColumns, rows: miscRows, rowMeta: miscMeta, blocks: miscBlocks, notes: noteTexts(notes.MISC) });
-	}
-	const onsiteTasks = tasksOfType(tasks, "onsite");
+	const miscSheet = buildMiscExportSection(tasks, src.pricing, noteTexts(notes.MISC));
+	if (miscSheet) sections.push(miscSheet);
+		const onsiteTasks = tasksOfType(tasks, "onsite");
 	const supplyTasks = [...tasksOfType(tasks, "shop"), ...tasksOfType(tasks, "trading")];
 	if (onsiteTasks.length) {
 		sections.push(buildMobExportSection("Mobilization", onsiteTasks, null, noteTexts(notes.MOB), []));
@@ -3323,15 +3769,20 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		sections.push(buildMobExportSection("Pickup", supplyTasks, null, noteTexts(notes.PICKUP), []));
 		sections.push(buildMobExportSection("Delivery", supplyTasks, null, noteTexts(notes.DELIVERY), []));
 	}
-	const official = buildOfficialBaseRows(tasks);
-	const shown = (line) => {
-		const raw = src.summaryOverrides?.[line.key];
-		if (raw === void 0 || raw === "") return num2(line.computed);
-		return num2(raw);
-	};
+	const official = buildOfficialBaseRows(tasks, src.pricing, {
+		mobilization: sections.find((s) => s.title === "Mobilization")?.sheetTotal || 0,
+		demobilization: sections.find((s) => s.title === "Demobilization")?.sheetTotal || 0
+	});
+	const shown = (line) => shownOfficialAmount(line, src.summaryOverrides, src.pricing);
 	const bodyParts = official.rows.filter((line) => ["A", "B", "C", "D"].includes(line.key)).reduce((sum, line) => sum + shown(line), 0);
-	const miscParts = official.rows.filter((line) => line.sub && !line.breakdown).reduce((sum, line) => sum + shown(line), 0);
-	const bodySum = bodyParts + miscParts;
+	const benefitLine = official.rows.find((line) => line.key === "A1");
+	const benefitParts = benefitLine ? shown(benefitLine) : 0;
+	const miscParts = official.rows.filter((line) => line.sub && !line.breakdown && line.key !== "A1").reduce((sum, line) => sum + shown(line), 0);
+	const mobParts = official.rows.filter((line) => line.key === "MOB" || line.key === "DEMOB").reduce((sum, line) => sum + shown(line), 0);
+	const bodySum = isDirectPricing(src.pricing) ? screenOfficialTotal(tasks, src.pricing, src.summaryOverrides, {
+		mobilization: sections.find((s) => s.title === "Mobilization")?.sheetTotal || 0,
+		demobilization: sections.find((s) => s.title === "Demobilization")?.sheetTotal || 0
+	}) : bodyParts + benefitParts + miscParts + mobParts;
 	const qty = num2(info.quantity);
 	const docNoOut = info.docNo || row?.ceDisplay || "";
 	const summaryRows = [];
@@ -3349,9 +3800,9 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		summaryMeta.push({ kind: "sum-custom" });
 	});
 	summaryRows.push(["", "UNIT PRICE:", qty ? fmt(bodySum / qty) : "—"]);
-	summaryMeta.push({ kind: "sum-blue" });
+	summaryMeta.push({ kind: "sum-final" });
 	summaryRows.push(["", "TOTAL AMOUNT:", fmt(bodySum)]);
-	summaryMeta.push({ kind: "sum-blue" });
+	summaryMeta.push({ kind: "sum-final" });
 	const signSlot = (label, name, title, stamp) => ({ label, name: honorificName(name, users), title: title || "", stamp: stamp || "" });
 	sections.unshift({
 		title: "CE Summary",
@@ -3369,13 +3820,15 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 			quantity: String(info.quantity || ""),
 			endUser: info.endUser || "",
 			docNo: docNoOut,
+			markupNo: row?.markupNo || info.markupNo || "",
 			revNo: info.revNo || version?.rev || "",
 			revDate: info.revDate || ""
 		},
-		columns: ["ITEM", "DESCRIPTION", "TOTAL COST"],
+		columns: ["ITEM NO.", "DESCRIPTION", "TOTAL COST"],
 		rows: summaryRows,
 		rowMeta: summaryMeta,
-		columnStyles: { 0: { cellWidth: 22, halign: "center" }, 2: { cellWidth: 56, halign: "right" } },
+		keepWidths: true,
+		columnStyles: { 0: { cellWidth: 15, halign: "center" }, 2: { cellWidth: 56, halign: "right" } },
 		notes: noteTexts(notes.summary),
 		signs: [
 			signSlot("Prepared By:", info.preparedBy, info.preparedTitle, info.preparedStamp),
@@ -3397,6 +3850,7 @@ function buildMonitoringExportData(version, documentControl, users, row) {
 		documentControl,
 		docDate: info.date || "",
 		ceNumber: docNoOut || row?.ceDisplay || "CE",
+		tasks,
 		sections
 	};
 }
@@ -3496,6 +3950,7 @@ function monVersionList(members, live) {
 			summaryOverrides: live.summaryOverrides,
 			summaryIncludes: live.summaryIncludes,
 			thirdPartyShow: live.thirdPartyShow,
+			pricing: live.pricing,
 			sowText: live.sowText
 		}),
 		files: live.fileAttachments || {},
@@ -3529,7 +3984,7 @@ function foldMonitoringRows(rows) {
 			latestStamp: latestStamp(stamps),
 			history: monHistoryEntries(members),
 			versions: monVersionList(members, live),
-			canRevise: live.status === "Done" && !!live.ceId
+			canRevise: live.status === "Done" && !!live.ceId && !release1SalesActor
 		};
 	});
 }
@@ -4080,6 +4535,15 @@ function dayTypeMultiplier(dayType) {
 	if (dayType === "Sun/Special") return f.sundayMultiplier;
 	return 1;
 }
+setFormulaFns({ formulaNow, dayTypeMultiplier });
+let activeCePricing = null;
+let bolLegendFlag = false;
+let bolLegendRates = null;
+function bolAssumptionText() {
+	if (!bolLegendFlag) return "Sun/Special ×1.30 · Holiday ×2.00 · Night differential +10% · Regular OT ×1.25 · Rest/holiday OT ×1.30";
+	const f = directFormula(bolLegendRates || {});
+	return `Sun/Special ×${Number(f.sundayMultiplier).toFixed(2)} · Holiday ×${Number(f.holidayMultiplier).toFixed(2)} · Night differential +${f.nightDiffPct}% · OT ×${f.regularOtFactor} (rest/holiday ×${f.premiumDayOtFactor})`;
+}
 
 function hexColor(value, fallback) {
 	const raw = String(value || "").trim();
@@ -4238,7 +4702,8 @@ function inspectionDisplayCols(visibleCols) {
 		...lead,
 		{ key: "__aging", label: "Aging", synthetic: "aging" },
 		{ key: "__ceStatus", label: "CE Status", synthetic: "ceStatus" },
-		...rest
+		...rest,
+		{ key: "__actions", label: "Actions", synthetic: "actions" }
 	];
 }
 function MonPriorityText({ label, boardColors }) {
@@ -4302,6 +4767,12 @@ function MonChipContext({ parts }) {
 		className: "mon-chip-context",
 		children: parts.map((part) => /* @__PURE__ */ jsxs("span", { children: [part.label, " ", /* @__PURE__ */ jsx("strong", { children: part.value })] }, part.label))
 	});
+}
+function normalizeWorkingDays(raw) {
+	const src = raw && typeof raw === "object" ? raw : {};
+	const holidays = Array.isArray(src.holidays) ? src.holidays.map((item) => cleanHolidayDate(item)).filter(Boolean) : [];
+	const saturdayWorking = typeof src.saturdayWorking === "boolean" ? src.saturdayWorking : true;
+	return { saturdayWorking, weekendDays: saturdayWorking ? [0] : [0, 6], holidays };
 }
 function defaultAdminConfig() {
 	return {
@@ -4467,7 +4938,77 @@ function defaultAdminConfig() {
 		},
 		masterlistRules: defaultMasterlistRules(),
 		templateFormula: { ...DEFAULT_TEMPLATE_FORMULA },
-		boardColors: defaultBoardColors()
+		features: {
+			directCostTotalsForNew: false,
+			approvalEngineV2: false,
+			monitoringFamilies: false,
+			docSuffixes: false,
+			scopeLibraryV2: false,
+			priceCheck: false,
+			branding: false,
+			equipmentRates: false,
+			reports: false,
+			mobileViewer: false,
+			checkerV2: false,
+			quotations: false,
+			availability: false,
+			clientLocations: false,
+			pendingRecords: false,
+			routeFuel: false,
+			sowTagging: false,
+			schedule: false,
+			microsoftLinkFlow: false,
+			release1Departments: false,
+			release1SalesView: false,
+			release1WithdrawRequest: false,
+			release1Markup: false,
+			release1Proposal: false,
+			release1JobOrder: false,
+			release1Monitor: false,
+			joScreenV2: false,
+			ceTpl1: false,
+			ceTpl2: false,
+			ceTpl3: false,
+			ceTpl4: false,
+			ceTpl5: false,
+			ceTpl6: false,
+			ceTpl7: false,
+			ceTpl8: false,
+			ceTpl9: false,
+			ceTpl10: false,
+			salesProfile: false,
+			rceTpl: false,
+			personalNewTag: false,
+			salesPipelineMonitoring: false,
+			ceThreads: false,
+			notificationsBell: false,
+			libraryMethodologies: false,
+			methodologyEditor: false,
+			templatesFromDocs: false,
+			monitoringExport: false,
+			salesDocPreview: false
+		},
+		approvalModes: {},
+		approvalFinal: {},
+		authorisations: { takeover: [] },
+		suffixReasons: [],
+		phHolidays: [],
+		branding: {},
+		equipmentFormula: normalizeEquipmentFormula(null),
+		equipmentItems: [],
+		checker: normalizeCheckerConfig(null),
+		availabilityKeys: [],
+		pendingEscalateDays: 3,
+		vehicles: [],
+		fuelPrices: [],
+		tolls: [],
+		notifyMatrix: normalizeNotifyMatrix(null),
+		directRates: directFormula({}),
+		calcConstants: defaultCalcConstants(),
+		boardColors: defaultBoardColors(),
+		methodologies: [],
+		rceTemplates: [],
+		oifTemplates: []
 	};
 }
 function ensureSalesUsers(users) {
@@ -4496,6 +5037,35 @@ function normalizeRceFlow(steps, fallback) {
 		return s;
 	});
 }
+function cleanApprovalParty(party) {
+	if (!party || typeof party !== "object") return { role: "", title: "", assigneeName: "" };
+	return {
+		role: String(party.role || ""),
+		title: String(party.title || ""),
+		assigneeName: String(party.assigneeName || party.userName || "")
+	};
+}
+function normalizeApprovalModes(raw) {
+	const src = raw && typeof raw === "object" ? raw : {};
+	const out = {};
+	["ce", "rce", "oif"].forEach((key) => {
+		const mode = String(src[key] || "").toLowerCase();
+		if (mode === "mixed" || mode === "sequential" || mode === "parallel") out[key] = mode;
+	});
+	return out;
+}
+function normalizeApprovalFinal(raw) {
+	const src = raw && typeof raw === "object" ? raw : {};
+	const out = {};
+	["ce", "rce", "oif"].forEach((key) => {
+		if (!src[key] || typeof src[key] !== "object") return;
+		out[key] = {
+			final: cleanApprovalParty(src[key].final),
+			backup: cleanApprovalParty(src[key].backup)
+		};
+	});
+	return out;
+}
 function normalizeAdminConfig(raw) {
 	const base = defaultAdminConfig();
 	const src = raw && typeof raw === "object" ? raw : {};
@@ -4515,8 +5085,84 @@ function normalizeAdminConfig(raw) {
 		},
 		masterlistRules: normalizeMasterlistRules(src.masterlistRules),
 		templateFormula: normalizeTemplateFormula(src.templateFormula),
+		features: {
+			directCostTotalsForNew: src.features?.directCostTotalsForNew === true,
+			approvalEngineV2: src.features?.approvalEngineV2 === true,
+			monitoringFamilies: src.features?.monitoringFamilies === true,
+			docSuffixes: src.features?.docSuffixes === true,
+			scopeLibraryV2: src.features?.scopeLibraryV2 === true,
+			priceCheck: src.features?.priceCheck === true,
+			branding: src.features?.branding === true,
+			equipmentRates: src.features?.equipmentRates === true,
+			reports: src.features?.reports === true,
+			mobileViewer: src.features?.mobileViewer === true,
+			checkerV2: src.features?.checkerV2 === true,
+			quotations: src.features?.quotations === true,
+			availability: src.features?.availability === true,
+			clientLocations: src.features?.clientLocations === true,
+			pendingRecords: src.features?.pendingRecords === true,
+			routeFuel: src.features?.routeFuel === true,
+			sowTagging: src.features?.sowTagging === true,
+			schedule: src.features?.schedule === true,
+			microsoftLinkFlow: src.features?.microsoftLinkFlow === true,
+			release1Departments: src.features?.release1Departments === true,
+			release1SalesView: src.features?.release1SalesView === true,
+			release1WithdrawRequest: src.features?.release1WithdrawRequest === true,
+			release1Markup: src.features?.release1Markup === true,
+			release1Proposal: src.features?.release1Proposal === true,
+			release1JobOrder: src.features?.release1JobOrder === true,
+			release1Monitor: src.features?.release1Monitor === true,
+			joScreenV2: src.features?.joScreenV2 === true,
+			ceTpl1: src.features?.ceTpl1 === true,
+			ceTpl2: src.features?.ceTpl2 === true,
+			ceTpl3: src.features?.ceTpl3 === true,
+			ceTpl4: src.features?.ceTpl4 === true,
+			ceTpl5: src.features?.ceTpl5 === true,
+			ceTpl6: src.features?.ceTpl6 === true,
+			ceTpl7: src.features?.ceTpl7 === true,
+			ceTpl8: src.features?.ceTpl8 === true,
+			ceTpl9: src.features?.ceTpl9 === true,
+			ceTpl10: src.features?.ceTpl10 === true,
+			salesProfile: src.features?.salesProfile === true,
+			rceTpl: src.features?.rceTpl === true,
+			personalNewTag: src.features?.personalNewTag === true,
+			salesPipelineMonitoring: src.features?.salesPipelineMonitoring === true,
+			ceThreads: src.features?.ceThreads === true,
+			notificationsBell: src.features?.notificationsBell === true,
+			libraryMethodologies: src.features?.libraryMethodologies === true,
+			methodologyEditor: src.features?.methodologyEditor === true,
+			templatesFromDocs: src.features?.templatesFromDocs === true,
+			monitoringExport: src.features?.monitoringExport === true,
+			salesDocPreview: src.features?.salesDocPreview === true
+		},
+		pendingMasterItems: Array.isArray(src.pendingMasterItems) ? src.pendingMasterItems.map((row) => ({ ...row })) : [],
+		workingDays: normalizeWorkingDays(src.workingDays),
+		methodologies: Array.isArray(src.methodologies) ? src.methodologies : [],
+		rceTemplates: Array.isArray(src.rceTemplates) ? src.rceTemplates : [],
+		oifTemplates: Array.isArray(src.oifTemplates) ? src.oifTemplates : [],
+		proposalClauses: typeof src.proposalClauses === "string" ? src.proposalClauses : "",
+		approvalModes: normalizeApprovalModes(src.approvalModes),
+		approvalFinal: normalizeApprovalFinal(src.approvalFinal),
+		authorisations: {
+			takeover: Array.isArray(src.authorisations?.takeover) ? src.authorisations.takeover.map((name) => String(name || "").trim()).filter(Boolean) : []
+		},
+		suffixReasons: Array.isArray(src.suffixReasons) ? src.suffixReasons.map((item) => String(item || "").trim()).filter(Boolean) : [],
+		phHolidays: Array.isArray(src.phHolidays) ? src.phHolidays.map((item) => cleanHolidayDate(item)).filter(Boolean) : [],
+		branding: cleanBranding(src.branding),
+		equipmentFormula: normalizeEquipmentFormula(src.equipmentFormula),
+		equipmentItems: Array.isArray(src.equipmentItems) ? src.equipmentItems.map((item) => normalizeEquipmentItem(item)) : [],
+		checker: normalizeCheckerConfig(src.checker),
+		availabilityKeys: availabilityKeysFrom(src.availabilityKeys),
+		pendingEscalateDays: Number(src.pendingEscalateDays) > 0 ? Math.round(Number(src.pendingEscalateDays)) : 3,
+		vehicles: normalizeVehicles(src.vehicles),
+		fuelPrices: normalizeFuelPrices(src.fuelPrices),
+		tolls: normalizeTolls(src.tolls),
+		notifyMatrix: normalizeNotifyMatrix(src.notifyMatrix),
+		directRates: directFormula(src.directRates),
+		calcConstants: normalizeCalcConstants(src.calcConstants),
 		boardColors: normalizeBoardColors(src.boardColors),
-		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : []
+		inspectionCheckTemplates: Array.isArray(src.inspectionCheckTemplates) ? src.inspectionCheckTemplates : [],
+		approverLists: normalizeApproverLists(src.approverLists)
 	};
 }
 function uid(_prefix) {
@@ -4534,6 +5180,39 @@ function TemplateFormulaPanel({ cfg, patch }) {
 	const hol = f.holidayMultiplier;
 	const monthly = rate * f.daysPerMonth;
 	const money = (n) => fmt(n);
+	const flagOn = cfg.features?.directCostTotalsForNew === true;
+	const rates = directFormula(cfg.directRates);
+	const directFields = [
+		["hoursPerDay", "Hours in a work day", 1e-6, 24],
+		["nightDiffPct", "Night differential (%)", 0, 100],
+		["regularOtFactor", "Regular OT factor", 1, 3],
+		["premiumDayOtFactor", "Rest day / holiday OT factor", 1, 3],
+		["sundayMultiplier", "Sunday / special multiplier", 1, 3],
+		["holidayMultiplier", "Holiday multiplier", 1, 3],
+		["daysPerMonth", "Working days in a month", 1, 31],
+		["thirteenthDivisor", "13th month divisor", 1, 12],
+		["sssErPct", "SSS employer (%)", 0, 100],
+		["philHealthErPct", "PhilHealth employer (%)", 0, 100],
+		["hdmfErPct", "HDMF employer (%)", 0, 100],
+		["sssMscMin", "SSS MSC minimum", 0, 1e6],
+		["sssMscMax", "SSS MSC maximum", 0, 1e6],
+		["sssMscStep", "SSS MSC step", 1, 5000],
+		["eccLow", "ECC below the threshold", 0, 1e6],
+		["eccHigh", "ECC at or above the threshold", 0, 1e6],
+		["eccThreshold", "ECC threshold", 0, 1e6],
+		["philHealthFloor", "PhilHealth floor", 0, 1e7],
+		["philHealthCeiling", "PhilHealth ceiling", 0, 1e7],
+		["hdmfCap", "HDMF cap", 0, 1e6]
+	];
+	const setDirect = (key, min, max) => (e) => {
+		const n = Number(e.target.value);
+		if (!Number.isFinite(n) || n < min || n > max) return;
+		patch({ directRates: { ...rates, [key]: n } });
+	};
+	const regPay = dolePay(rate, "Regular", "Day", rates);
+	const nightPay = dolePay(rate, "Regular", "Night", rates);
+	const sunPay = dolePay(rate, "Sun/Special", "Day", rates);
+	const holPay = dolePay(rate, "Holiday", "Day", rates);
 	const setField = (key) => (e) => {
 		const n = Number(e.target.value);
 		if (!Number.isFinite(n)) return;
@@ -4627,8 +5306,44 @@ function TemplateFormulaPanel({ cfg, patch }) {
 					["SSS", `${f.sssPct}% of monthly`, monthly * f.sssPct / 100],
 					["HDMF", `${f.hdmfPct}% of monthly`, monthly * f.hdmfPct / 100],
 					["PHIC", `${f.phicPct}% of monthly`, monthly * f.phicPct / 100]
-				])
+				]),
+				flagOn ? sheet("Direct cost helper", [
+					["Regular day", "Daily rate", regPay.dayRate],
+					["Regular OT / hour", `Hourly × ${rates.regularOtFactor}`, regPay.otRate],
+					["Night regular day", `Daily × (1 + ${rates.nightDiffPct}%)`, nightPay.dayRate],
+					["Night OT / hour", `Night hourly × ${rates.regularOtFactor}`, nightPay.otRate],
+					["Sunday / special OT / hour", `Premium × ${rates.premiumDayOtFactor}`, sunPay.otRate],
+					["Holiday OT / hour", `Premium × ${rates.premiumDayOtFactor}`, holPay.otRate]
+				]) : null
 			] })
+		] }),
+		/* @__PURE__ */ jsxs("section", { className: "tf-card", children: [
+			/* @__PURE__ */ jsx("h3", { children: "Direct cost totals" }),
+			/* @__PURE__ */ jsx("p", { children: "Off by default. A Draft or Ongoing estimate can switch after a banner that shows the old total and the new total. Approved estimates stay on today's maths. Rates are copied onto the estimate at the switch." }),
+			/* @__PURE__ */ jsxs("label", { className: "tf-row", children: [
+				/* @__PURE__ */ jsx("input", {
+					type: "checkbox",
+					checked: flagOn,
+					onChange: (e) => patch({
+						features: { ...cfg.features || {}, directCostTotalsForNew: e.target.checked },
+						directRates: rates
+					})
+				}),
+				/* @__PURE__ */ jsx("span", { children: "Allow direct cost totals on Draft and Ongoing estimates" })
+			] }),
+			flagOn ? /* @__PURE__ */ jsx("div", { className: "tf-fields", children: directFields.map(([key, title, min, max]) => /* @__PURE__ */ jsxs("div", { className: "tf-row", children: [
+				/* @__PURE__ */ jsx("div", { className: "tf-copy", children: /* @__PURE__ */ jsx("strong", { children: title }) }),
+				/* @__PURE__ */ jsx("input", {
+					className: "ce-input",
+					type: "number",
+					step: "any",
+					min,
+					max,
+					"aria-label": title,
+					value: rates[key],
+					onChange: setDirect(key, min, max)
+				})
+			] }, key)) }) : null
 		] })
 	] });
 }
@@ -4666,6 +5381,61 @@ function BoardColorsPanel({ cfg, patch }) {
 		section("inspection", "Inspection status")
 	] });
 }
+function CalcConstantsPanel({ cfg, patch }) {
+	const current = normalizeCalcConstants(cfg.calcConstants);
+	const [error, setError] = useState("");
+	const rows = [
+		["steelDensity", "Carbon steel density (g/cm³)", current.steelDensity, 0.01, 30],
+		["pipeFactor", "Pipe weight factor", current.pipeFactor, 1e-6, 1],
+		["grooveAngleDeg", "Groove angle (°)", current.grooveAngleDeg, 1, 179],
+		["grooveGapMm", "Groove gap (mm)", current.grooveGapMm, 0, 50],
+		["grooveReinforcementPct", "Groove reinforcement (%)", current.grooveReinforcementPct, 0, 100],
+		["airRatePerKg", "Air cargo rate (₱/kg)", current.airRatePerKg, 0, 1e9],
+		["airValuationPct", "Valuation charge (%)", current.airValuationPct, 0, 100],
+		["airOtherPct", "Other charges (%)", current.airOtherPct, 0, 100],
+		["airVatPct", "VAT (%)", current.airVatPct, 0, 100],
+		["airBufferPct", "Payment buffer (%)", current.airBufferPct, 0, 100],
+		["airDivisor", "Volumetric divisor", current.airDivisor, 1, 1e9]
+	];
+	function commit(key, raw, min, max) {
+		const n = Number(raw);
+		if (!Number.isFinite(n) || n < min || n > max) {
+			setError("That value is out of range, so it was not saved.");
+			return;
+		}
+		const next = normalizeCalcConstants(current);
+		if (key.startsWith("dep:")) {
+			const process = key.slice(4);
+			if (next.deposition[process] === n) {
+				setError("");
+				return;
+			}
+			next.deposition = { ...next.deposition, [process]: n };
+		} else if (next[key] === n) {
+			setError("");
+			return;
+		} else next[key] = n;
+		next.version = current.version + 1;
+		setError("");
+		patch({ calcConstants: next });
+	}
+	const field = (key, label, value, min, max) => /* @__PURE__ */ jsxs("label", { className: "wiz-field", children: [
+		/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: label }),
+		/* @__PURE__ */ jsx("input", {
+			key: `${current.version}-${key}`,
+			className: "ce-input",
+			type: "number",
+			defaultValue: value,
+			onBlur: (e) => commit(key, e.target.value, min, max)
+		})
+	] }, key);
+	return /* @__PURE__ */ jsxs("div", { className: "wiz-grid", children: [
+		/* @__PURE__ */ jsx("p", { className: "wiz-sub", children: `Calculator constants, version ${current.version}. A line already added from the calculator shows “constants changed” when this number moves. If this copy is missing, the built-in rates are used.` }),
+		rows.map(([key, label, value, min, max]) => field(key, label, value, min, max)),
+		Object.keys(current.deposition).map((process) => field(`dep:${process}`, `${process} deposition efficiency (%)`, current.deposition[process], 0.01, 100)),
+		error ? /* @__PURE__ */ jsx("div", { className: "rce-field-error", children: error }) : null
+	] });
+}
 function AdminHub({ config, onChange }) {
 	const [tab, setTab] = useState("users");
 	const cfg = normalizeAdminConfig(config);
@@ -4699,7 +5469,15 @@ function AdminHub({ config, onChange }) {
 					["list", "Masterlist"],
 					["docs", "Document control"],
 					["formula", "Template formula"],
-					["colors", "Board colors"]
+					["calc", "Calculator"],
+					["colors", "Board colors"],
+					["phase5", "Phase 5"],
+					["phase6", "Phase 6"],
+					["phase7", "Phase 7"],
+					["phase8", "Phase 8"],
+					["phase9", "Phase 9"],
+					["phase10", "Phase 10"],
+					["release1", "Release 1"]
 				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
 					type: "button",
 					role: "tab",
@@ -4729,7 +5507,39 @@ function AdminHub({ config, onChange }) {
 				cfg,
 				patch
 			}),
+			tab === "calc" && /* @__PURE__ */ jsx(CalcConstantsPanel, {
+				cfg,
+				patch
+			}),
 			tab === "colors" && /* @__PURE__ */ jsx(BoardColorsPanel, {
+				cfg,
+				patch
+			}),
+			tab === "phase5" && /* @__PURE__ */ jsx(Phase5Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase6" && /* @__PURE__ */ jsx(Phase6Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase7" && /* @__PURE__ */ jsx(Phase7Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase8" && /* @__PURE__ */ jsx(Phase8Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase9" && /* @__PURE__ */ jsx(Phase9Admin, {
+				cfg,
+				patch
+			}),
+			tab === "phase10" && /* @__PURE__ */ jsx(Phase10Admin, {
+				cfg,
+				patch
+			}),
+			tab === "release1" && /* @__PURE__ */ jsx(Release1Admin, {
 				cfg,
 				patch
 			})
@@ -5169,12 +5979,34 @@ function UserAccessPanel({ cfg, patch }) {
 }
 function ApprovalFlowPanel({ cfg, patch }) {
 	const [docType, setDocType] = useState("ce");
+	const [flowError, setFlowError] = useState("");
 	const steps = cfg.approvalFlows?.[docType] || [];
 	const current = DOC_TYPES.find((d) => d.id === docType);
+	const engineOn = cfg.features?.approvalEngineV2 === true;
+	const mode = cfg.approvalModes?.[docType] || "mixed";
+	const finalCfg = cfg.approvalFinal?.[docType] || {};
 	function setSteps(next) {
+		if (engineOn) {
+			const check = validateFlowSteps(next);
+			if (!check.ok) {
+				setFlowError(check.message);
+				return;
+			}
+		}
+		setFlowError("");
 		patch({ approvalFlows: {
 			...cfg.approvalFlows,
 			[docType]: next
+		} });
+	}
+	function setParty(part, key, value) {
+		const currentParty = finalCfg[part] || {};
+		patch({ approvalFinal: {
+			...cfg.approvalFinal,
+			[docType]: {
+				...finalCfg,
+				[part]: { ...currentParty, [key]: value }
+			}
 		} });
 	}
 	function move(index, dir) {
@@ -5197,6 +6029,17 @@ function ApprovalFlowPanel({ cfg, patch }) {
 				className: "wiz-hint",
 				children: "Ordered route for each document. Mark one step as Final — that acceptance creates the job (RCE) or closes the CE. Login is not required; the acting user on the sidebar walks this list."
 			}),
+			/* @__PURE__ */ jsxs("label", {
+				className: "ce-picker-row",
+				children: [/* @__PURE__ */ jsx("input", {
+					type: "checkbox",
+					checked: engineOn,
+					onChange: (e) => patch({ features: {
+						...cfg.features || {},
+						approvalEngineV2: e.target.checked
+					} })
+				}), /* @__PURE__ */ jsx("span", { children: "Use the approval engine" })]
+			}),
 			/* @__PURE__ */ jsx("div", {
 				className: "wiz-rce-mode",
 				children: DOC_TYPES.map((d) => /* @__PURE__ */ jsx("button", {
@@ -5206,6 +6049,75 @@ function ApprovalFlowPanel({ cfg, patch }) {
 					children: d.label
 				}, d.id))
 			}),
+			engineOn ? /* @__PURE__ */ jsxs("div", {
+				className: "ce-grid",
+				style: { margin: "0.6rem 0" },
+				children: [
+					/* @__PURE__ */ jsxs("label", { children: ["Route ", /* @__PURE__ */ jsx("select", {
+						className: "ce-input",
+						value: mode,
+						onChange: (e) => patch({ approvalModes: {
+							...cfg.approvalModes,
+							[docType]: e.target.value
+						} }),
+						children: ["mixed", "sequential", "parallel"].map((id) => /* @__PURE__ */ jsx("option", {
+							value: id,
+							children: id
+						}, id))
+					})] }),
+					["final", "backup"].map((part) => /* @__PURE__ */ jsxs("div", { children: [
+						/* @__PURE__ */ jsx("span", {
+							className: "ce-field-label",
+							children: part === "final" ? "Final approver" : "Backup approver"
+						}),
+						/* @__PURE__ */ jsx("select", {
+							className: "ce-input",
+							value: finalCfg[part]?.role || "",
+							onChange: (e) => setParty(part, "role", e.target.value),
+							children: [/* @__PURE__ */ jsx("option", { value: "", children: "From the Final step" }, "from-step"), ...USER_LEVELS.filter((l) => l.id !== "admin").map((l) => /* @__PURE__ */ jsx("option", {
+								value: l.id,
+								children: l.label
+							}, l.id))]
+						}),
+						/* @__PURE__ */ jsx("input", {
+							className: "ce-input",
+							placeholder: "Named person, optional",
+							value: finalCfg[part]?.assigneeName || "",
+							onChange: (e) => setParty(part, "assigneeName", e.target.value)
+						})
+					] }, part))
+				]
+			}) : null,
+			flowError ? /* @__PURE__ */ jsx("p", {
+				className: "rce-field-error",
+				children: flowError
+			}) : null,
+			engineOn ? /* @__PURE__ */ jsxs("div", {
+				style: { margin: "0.6rem 0" },
+				children: [
+					/* @__PURE__ */ jsxs("label", { children: ["Authorised to approve a take-over ", /* @__PURE__ */ jsx("input", {
+						className: "ce-input",
+						value: (cfg.authorisations?.takeover || []).join(", "),
+						placeholder: "Names, comma separated",
+						onChange: (e) => patch({ authorisations: {
+							...cfg.authorisations,
+							takeover: e.target.value.split(",").map((name) => name.trim()).filter(Boolean)
+						} })
+					})] }),
+					/* @__PURE__ */ jsx("p", {
+						className: "wiz-hint",
+						children: "Notifications stay on unless a row is turned off. The owner can always approve their own take-over."
+					}),
+					(cfg.notifyMatrix || []).map((row) => /* @__PURE__ */ jsxs("label", {
+						className: "ce-picker-row",
+						children: [/* @__PURE__ */ jsx("input", {
+							type: "checkbox",
+							checked: row.enabled !== false,
+							onChange: (e) => patch({ notifyMatrix: (cfg.notifyMatrix || []).map((item) => item.event === row.event ? { ...item, enabled: e.target.checked } : item) })
+						}), /* @__PURE__ */ jsx("span", { children: row.event })]
+					}, row.event))
+				]
+			}) : null,
 			/* @__PURE__ */ jsx("ol", {
 				className: "admin-flow-list",
 				children: steps.map((step, i) => /* @__PURE__ */ jsxs("li", { children: [
@@ -5228,7 +6140,13 @@ function ApprovalFlowPanel({ cfg, patch }) {
 							...s,
 							role: e.target.value
 						} : s)),
-						children: USER_LEVELS.map((l) => /* @__PURE__ */ jsx("option", {
+						children: engineOn ? [/* @__PURE__ */ jsx("option", {
+							value: "",
+							children: "Role"
+						}, "blank"), ...USER_LEVELS.map((l) => /* @__PURE__ */ jsx("option", {
+							value: l.id,
+							children: l.label
+						}, l.id))] : USER_LEVELS.map((l) => /* @__PURE__ */ jsx("option", {
 							value: l.id,
 							children: l.label
 						}, l.id))
@@ -5850,21 +6768,21 @@ var CE_FIELDS = {
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}],
 	PPE: [{
 		key: "qty",
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}],
 	MISC: [{
 		key: "qty",
 		label: "Qty"
 	}, {
 		key: "unitCost",
-		label: "Unit Cost"
+		label: "Unit Price"
 	}]
 };
 var CAT_TAB = {
@@ -6000,7 +6918,8 @@ var NOTICE_EVENTS = {
 	TRANSFERRED: "Transferred",
 	ASSIST: "Assist opened",
 	APPROVAL: "Needs your approval",
-	NO_QUOTE: "No quote"
+	NO_QUOTE: "No quote",
+	CE_APPROVED: "CE approved"
 };
 function nowIso() {
 	return (/* @__PURE__ */ new Date()).toISOString();
@@ -6014,7 +6933,7 @@ function noteSecurityActor(sessionUserId, actedByUserId) {
 	sessionUserIdForWrites = sessionUserId || "";
 	actedByUserIdForWrites = actedByUserId || "";
 }
-function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "" }) {
+function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "", whoName = "" }) {
 	const entry = {
 		id: uid2("tl"),
 		at: nowIso(),
@@ -6024,6 +6943,7 @@ function timelineEntry({ who, action, remarks = "", snapshot = null, rev = "" })
 		snapshot,
 		rev: rev || ""
 	};
+	if (whoName) entry.whoName = whoName;
 	if (actedByUserIdForWrites) entry.actedByUserId = actedByUserIdForWrites;
 	return entry;
 }
@@ -6130,14 +7050,14 @@ function rceHardBlocks(form, company) {
 	if (!form?.shopwork && !form?.onsite && !form?.trading) fails.push("Tick at least one work type (Onsite, Shopwork, or Trading).");
 	if (!form?.ceDeadline) fails.push("CE deadline is required.");
 	if (!String(form?.priorityLevel || "").trim()) fails.push("Priority is required.");
-	if (form?.onsite && !(Number(form?.estDurationDays) > 0)) fails.push("Onsite is ticked — enter estimated duration in days.");
+	if (estDaysRequired(form, rceTplOn === true)) fails.push("Onsite is ticked — enter estimated duration in days.");
 	return fails;
 }
 function rceSoftWarns(form, checklist, attachments) {
 	const warns = [];
 	const drawing = checklist?.item8?.complete;
 	if (String(drawing).toUpperCase() === "NO") warns.push("Drawing / photos marked No.");
-	if (form?.onsite && !(Number(form?.estDurationDays) > 0)) warns.push("Duration is blank.");
+	if (rceTplOn !== true && form?.onsite && !(Number(form?.estDurationDays) > 0)) warns.push("Duration is blank.");
 	const emptyRows = Object.keys(checklist || {}).filter((k) => {
 		if (k.includes("_")) return false;
 		return !checklist[k]?.complete;
@@ -6153,9 +7073,11 @@ function rceIsFinalAccepted(rce) {
 	return st === "accepted" || st === "approved";
 }
 function rceCanWithdraw(rce) {
+	if (release1WithdrawRequestOn === true || rceTplOn === true) return rceWithdrawAllowed(rce, true);
 	if (!rce) return false;
 	const ap = rce.approval;
 	if (!ap || ap.status !== "in-progress") return rce.status === "Pending" || rce.status === "For approval";
+	if (ap.engine === "v2") return !(ap.steps || []).some((s) => s.decision === "approve" || s.decision === "approve-comment");
 	return !(ap.steps || []).some((s, i) => i >= 1 && (s.decision === "accept" || s.decision === "reject"));
 }
 function attachmentSourceTag(source, rev) {
@@ -6210,7 +7132,7 @@ var CSV_FIELD_MAP = {
 			"equipment",
 			"name"
 		],
-		unit: ["uom", "unit of measure"],
+		unit: ["uom", "unit of measure", "u/m", "um"],
 		ratePerDay: [
 			"daily rate",
 			"rate per day",
@@ -6250,7 +7172,7 @@ var CSV_FIELD_MAP = {
 			"name",
 			"material"
 		],
-		unit: ["uom", "unit of measure"],
+		unit: ["uom", "unit of measure", "u/m", "um"],
 		unitCost: [
 			"unit cost",
 			"cost",
@@ -6270,7 +7192,7 @@ var CSV_FIELD_MAP = {
 			"name",
 			"ppe"
 		],
-		unit: ["uom", "unit of measure"],
+		unit: ["uom", "unit of measure", "u/m", "um"],
 		unitCost: [
 			"unit cost",
 			"cost",
@@ -6332,6 +7254,15 @@ var CSV_FIELD_MAP = {
 			"address / location",
 			"site address"
 		]
+	},
+	ce: {
+		description: ["item description", "description", "item", "desc"],
+		qty: ["qty", "qty.", "quantity", "qnty"],
+		unit: ["unit", "uom", "u/m", "um", "u.m"],
+		unitPrice: ["unit price", "rate / unit cost", "unit cost", "rate", "price"],
+		role: ["role", "role / position", "position", "designation"],
+		lineItem: ["line item", "item no", "item no."],
+		remarks: ["remarks", "remark", "notes"]
 	}
 };
 function normalizeCsvHeader(h) {
@@ -6815,17 +7746,7 @@ var PHP = new Intl.NumberFormat("en-PH", {
 var fmt = (n) => PHP.format(Number.isFinite(n) ? n : 0);
 var num2 = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
 function limitError(field, raw) {
-	const key = String(field || "");
-	const percent = key === "contingencyPct" || key === "discountPct";
-	const money = key === "qty" || key === "days" || key === "rate" || key === "unitCost";
-	if (!percent && !money) return "";
-	const text = String(raw ?? "").trim();
-	if (text === "") return "";
-	const n = Number(text);
-	if (!Number.isFinite(n)) return "";
-	if (percent && (n < 0 || n > 100)) return "Must be between 0 and 100%.";
-	if (money && n < 0) return "Cannot be negative.";
-	return "";
+	return blockedNumberReason(field, raw);
 }
 function withoutBadLimits(patch) {
 	const next = { ...patch || {} };
@@ -6863,7 +7784,11 @@ function useLimitNotes() {
 var DAY_TYPES = [
 	"Regular",
 	"Sun/Special",
-	"Holiday"
+	"Special on rest",
+	"Holiday",
+	"Holiday on rest",
+	"Double holiday",
+	"Double holiday on rest"
 ];
 var DAY_TYPE_MULT = {
 	Regular: 1,
@@ -7115,6 +8040,14 @@ function masterlistReducer(state, action) {
 				clients: []
 			};
 			return withCategoryItems(state, action.categoryKey, () => []);
+		case "SET_QUOTATIONS": return {
+			...state,
+			quotations: Array.isArray(action.quotations) ? action.quotations : []
+		};
+		case "SET_PENDING_RECORDS": return {
+			...state,
+			pendingRecords: Array.isArray(action.pendingRecords) ? action.pendingRecords : []
+		};
 		default: return state;
 	}
 }
@@ -7205,6 +8138,14 @@ function MasterlistProvider({ children, initialState, onChange }) {
 		clearSheet: (categoryKey) => dispatch({
 			type: "CLEAR_SHEET",
 			categoryKey: categoryKey === "clients" ? "clients" : normalizeCategoryKey(categoryKey)
+		}),
+		setQuotations: (quotations) => dispatch({
+			type: "SET_QUOTATIONS",
+			quotations
+		}),
+		setPendingRecords: (pendingRecords) => dispatch({
+			type: "SET_PENDING_RECORDS",
+			pendingRecords
 		})
 	}), [state]);
 	return /* @__PURE__ */ jsx(MasterlistContext.Provider, {
@@ -7216,163 +8157,6 @@ function useMasterlist() {
 	const ctx = useContext(MasterlistContext);
 	if (!ctx) throw new Error("useMasterlist must be used within a MasterlistProvider");
 	return ctx;
-}
-function calcBOL(item) {
-	const f = formulaNow();
-	const dt = dayTypeMultiplier(item.dayType);
-	const shiftAdd = item.shift === "Night" ? f.nightDiffPct / 100 : 0;
-	const hours = f.hoursPerDay || 8;
-	const effRate = num2(item.rate) * dt * (1 + shiftAdd);
-	const otRate = num2(item.rate) / hours * f.otMultiplier * dt * (1 + shiftAdd);
-	const base = num2(item.qty) * num2(item.days) * effRate;
-	const ot = num2(item.qty) * num2(item.days) * num2(item.otHrs) * otRate;
-	const perDiemAllow = num2(item.qty) * num2(item.days) * (num2(item.perDiem) + num2(item.allowance));
-	return {
-		base,
-		ot,
-		otRate,
-		perDiemAllow,
-		labor: base + ot,
-		benefits: perDiemAllow,
-		subtotal: roundMoney(base + ot + perDiemAllow)
-	};
-}
-var calcBOTE = (i, workType) => {
-	const use = num2(i.qty) * num2(i.days) * num2(i.rate);
-	if (!chargesPower(workType)) return roundMoney(use);
-	return roundMoney(use + boteElectricityCost(i));
-};
-var calcBOCM = (i) => qtyUnitAmount(i.qty, i.unitCost);
-var calcPPE = (i) => qtyUnitAmount(i.qty, i.unitCost);
-var calcMISC = (i) => miscAmount(i.qty, i.days, i.unitCost);
-function miscBucket(tasks, section) {
-	let total = 0;
-	const lines = [];
-	(tasks || []).forEach((t) => flattenSubs(t).forEach((sub) => (sub.items?.MISC || []).forEach((it) => {
-		if (String(it.section || "") !== section) return;
-		const amount = calcMISC(it);
-		total += amount;
-		const description = String(it.description || "").trim();
-		if (!description) return;
-		const hit = lines.find((l) => l.description === description);
-		if (hit) hit.amount += amount;
-		else lines.push({
-			description,
-			amount
-		});
-	})));
-	return {
-		total: roundMoney(total),
-		lines: lines.map((l) => ({
-			...l,
-			amount: roundMoney(l.amount)
-		}))
-	};
-}
-function buildOfficialBaseRows(tasks) {
-	const sumCat = (cat) => (tasks || []).reduce((sum, t) => sum + categoryOnTask(t, cat), 0);
-	const acc = miscBucket(tasks, "A");
-	const trans = miscBucket(tasks, "B");
-	const req = miscBucket(tasks, "C");
-	const admin = miscBucket(tasks, "D");
-	const third = miscBucket(tasks, "E");
-	const ins = miscBucket(tasks, "I");
-	const miscSum = acc.total + trans.total + req.total + admin.total + ins.total + third.total;
-	const rows = [
-		{
-			key: "A",
-			item: "A.",
-			label: "MANPOWER COST",
-			computed: sumCat("BOL"),
-			main: true
-		},
-		{
-			key: "B",
-			item: "B.",
-			label: "TOOLS AND EQUIPMENTS",
-			computed: sumCat("BOTE"),
-			main: true
-		},
-		{
-			key: "C",
-			item: "C.",
-			label: "MATERIALS AND CONSUMABLES",
-			computed: sumCat("BOCM"),
-			main: true
-		},
-		{
-			key: "D",
-			item: "D.",
-			label: "PERSONAL PROTECTIVE EQUIPMENT",
-			computed: sumCat("PPE"),
-			main: true
-		},
-		{
-			key: "E",
-			item: "E.",
-			label: "MISCELLANEOUS:",
-			computed: miscSum,
-			group: true,
-			main: true
-		},
-		{
-			key: "E1",
-			item: "",
-			label: "E.1 ACCOMMODATION",
-			computed: acc.total,
-			sub: true
-		},
-		{
-			key: "E2",
-			item: "",
-			label: "E.2 TRANSPORTATION",
-			computed: trans.total,
-			sub: true
-		},
-		{
-			key: "E3",
-			item: "",
-			label: "E.3 REQUIREMENTS",
-			computed: req.total,
-			sub: true
-		},
-		{
-			key: "E4",
-			item: "",
-			label: "E.4 ADMIN COST",
-			computed: admin.total,
-			sub: true
-		},
-		{
-			key: "E5",
-			item: "",
-			label: "E.5 INSURANCES",
-			computed: ins.total,
-			sub: true
-		},
-		{
-			key: "E6",
-			item: "",
-			label: "E.6 THIRD PARTY SERVICES:",
-			computed: third.total,
-			sub: true,
-			third: true
-		}
-	];
-	return {
-		rows,
-		thirdLines: third.lines.map((l) => ({
-			key: `tp:${l.description}`,
-			description: l.description,
-			computed: l.amount
-		})),
-		elec: (tasks || []).reduce((sum, t) => sum + botePowerOnTask(t), 0),
-		taskLines: (tasks || []).map((t) => ({
-			key: `task-${t.id}`,
-			label: t.title || "Task",
-			amount: taskTotal(t)
-		}))
-	};
 }
 function customCostTitle(label) {
 	return String(label || "").replace(/^BREAKDOWN\s+[—-]\s+/i, "").trim();
@@ -7392,47 +8176,6 @@ function withThirdPartyRows(rows, thirdLines, show) {
 	const at = (rows || []).findIndex((r) => r.key === "E6");
 	if (at < 0) return [...rows || [], ...extra];
 	return [...rows.slice(0, at + 1), ...extra, ...rows.slice(at + 1)];
-}
-function boteElectricityCost(item) {
-	return num2(item.qty) * num2(item.days) * num2(item.hoursPerDay) * num2(item.powerKw) * num2(item.kwhRate);
-}
-function itemSubtotal(cat, item, workType) {
-	if (cat === "BOL") return calcBOL(item).subtotal;
-	if (cat === "BOTE") return calcBOTE(item, workType);
-	if (cat === "BOCM") return calcBOCM(item);
-	if (cat === "PPE") return calcPPE(item);
-	return calcMISC(item);
-}
-function categoryTotal(items, cat, workType) {
-	return roundMoney((items || []).reduce((s, it) => s + itemSubtotal(cat, it, workType), 0));
-}
-function subtaskTotal(subtask2, workType) {
-	return roundMoney(CATS.reduce((s, c) => s + categoryTotal(subtask2.items?.[c] || [], c, workType), 0) + (subtask2.children || []).reduce((s, ch) => s + subtaskTotal(ch, workType), 0));
-}
-function flattenSubs(task2) {
-	const out = [];
-	const walk = (list) => {
-		(list || []).forEach((s) => {
-			out.push(s);
-			walk(s.children);
-		});
-	};
-	walk(task2?.subtasks);
-	return out;
-}
-function categoryOnTask(task2, cat) {
-	const wt = taskWorkType(task2);
-	return flattenSubs(task2).reduce((s, st) => s + categoryTotal(st.items?.[cat] || [], cat, wt), 0);
-}
-function botePowerOnTask(task2) {
-	return flattenSubs(task2).reduce((s, st) => s + (st.items?.BOTE || []).reduce((s3, it) => s3 + boteElectricityCost(it), 0), 0);
-}
-function taskTotal(task2) {
-	const wt = taskWorkType(task2);
-	return roundMoney((task2.subtasks || []).reduce((s, st) => s + subtaskTotal(st, wt), 0));
-}
-function projectTotal(tasks) {
-	return roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
 }
 function bolItem(o) {
 	return {
@@ -7559,6 +8302,11 @@ function mapTask(state, taskId, fn) {
 	};
 }
 function mapSubtask(t, subtaskId, fn) {
+	if (!subtaskId) {
+		const host = { items: { ...emptyItems(), ...(t.items || {}) } };
+		const next = fn(host);
+		return { ...t, items: next.items || host.items };
+	}
 	const walk = (list) => (list || []).map((s) => {
 		if (s.id === subtaskId) return fn(s);
 		const children = walk(s.children);
@@ -7633,6 +8381,19 @@ function reducer(state, action) {
 				...state.summaryOverrides || {},
 				[action.key]: action.value
 			}
+		};
+		case "SET_PRICING": return {
+			...state,
+			pricing: action.pricing,
+			timeline: appendTimeline(state.timeline, timelineEntry({
+				who: action.who,
+				action: "Pricing switched",
+				remarks: action.remarks || ""
+			}))
+		};
+		case "SET_APPROVAL": return {
+			...state,
+			approval: action.approval
 		};
 		case "SET_SUMMARY_HIGHLIGHT": return {
 			...state,
@@ -8095,6 +8856,11 @@ function reducer(state, action) {
 				[action.sheetKey]: (state.fileAttachments[action.sheetKey] || []).filter((f) => f.id !== action.fileId)
 			}
 		};
+		case "SET_ATTACHMENT_EDITS": return {
+			...state,
+			attachmentEdits: action.edits || { order: [], names: {} }
+		};
+		case "SET_SOW_PLAN": return { ...state, sowPlan: Array.isArray(action.lines) ? action.lines : [] };
 		case "SET_SUMMARY_SHOW_BREAKDOWN": {
 			const needsSeed = action.value && !state.summaryTaskFilters.showBreakdown && state.summaryTaskFilters.selectedTaskIds.length === 0;
 			return {
@@ -8126,6 +8892,22 @@ function reducer(state, action) {
 				...state.summaryTaskFilters,
 				selectedTaskIds: action.ids
 			}
+		};
+		case "SET_QUOTATION_REFS": return {
+			...state,
+			quotationRefs: Array.isArray(action.refs) ? action.refs : []
+		};
+		case "SET_SOW": return {
+			...state,
+			sow: Array.isArray(action.sow) ? action.sow : []
+		};
+		case "SET_SCHEDULE": return {
+			...state,
+			schedule: action.schedule && typeof action.schedule === "object" ? action.schedule : {}
+		};
+		case "SET_MOB_SHEETS": return {
+			...state,
+			mobSheets: action.mobSheets && typeof action.mobSheets === "object" ? action.mobSheets : { mobilization: 0, demobilization: 0 }
 		};
 		default: return state;
 	}
@@ -8491,10 +9273,17 @@ function mapAllItems(tasks, fn) {
 			children: mapSubs(s.children)
 		};
 	});
-	return (tasks || []).map((t) => ({
-		...t,
-		subtasks: mapSubs(t.subtasks)
-	}));
+	return (tasks || []).map((t) => {
+		const next = { ...t, subtasks: mapSubs(t.subtasks) };
+		if (t.items && typeof t.items === "object") {
+			const items = { ...t.items };
+			CATS.forEach((c) => {
+				items[c] = (items[c] || []).map((it) => fn(c, it));
+			});
+			next.items = items;
+		}
+		return next;
+	});
 }
 function countExceptionLines(tasks, ex) {
 	let n = 0;
@@ -9258,7 +10047,7 @@ function lineRowName(category, row) {
 }
 function lineRequiredKeys(category) {
 	if (category === "BOL" || category === "BOTE") return [["qty", "Qty"], ["days", "Days"], ["rate", "Rate"]];
-	return [["qty", "Qty"], ["unitCost", "Unit cost"]];
+	return [["qty", "Qty"], ["unitCost", "Unit Price"]];
 }
 function lineFieldMissing(value) {
 	return value === "" || value == null || !(Number(value) > 0);
@@ -9914,7 +10703,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 		setCopyUndo(null);
 	};
 	const totals = subtask2.items.BOL.reduce((acc, it) => {
-		const c = calcBOL(it);
+		const c = calcBOL(it, activeCePricing);
 		acc.labor += c.labor;
 		acc.benefits += c.benefits;
 		acc.total += c.subtotal;
@@ -10074,7 +10863,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 								colKey: "role",
 								width: widths.role,
 								onResize: updateWidth,
-								children: "Role / Position"
+								children: "Designation"
 							}),
 							/* @__PURE__ */ jsx(ResizableTh, {
 								colKey: "dayType",
@@ -10138,7 +10927,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 						] }) }),
 						/* @__PURE__ */ jsx("tbody", { children: allRows.map((row, index) => {
 							const isLast = index === allRows.length - 1;
-							row.isDraft || calcBOL(row);
+							row.isDraft || calcBOL(row, activeCePricing);
 							return /* @__PURE__ */ jsxs("tr", {
 								...rowDrag(row, "BOL", task2, subtask2, dispatch),
 								"data-line-id": row.id,
@@ -10165,7 +10954,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 										children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 										category: "BOL",
 										row
-									}), /* @__PURE__ */ jsx(LineDbMark, {
+									}), /* @__PURE__ */ jsx(LineDbSlot, {
 										category: "BOL",
 										row,
 										list: masterlistBOL,
@@ -10177,7 +10966,9 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 											itemId: row.id,
 											patch
 										})
-									})] })] })] }),
+									}),
+									/* @__PURE__ */ jsx(CalcLineMark, { row })
+								] })] })] }),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("select", {
 										className: "ce-grid-select",
 										value: row.dayType,
@@ -10284,7 +11075,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 									}) }),
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-grid-subtotal",
-										children: [row.isDraft ? "—" : fmt(calcBOL(row).subtotal), limitNote(limits.rowNote(row.id) || row.limitError)]
+										children: [row.isDraft ? "—" : fmt(calcBOL(row, activeCePricing).subtotal), limitNote(limits.rowNote(row.id) || row.limitError)]
 									}),
 									/* @__PURE__ */ jsxs("td", {
 										className: "ce-grid-del",
@@ -10363,7 +11154,7 @@ function BOLGrid({ task: task2, subtask: subtask2, dispatch }) {
 			/* @__PURE__ */ jsx("p", {
 				className: "ce-assumption",
 				style: { padding: "0 0.9rem 0.7rem" },
-				children: "Sun/Special ×1.30 · Holiday ×2.00 · Night differential +10% · OT premium ×1.25"
+				children: bolAssumptionText()
 			})
 		]
 	});
@@ -10401,7 +11192,12 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			rate: blankOrNumber(r.rate),
 			powerKw: optionalNumber(r.powerKw),
 			hoursPerDay: optionalNumber(r.hoursPerDay),
-			kwhRate: optionalNumber(r.kwhRate)
+			kwhRate: optionalNumber(r.kwhRate),
+			...(r.rateType ? {
+				rateType: r.rateType,
+				rateVersion: r.rateVersion,
+				rateSnapshot: r.rateSnapshot
+			} : {})
 		})
 	});
 	const { draftRows, setDraftRows } = lineEntry;
@@ -10436,6 +11232,18 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 		if (extra.masterlistId) {
 			if (!num2(row.days)) extra.days = defaultDaysForSubtask(task2, subtask2);
 			if (!num2(row.qty)) extra.qty = 1;
+			if (equipmentRatesOn && row.isDraft) {
+				const matched = matchEquipmentItem(equipmentCatalogNow?.items, value);
+				if (matched) {
+					const snap = boteLineSnapshot(matched, equipmentCatalogNow?.formula, row.rateType || "day");
+					if (snap.ok) {
+						extra.rate = snap.rate;
+						extra.rateType = snap.rateType;
+						extra.rateVersion = snap.rateVersion;
+						extra.rateSnapshot = snap.rateSnapshot;
+					}
+				}
+			}
 		}
 		const patch = applyIdentityException("BOTE", row, {
 			[field]: value,
@@ -10453,6 +11261,32 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 			...r,
 			...patch,
 			limitError: ""
+		} : r));
+	};
+	const applyEquipmentRate = (row, kind) => {
+		if (!equipmentRatesOn) return;
+		if (!row.rateType && kind === "day") return;
+		const matched = matchEquipmentItem(equipmentCatalogNow?.items, row.description);
+		if (!matched) return;
+		const snap = boteLineSnapshot(matched, equipmentCatalogNow?.formula, kind);
+		if (!snap.ok) return;
+		const ratePatch = {
+			rate: snap.rate,
+			rateType: snap.rateType,
+			rateVersion: snap.rateVersion,
+			rateSnapshot: snap.rateSnapshot
+		};
+		if (!row.isDraft) dispatch({
+			type: "UPDATE_ITEM",
+			taskId: task2.id,
+			subtaskId: subtask2.id,
+			category: "BOTE",
+			itemId: row.id,
+			patch: ratePatch
+		});
+		else setDraftRows((prev) => prev.map((r) => r.id === row.id ? {
+			...r,
+			...ratePatch
 		} : r));
 	};
 	const appendRowIfLast = (row) => {
@@ -10585,6 +11419,16 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										},
 										onFocus: () => appendRowIfLast(row)
 									}),
+									equipmentRatesOn && /* @__PURE__ */ jsx("select", {
+										className: "ce-input",
+										"aria-label": "Rate type",
+										value: row.rateType || "day",
+										onChange: (e) => applyEquipmentRate(row, e.target.value),
+										children: ["hour", "day", "rental", "project"].map((kind) => /* @__PURE__ */ jsx("option", {
+											value: kind,
+											children: kind
+										}, kind))
+									}),
 									/* @__PURE__ */ jsxs("span", {
 										className: "ce-desc-icons",
 										children: [
@@ -10596,7 +11440,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										category: "BOTE",
 										row
 									}),
-									/* @__PURE__ */ jsx(LineDbMark, {
+									/* @__PURE__ */ jsx(LineDbSlot, {
 										category: "BOTE",
 										row,
 										list: masterlistBOTE,
@@ -10609,6 +11453,7 @@ function BOTEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 											patch
 										})
 									}),
+									/* @__PURE__ */ jsx(CalcLineMark, { row }),
 									!row.isDraft && /* @__PURE__ */ jsx(NeedsSourceMark, {
 										checked: !!row.needsQuote,
 										onChange: (next) => updateRow(row, "needsQuote", next)
@@ -10918,7 +11763,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							colKey: "unitCost",
 							width: widths.unitCost,
 							onResize: updateWidth,
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx(ResizableTh, {
 							colKey: "subtotal",
@@ -10960,7 +11805,7 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 									category: "BOCM",
 									row
-								}), /* @__PURE__ */ jsx(LineDbMark, {
+								}), /* @__PURE__ */ jsx(LineDbSlot, {
 									category: "BOCM",
 									row,
 									list: masterlistBOCM,
@@ -10972,7 +11817,9 @@ function BOCMForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										itemId: row.id,
 										patch
 									})
-								}), !row.isDraft && /* @__PURE__ */ jsx(NeedsSourceMark, {
+								}),
+								/* @__PURE__ */ jsx(CalcLineMark, { row }),
+								!row.isDraft && /* @__PURE__ */ jsx(NeedsSourceMark, {
 									checked: !!row.needsQuote,
 									onChange: (next) => updateRow(row, "needsQuote", next)
 								})] })] })] }),
@@ -11215,7 +12062,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 							colKey: "unitCost",
 							width: widths.unitCost,
 							onResize: updateWidth,
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx(ResizableTh, {
 							colKey: "subtotal",
@@ -11257,7 +12104,7 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 									children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 									category: "PPE",
 									row
-								}), /* @__PURE__ */ jsx(LineDbMark, {
+								}), /* @__PURE__ */ jsx(LineDbSlot, {
 									category: "PPE",
 									row,
 									list: masterlistPPE,
@@ -11269,7 +12116,9 @@ function PPEForm({ task: task2, subtask: subtask2, dispatch, items }) {
 										itemId: row.id,
 										patch
 									})
-								})] })] })] }),
+								}),
+								/* @__PURE__ */ jsx(CalcLineMark, { row })
+							] })] })] }),
 								/* @__PURE__ */ jsx("td", {
 									className: lineGapClass("PPE", row, "qty"),
 									"data-miss": lineGapNote("PPE", row, "qty"),
@@ -11824,7 +12673,10 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 					/* @__PURE__ */ jsx("button", {
 						type: "button",
 						className: `ce-pill ${sectionMode === "all" ? "ce-pill-active" : ""}`,
-						onClick: () => setSectionMode("all"),
+						onClick: () => {
+							setSectionMode("all");
+							if (ceTpl8On === true) miscShowMemory = miscShowAllPref(miscShowMemory, release1ActorId || "anon", "*", true);
+						},
 						children: "Show all"
 					}),
 					MISC_PRELOAD.map((sec) => /* @__PURE__ */ jsxs("button", {
@@ -11884,10 +12736,14 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 								children: "Save Group"
 							}), /* @__PURE__ */ jsx("button", {
 								className: "ce-btn-ghost ce-btn-sm misc-hide-btn",
-								onClick: () => setHideSections((prev) => ({
-									...prev,
-									[sec.section]: !prev[sec.section]
-								})),
+								onClick: () => {
+									const show = !!hideSections[sec.section];
+									setHideSections((prev) => ({
+										...prev,
+										[sec.section]: !prev[sec.section]
+									}));
+									if (ceTpl8On === true) miscShowMemory = miscShowAllPref(miscShowMemory, release1ActorId || "anon", sec.section, show);
+								},
 								type: "button",
 								children: hideSections[sec.section] ? "Show All" : "Hide Unused"
 							})]
@@ -11949,7 +12805,7 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 									onResize: updateWidth
 								})
 							] }) }), /* @__PURE__ */ jsx("tbody", { children: sec.rows.map((r, idx) => {
-								const lineTotal = roundMoney(showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost));
+								const lineTotal = isDirectPricing(activeCePricing) ? calcMISC(r, activeCePricing) : roundMoney(showDays ? num2(r.qty) * num2(r.days) * num2(r.unitCost) : num2(r.qty) * num2(r.unitCost));
 								return /* @__PURE__ */ jsxs("tr", { children: [
 									/* @__PURE__ */ jsx("td", {
 										className: "ce-center ce-item-no",
@@ -11967,7 +12823,7 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 										children: [/* @__PURE__ */ jsx(SpecialRateMark, {
 										category: "MISC",
 										row: r
-									}), /* @__PURE__ */ jsx(LineDbMark, {
+									}), /* @__PURE__ */ jsx(LineDbSlot, {
 										category: "MISC",
 										row: r,
 										list: masterlistMISC,
@@ -11982,7 +12838,9 @@ function BreakdownMiscPanel({ task: task2, subtask: subtask2, dispatch, open, on
 												items: next.map((row) => priceFromException("MISC", row, exceptions))
 											});
 										}
-									})] })] })] }),
+									}),
+									/* @__PURE__ */ jsx(CalcLineMark, { row: r })
+									] })] })] }),
 									/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
 										type: "number",
 										min: "0",
@@ -12526,6 +13384,11 @@ function SubtaskCard({ task: task2, subtask: subtask2, dispatch, allTasks, taskT
 }
 function TaskAccordion({ t, dispatch, allTasks, taskTemplates, focusSubtaskId = null, sheetMemory = null, onCloseOthers = null }) {
 	const dnd = useBreakdownDnd();
+	const [taskCats, setTaskCats] = useState({});
+	const taskCatOrder = ["BOL", "BOTE", "BOCM", "PPE", "MISC"];
+	const taskAllOpen = taskCatOrder.every((c) => taskCats[c]);
+	const taskHost = { id: "", title: t.title, items: { ...emptyItems(), ...(t.items || {}) }, expanded: true, notes: "", files: [], children: [] };
+	const taskDispatch = (action) => dispatch({ ...action, taskId: t.id, subtaskId: "" });
 	const total = taskTotal(t);
 	const isDragging = dnd.drag?.kind === "task" && dnd.drag.taskId === t.id;
 	const nextId = allTasks[allTasks.findIndex((x) => x.id === t.id) + 1]?.id || null;
@@ -12695,7 +13558,12 @@ function TaskAccordion({ t, dispatch, allTasks, taskTemplates, focusSubtaskId = 
 					children: [/* @__PURE__ */ jsx("b", {
 						className: "ce-mono ce-total ce-total-lg",
 						children: fmt(total)
-					}), /* @__PURE__ */ jsx("button", {
+					}), templatesFromDocsOn === true ? /* @__PURE__ */ jsx("button", {
+						className: "ce-btn-ghost ce-btn-sm",
+						type: "button",
+						onClick: () => saveTaskTemplateNow(t),
+						children: "Save to Per Task"
+					}) : null, /* @__PURE__ */ jsx("button", {
 						className: "ce-btn-ghost ce-btn-sm ce-add-t",
 						onClick: () => addSubtask(),
 						type: "button",
@@ -12731,6 +13599,35 @@ function TaskAccordion({ t, dispatch, allTasks, taskTemplates, focusSubtaskId = 
 							children: "Close others"
 						}) : null]
 					}) : null,
+					ceTpl8On === true ? /* @__PURE__ */ jsxs("div", {
+						className: "ce-cat-bar",
+						"aria-label": "Task resources",
+						children: [taskCatOrder.map((c) => {
+							const meta = CATEGORY_META[c];
+							const Icon = meta.icon;
+							return /* @__PURE__ */ jsxs("button", {
+								type: "button",
+								className: `ce-cat-chip${taskCats[c] ? " is-open" : ""}`,
+								onClick: () => setTaskCats((prev) => ({ ...prev, [c]: !prev[c] })),
+								children: [/* @__PURE__ */ jsx(Icon, { size: 13 }), meta.short]
+							}, c);
+						}), /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-cat-all",
+							onClick: () => {
+								const next = !taskAllOpen;
+								setTaskCats(Object.fromEntries(taskCatOrder.map((c) => [c, next])));
+							},
+							children: taskAllOpen ? "Close all" : "Open all"
+						})]
+					}) : null,
+					ceTpl8On === true ? taskCatOrder.map((c) => /* @__PURE__ */ jsx(CategoryCard, {
+						category: c,
+						task: t,
+						subtask: taskHost,
+						dispatch: taskDispatch,
+						open: !!taskCats[c]
+					}, `task-${c}`)) : null,
 					/* @__PURE__ */ jsx(NotesAndFilesBlock, {
 					label: t.title || "main task",
 					notes: t.notes,
@@ -13006,6 +13903,143 @@ function lineDbNotes(category, row, list, exceptions) {
 }
 function dbSheetKey(category) {
 	return { BOL: "manpower", BOTE: "equipment", BOCM: "consumables", PPE: "ppe", MISC: "misc" }[category] || "";
+}
+function CalcLineMark({ row }) {
+	const calc = row?.calc;
+	if (!calc || !calc.tool) return null;
+	const stale = constantsDiffer(calc.constantsVersion, calcConstantsNow);
+	return /* @__PURE__ */ jsxs(Fragment, { children: [
+		stale ? /* @__PURE__ */ jsx("span", { className: "ce-flag-override", children: "constants changed" }) : null,
+		/* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "ce-btn-ghost ce-btn-sm",
+			title: "Re-open calculator",
+			onClick: (event) => {
+				event.stopPropagation();
+				if (typeof reopenCalcLine === "function") reopenCalcLine(calc);
+			},
+			children: "ⓘ"
+		})
+	] });
+}
+function CeLineDbMark({ category, row, list, onPatch }) {
+	const [open, setOpen] = useState(false);
+	const [form, setForm] = useState(null);
+	if (!row || row.isDraft) return null;
+	const label = lineItemLabel(category, row);
+	if (!label) return null;
+	const catalog = (list || []).map((item) => ({ ...item, description: masterlistItemLabel(category, item) || item.description || item.name || "" }));
+	const status = lineDbState({ name: label, items: catalog, pending: pendingMasterNow, nameField: "description" });
+	const setField = (key) => (event) => setForm((cur) => ({ ...(cur || {}), [key]: event.target.value }));
+	function openAdd(event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const draft = masterAddDraft(label, category);
+		setForm({ ...draft, similar: status.similar[0]?.label || "" });
+		setOpen(true);
+	}
+	function linkMatch(event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const hit = status.similar[0];
+		if (!hit) return;
+		onPatch?.({ masterlistId: hit.item?.id || "", [lineLabelField(category)]: hit.label });
+	}
+	function saveRequest(event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const name = String(form?.name || "").trim();
+		if (!name) return;
+		submitPendingMaster({
+			raw: label,
+			name,
+			uom: form?.uom || "",
+			category: form?.category || category,
+			remark: form?.remark || "",
+			similar: form?.similar ? [form.similar] : status.similar.map((hit) => hit.label)
+		});
+		setOpen(false);
+	}
+	const mark = status.state === "exact" ? "✓" : status.state === "similar" ? "⚠" : status.state === "pending" ? "⏳" : "✕";
+	const title = status.state === "exact" ? "In the database" : status.state === "similar" ? "Similar item" : status.state === "pending" ? "Pending Admin approval" : "Not in the database";
+	return /* @__PURE__ */ jsxs("span", {
+		className: "ce-db-slot",
+		children: [
+			/* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "ce-desc-ico",
+				title,
+				"aria-label": title,
+				onClick: (event) => event.stopPropagation(),
+				children: mark
+			}),
+			status.state === "similar" ? /* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "ce-btn-ghost ce-btn-sm",
+				onClick: linkMatch,
+				children: "Link match"
+			}) : null,
+			status.state === "new" ? /* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "ce-btn-ghost ce-btn-sm",
+				onClick: openAdd,
+				children: "+ Add to DB"
+			}) : null,
+			open && form ? /* @__PURE__ */ jsxs("form", {
+				className: "ce-db-form ce-db-pop",
+				"aria-label": "Add item to database",
+				onSubmit: saveRequest,
+				onClick: (event) => event.stopPropagation(),
+				children: [
+					/* @__PURE__ */ jsx("p", { children: "Add item to database" }),
+					/* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "Noun name", value: form.name, onChange: setField("name") }),
+					/* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "UoM", value: form.uom, onChange: setField("uom"), placeholder: "UoM" }),
+					/* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "Category", value: form.category, onChange: setField("category") }),
+					/* @__PURE__ */ jsx("textarea", { className: "ce-input", "aria-label": "Remark", value: form.remark, onChange: setField("remark") }),
+					status.similar.length ? /* @__PURE__ */ jsxs("select", {
+						className: "ce-input",
+						"aria-label": "Similar items",
+						value: form.similar,
+						onChange: setField("similar"),
+						children: status.similar.map((hit) => /* @__PURE__ */ jsx("option", { value: hit.label, children: hit.label }, hit.label))
+					}) : null,
+					/* @__PURE__ */ jsx("button", { type: "submit", className: "ce-btn-primary ce-btn-sm", children: "Request approval" })
+				]
+			}) : null
+		]
+	});
+}
+function PendingMasterPanel() {
+	const db = useMasterlist();
+	const rows = (pendingMasterNow || []).filter((row) => row && row.status === "pending");
+	if (!rows.length) return null;
+	return /* @__PURE__ */ jsxs("section", {
+		className: "ce-card",
+		"aria-label": "Pending item additions",
+		children: [
+			/* @__PURE__ */ jsx("h3", { children: "Pending item additions" }),
+			rows.map((row) => /* @__PURE__ */ jsxs("div", {
+				children: [
+					/* @__PURE__ */ jsx("span", { children: `${row.name} · ${row.category} · ${row.role || "any role"}` }),
+					/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => {
+							const made = approveMasterItem({ pendingId: row.id, pending: pendingMasterNow, items: [], approverRole: "admin" });
+							if (!made.ok || !made.item) return;
+							db.addItem(dbSheetKey(row.category), made.item);
+							applyPendingMaster(made.pending);
+						},
+						children: "Approve"
+					})
+				]
+			}, row.id))
+		]
+	});
+}
+function LineDbSlot(props) {
+	if (ceTpl6On === true) return /* @__PURE__ */ jsx(CeLineDbMark, { ...props });
+	return /* @__PURE__ */ jsx(LineDbMark, { ...props });
 }
 function LineDbMark({ category, row, list, onPatch }) {
 	const db = useMasterlist();
@@ -14020,6 +15054,20 @@ function computeSchedule(tasks) {
 		subtaskSchedule
 	};
 }
+function taskPlan(tasks) {
+	const { taskSchedule } = computeSchedule(tasks || []);
+	return (tasks || []).map((task) => {
+		const row = taskSchedule[task.id] || { start: 1, end: 1, duration: 1 };
+		return {
+			id: task.id,
+			title: task.title || "Task",
+			predecessor: task.predecessor || "",
+			start: row.start,
+			end: row.end,
+			duration: row.duration
+		};
+	});
+}
 function computePeakByCategory(tasks, category) {
 	const { subtaskSchedule } = computeSchedule(tasks);
 	let maxCost = 0;
@@ -14039,12 +15087,14 @@ function computePeakByCategory(tasks, category) {
 }
 function getScheduledItemMap(tasks, category) {
 	const { subtaskSchedule } = computeSchedule(tasks);
-	const maxDay = Object.values(subtaskSchedule).reduce((max, s) => Math.max(max, s.end), 0);
+	const scheduledEnd = Object.values(subtaskSchedule).reduce((max, s) => Math.max(max, s.end), 0);
+	const maxDay = Math.max(scheduledEnd, 1);
 	const itemMap = {};
 	tasks.forEach((t) => {
-		flattenSubs(t).forEach((st) => {
+		costNodes(t).forEach((st) => {
 			const sched = subtaskSchedule[`${t.id}:${st.id}`];
-			if (!sched) return;
+			const taskHost = String(st.id || "").endsWith("::lines");
+			if (!sched && !taskHost) return;
 			(st.items[category] || []).forEach((it) => {
 				const key = category === "BOL" ? `${it.role}~${it.dayType || "Regular"}~${it.shift || "Day"}` : category === "PPE" ? it.item : it.description;
 				if (!key) return;
@@ -14053,6 +15103,11 @@ function getScheduledItemMap(tasks, category) {
 					days: /* @__PURE__ */ new Set()
 				};
 				const qty = num2(it.qty);
+				if (!sched) {
+					itemMap[key].dailyQty[0] += qty;
+					itemMap[key].days.add(1);
+					return;
+				}
 				for (let d = sched.start; d <= sched.end; d++) {
 					itemMap[key].dailyQty[d - 1] += qty;
 					itemMap[key].days.add(d);
@@ -14071,9 +15126,9 @@ function getScheduledItemMap(tasks, category) {
 	return result;
 }
 var MOB_ALLOWANCE_RATES = {
-	"Project Manager": 500,
-	Skilled: 200,
-	Admin: 300
+	"Project Manager": 0,
+	Skilled: 0,
+	Admin: 0
 };
 var MOB_REQUIREMENT_ITEMS = [
 	"Medical",
@@ -14219,9 +15274,10 @@ function getMobManpowerRows(tasks) {
 function totalMobManpower(tasks) {
 	return getMobManpowerRows(tasks).reduce((s, r) => s + num2(r.qty), 0);
 }
-function SummaryView({ tasks, viewType }) {
+function SummaryView({ tasks, viewType, pricing, mobSheets }) {
 	const [expandedTaskId, setExpandedTaskId] = useState(null);
 	const noteRows = collectNotes(tasks);
+	const direct = isDirectPricing(pricing);
 	viewType === "Breakdown" && [
 		"A. Mobilization",
 		"B. Regular",
@@ -14234,12 +15290,14 @@ function SummaryView({ tasks, viewType }) {
 		if (index >= 2 && index <= 5 && tasks[index - 2]) return tasks[index - 2].title;
 		return stdLabel;
 	});
-	const grandTotal = roundMoney(tasks.reduce((s, t) => s + taskTotal(t), 0));
+	const grandTotal = projectTotal(tasks, pricing, mobSheets);
+	const matrixCats = direct ? ["BOL", "A1", "BOTE", "BOCM", "PPE", "MISC"] : CATS;
 	const catTotals = CATS.map((c) => ({
 		cat: c,
-		total: tasks.reduce((s, t) => s + categoryOnTask(t, c), 0),
+		total: tasks.reduce((s, t) => s + categoryOnTask(t, c, pricing), 0),
 		peak: computePeakByCategory(tasks, c)
 	}));
+	if (direct) catTotals.splice(1, 0, { cat: "A1", total: directColumnTotals(tasks, pricing).A1, peak: 0 });
 	return /* @__PURE__ */ jsxs("div", { children: [
 		/* @__PURE__ */ jsxs("div", {
 			className: "ce-card ce-summary-hero",
@@ -14299,7 +15357,7 @@ function SummaryView({ tasks, viewType }) {
 							className: "ce-card-header ce-card-header-compact",
 							children: [/* @__PURE__ */ jsx("span", {
 								className: "ce-chip",
-								children: CATEGORY_META[cat].short
+								children: cat === "A1" ? "A.1" : CATEGORY_META[cat].short
 							}), /* @__PURE__ */ jsx("b", {
 								className: "ce-mono",
 								children: fmt(total)
@@ -14334,12 +15392,16 @@ function SummaryView({ tasks, viewType }) {
 								children: "Total"
 							})
 						] }) }),
-						/* @__PURE__ */ jsxs("tbody", { children: [CATS.map((c) => {
+						/* @__PURE__ */ jsxs("tbody", { children: [matrixCats.map((c) => {
 							const usedTypes = WORK_TYPES.filter((w) => tasksOfType(tasks, w.id).length > 0);
-							const cells = usedTypes.map((w) => tasksOfType(tasks, w.id).reduce((s, t) => s + categoryOnTask(t, c), 0));
+							const cells = usedTypes.map((w) => {
+								const subset = tasksOfType(tasks, w.id);
+								return c === "A1" ? directColumnTotals(subset, pricing).A1 : subset.reduce((s, t) => s + categoryOnTask(t, c, pricing), 0);
+							});
 							const rowTotal = cells.reduce((s, n) => s + n, 0);
+							const label = c === "A1" ? "A.1 Benefits" : CATEGORY_META[c].short;
 							return /* @__PURE__ */ jsxs("tr", { children: [
-								/* @__PURE__ */ jsx("td", { children: CATEGORY_META[c].short }),
+								/* @__PURE__ */ jsx("td", { children: label }),
 								cells.map((n, i) => /* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
 									children: fmt(n)
@@ -14369,7 +15431,7 @@ function SummaryView({ tasks, viewType }) {
 								/* @__PURE__ */ jsx("td", { children: "Total" }),
 								WORK_TYPES.filter((w) => tasksOfType(tasks, w.id).length > 0).map((w) => /* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
-									children: fmt(tasksOfType(tasks, w.id).reduce((s, t) => s + taskTotal(t), 0))
+									children: fmt(projectTotal(tasksOfType(tasks, w.id), pricing, mobSheets))
 								}, w.id)),
 								/* @__PURE__ */ jsx("td", {
 									className: "ce-right ce-mono",
@@ -14407,7 +15469,7 @@ function SummaryView({ tasks, viewType }) {
 						/* @__PURE__ */ jsx("td", { children: t.subtasks.length }),
 						/* @__PURE__ */ jsx("td", {
 							className: "ce-right ce-mono",
-							children: fmt(taskTotal(t))
+							children: fmt(direct ? projectTotal([t], pricing) : taskTotal(t))
 						})
 					] }, t.id)) }),
 					/* @__PURE__ */ jsx("tfoot", { children: /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("td", { colSpan: 2 }), /* @__PURE__ */ jsx("td", {
@@ -14451,9 +15513,10 @@ function WorkTypeFilterBar({ value, onChange }) {
 		}, w.id))]
 	});
 }
-function buildBolGroups(tasks) {
+function buildBolGroups(tasks, pricing) {
+	if (pricing && pricing.model === "direct-v1") return directBolGroups(tasks, pricing);
 	const allBOL = [];
-	(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => (s.items.BOL || []).forEach((it) => allBOL.push(it))));
+	(tasks || []).forEach((t) => costNodes(t).forEach((s) => (s.items.BOL || []).forEach((it) => allBOL.push(it))));
 	const scheduleMap = getScheduledItemMap(tasks || [], "BOL");
 	const groups = {};
 	DAY_TYPES.forEach((dt) => {
@@ -14496,13 +15559,8 @@ function buildBolGroups(tasks) {
 	DAY_TYPES.forEach((dt) => {
 		["Day", "Night"].forEach((shift) => {
 			Object.values(groups[dt][shift] || {}).forEach((r) => {
-				const f = formulaNow();
-				const dtMult = dayTypeMultiplier(dt);
-				const shiftAdd = shift === "Night" ? f.nightDiffPct / 100 : 0;
-				const hours = f.hoursPerDay || 8;
-				const effRate = r.rate * dtMult * (1 + shiftAdd);
-				const otRate = r.rate / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-				r.subtotal = roundMoney(r.qty * r.days * effRate + r.qty * r.days * r.otHrs * otRate);
+				const pay = dolePay(r.rate, dt, shift, formulaNow());
+				r.subtotal = roundMoney(r.qty * r.days * pay.dayRate + r.qty * r.days * r.otHrs * pay.otRate);
 			});
 		});
 	});
@@ -14561,28 +15619,27 @@ function usePersistentEdits(storeRef, key) {
 	};
 	return [edits, update];
 }
-function bolLineAmount(row, dt, shift) {
-	const f = formulaNow();
-	const dtMult = dayTypeMultiplier(dt);
-	const shiftAdd = shift === "Night" ? f.nightDiffPct / 100 : 0;
-	const hours = f.hoursPerDay || 8;
-	const effRate = num2(row.rate) * dtMult * (1 + shiftAdd);
-	const otRate = num2(row.rate) / hours * f.otMultiplier * dtMult * (1 + shiftAdd);
-	return roundMoney(num2(row.qty) * num2(row.days) * effRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * otRate);
+function bolLineAmount(row, dt, shift, pricing) {
+	if (pricing && pricing.model === "direct-v1") {
+		const pay = dolePay(num2(row.rate), dt || "Regular", shift || "Day", pricing.formula || {});
+		return roundMoney(num2(row.qty) * num2(row.days) * pay.dayRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * pay.otRate);
+	}
+	const pay = dolePay(num2(row.rate), dt || "Regular", shift || "Day", formulaNow());
+	return roundMoney(num2(row.qty) * num2(row.days) * pay.dayRate + num2(row.qty) * num2(row.days) * num2(row.otHrs) * pay.otRate);
 }
-function withBolEdit(row, edit, dt, shift) {
+function withBolEdit(row, edit, dt, shift, pricing) {
 	const next = {
 		...row,
 		qty: edit && Object.prototype.hasOwnProperty.call(edit, "qty") ? edit.qty : row.qty,
 		days: edit && Object.prototype.hasOwnProperty.call(edit, "days") ? edit.days : row.days,
 		otHrs: edit && Object.prototype.hasOwnProperty.call(edit, "otHrs") ? edit.otHrs : row.otHrs
 	};
-	next.subtotal = bolLineAmount(next, dt, shift);
+	next.subtotal = bolLineAmount(next, dt, shift, pricing);
 	return next;
 }
 function matchingItemIds(tasks, category, match) {
 	const ids = [];
-	(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => {
+	(tasks || []).forEach((t) => costNodes(t).forEach((s) => {
 		(s.items?.[category] || []).forEach((it) => {
 			if (match(it)) ids.push(it.id);
 		});
@@ -14833,7 +15890,7 @@ function BenefitCalcCell({ value, explain, editable, onChange }) {
 		{open ? <div className="ce-calc-pop">{explain}</div> : null}
 	</div>;
 }
-function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
+function BOLMasterSummaryImpl({ tasks, editsRef, dispatch, pricing }) {
 	const { widths, updateWidth } = useResizableColumns("bol-sum-col-widths", {
 		itemNo: 60,
 		role: 220,
@@ -14863,17 +15920,17 @@ function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
 	const [benefitEdits, setBenefitEdits] = usePersistentEdits(editsRef, "bol-benefits");
 	const [search, setSearch] = useState("");
 	const [picker, setPicker] = useState(null);
-	const full = useMemo(() => buildBolGroups(tasks), [tasks]);
+	const full = useMemo(() => buildBolGroups(tasks, pricing), [tasks, pricing]);
 	const allBOL = full.allBOL;
 	const scheduleMap = useMemo(() => getScheduledItemMap(tasks, "BOL"), [tasks]);
 	const typeModels = useMemo(() => {
 		const out = {};
 		WORK_TYPES.forEach((w) => {
 			const subset = tasksOfType(tasks, w.id);
-			out[w.id] = { subset, model: buildBolGroups(subset) };
+			out[w.id] = { subset, model: buildBolGroups(subset, pricing) };
 		});
 		return out;
-	}, [tasks]);
+	}, [tasks, pricing]);
 	const toolsFor = (w, g) => dispatch ? {
 		tasks,
 		workType: w.id,
@@ -14888,7 +15945,7 @@ function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
 		const model = typeModels[w.id].model;
 		return sum + BOL_SHIFT_GROUPS.reduce((block, g) => {
 			return block + Object.values(model.groups[g.dt]?.[g.shift] || {}).reduce((rowSum, row) => {
-				return rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal);
+				return rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift, pricing).subtotal);
 			}, 0);
 		}, 0);
 	}, 0));
@@ -15019,7 +16076,7 @@ function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
 						...BOL_SHIFT_GROUPS.map((g) => {
 							const source = summarySort(shownRows(g), "BOL", (row) => row.role);
 							if (!source.length) return null;
-							const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift));
+							const rows = source.map((row) => withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift, pricing));
 							return /* @__PURE__ */ jsx(BolShiftBlock, {
 								label: g.label,
 								rows,
@@ -15037,7 +16094,7 @@ function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
 									className: "ce-subtotal-row",
 									children: [/* @__PURE__ */ jsxs("td", { children: ["Subtotal — ", w.label] }), /* @__PURE__ */ jsx("td", {
 										className: "ce-right ce-mono",
-										children: fmt(BOL_SHIFT_GROUPS.reduce((block, g) => block + shownRows(g).reduce((rowSum, row) => rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift).subtotal), 0), 0))
+										children: fmt(BOL_SHIFT_GROUPS.reduce((block, g) => block + shownRows(g).reduce((rowSum, row) => rowSum + num2(withBolEdit(row, bolEdits[`${w.id}|${g.dt}|${g.shift}|${row.role}`], g.dt, g.shift, pricing).subtotal), 0), 0))
 									})]
 								}) })
 							})
@@ -15062,7 +16119,8 @@ function BOLMasterSummaryImpl({ tasks, editsRef, dispatch }) {
 					}) })
 				})
 			}),
-			/* @__PURE__ */ jsxs("div", {
+			isDirectPricing(pricing) ? /* @__PURE__ */ jsx("p", { className: "wiz-hint", children: "This sheet is labour only. Per diem stays in the estimate total. Benefits are row A.1." }) : null,
+			isDirectPricing(pricing) ? null : /* @__PURE__ */ jsxs("div", {
 				style: { marginTop: "1.5rem" },
 				children: [/* @__PURE__ */ jsx("div", {
 					className: "ce-sum-shift",
@@ -15256,7 +16314,7 @@ function buildCategoryAutoRows(tasks, category, workType) {
 		let powerKw = 0;
 		let hoursPerDay = 0;
 		let kwhRate = 0;
-		(tasks || []).forEach((t) => flattenSubs(t).forEach((s) => (s.items[category] || []).forEach((it) => {
+		(tasks || []).forEach((t) => costNodes(t).forEach((s) => (s.items[category] || []).forEach((it) => {
 			if ((category === "PPE" ? it.item : it.description) === desc) {
 				rate = category === "BOTE" ? num2(it.rate) : num2(it.unitCost);
 				powerKw = num2(it.powerKw);
@@ -15475,7 +16533,7 @@ function AggregatedCategoryTabImpl({ tasks, category, editsRef, dispatch }) {
 								width: widths.rate,
 								onResize: updateWidth,
 								className: "ce-sum-left",
-								children: "Rate / Unit Cost"
+								children: "Unit Price"
 							}),
 							showElec && /* @__PURE__ */ jsxs(Fragment, { children: [
 								/* @__PURE__ */ jsx(ResizableTh, {
@@ -15752,7 +16810,7 @@ function AggregatedCategoryTabImpl({ tasks, category, editsRef, dispatch }) {
 	});
 }
 const AggregatedCategoryTab = React.memo(AggregatedCategoryTabImpl);
-function MISCSheet({ tasks = [] }) {
+function MISCSheet({ tasks = [], pricing = null }) {
 	const { MISC: miscList } = useMasterlist();
 	const limits = useLimitNotes();
 	const { widths, updateWidth } = useResizableColumns("misc-accom-col-widths", {
@@ -15820,7 +16878,7 @@ function MISCSheet({ tasks = [] }) {
 				qty: 0,
 				unit: it.unit || defaultMiscUnit(desc),
 				unitCost: num2(it.unitCost),
-				days: num2(it.days) || 1,
+				days: isDirectPricing(pricing) ? it.days == null || it.days === "" ? 1 : num2(it.days) : num2(it.days) || 1,
 				fromBreakdown: true
 			};
 			fromBd[key].qty += num2(it.qty);
@@ -15839,7 +16897,7 @@ function MISCSheet({ tasks = [] }) {
 					qty: hit.qty,
 					unit: hit.unit || r.unit || "",
 					unitCost: hit.unitCost || r.unitCost,
-					days: hit.days || r.days,
+					days: isDirectPricing(pricing) ? hit.days : hit.days || r.days,
 					fromBreakdown: true
 				});
 			});
@@ -15859,7 +16917,7 @@ function MISCSheet({ tasks = [] }) {
 			});
 			return next;
 		});
-	}, [tasks]);
+	}, [tasks, pricing]);
 	const updateEntry = (id, patch) => {
 		const clean = withoutBadLimits(patch);
 		Object.keys(patch || {}).forEach((key) => limits.reject(id, key, patch[key]));
@@ -16478,7 +17536,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -16641,7 +17699,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -16789,7 +17847,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					}) : null, /* @__PURE__ */ jsx("h4", {
 						className: "ce-serif ce-summary-subheading",
 						style: { margin: 0 },
-						children: "Part C: Line Items"
+						children: "Part C: Items"
 					}), isMobDemob || partCOpen ? /* @__PURE__ */ jsx("button", {
 						className: "ce-iconbtn",
 						onClick: () => setHideUnused(!hideUnused),
@@ -16803,7 +17861,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-item",
-							children: "Line Item"
+							children: "Item No."
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-desc",
@@ -16823,7 +17881,7 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-rate",
-							children: "Unit Cost"
+							children: "Unit Price"
 						}),
 						/* @__PURE__ */ jsx("th", {
 							className: "mob-total",
@@ -16949,10 +18007,12 @@ function MobDemobSection({ title, tasks, open = true, copyLabel, onCopy, copyTok
 		})]
 	});
 }
-function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setCeStatus, versionHistory, onSaveVersion, onRestoreVersion, onBack, editLocked, onEditingChange }) {
+function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setCeStatus, versionHistory, onSaveVersion, onRestoreVersion, onBack, editLocked, onEditingChange, engineOn = false, onRequestClosing = null, headerEdit = null }) {
 	const [editing, setEditing] = useState(false);
 	const [isParked, setIsParked] = useState(false);
 	const [draft, setDraft] = useState(meta);
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const [drawerDraft, setDrawerDraft] = useState(null);
 	const idleTimerRef = useRef(null);
 	useEffect(() => {
 		onEditingChange?.(editing);
@@ -17006,7 +18066,7 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 						meta.client,
 						meta.location,
 						meta.date
-					].filter(Boolean).join(" · ") : "Click Edit to add client, location, and date"
+					].filter(Boolean).join(" · ") : editLocked ? "—" : "Click Edit to add client, location, and date"
 				}) : /* @__PURE__ */ jsxs("div", {
 					className: "ce-meta-edit",
 					children: [
@@ -17046,26 +18106,43 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							onChange: (e) => {
 								const v = e.target.value;
 								if (v === ceStatus) return;
-								if (!PEOPLE_SETTABLE.includes(v) && v !== ceStatus) {
-									window.alert("Only Park, Waiting for information, Sourcing, and No quote can be set here. Other statuses follow Submit / approval / generate.");
+								if (engineOn && (v === "No quote" || v === "Cancelled" || v === "Close bid")) {
+									void askReason({ title: "Closing", label: "Reason", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										const begun = onRequestClosing?.(v, asked.text);
+										if (!begun?.ok) return;
+										dispatch({
+											type: "SET_APPROVAL",
+											approval: begun.approval
+										});
+										setCeStatus(begun.pendingStatus);
+									});
 									return;
 								}
+								if (!PEOPLE_SETTABLE.includes(v) && v !== ceStatus) return;
 								if ([
 									"Waiting for information",
 									"Sourcing",
 									"No quote"
 								].includes(v)) {
-									const note = window.prompt(v === "No quote" ? "Reason for no-quote (required)" : "Remarks for the requestor (required)");
-									if (!note || !String(note).trim()) return;
-									dispatch({
-										type: "SET_META",
-										field: "statusNote",
-										value: String(note).trim()
+									void askReason({
+										title: v === "No quote" ? "No quote" : "Remarks",
+										label: v === "No quote" ? "Reason for no-quote" : "Remarks for the requestor",
+										required: true
+									}).then((asked) => {
+										if (!asked.ok) return;
+										dispatch({
+											type: "SET_META",
+											field: "statusNote",
+											value: asked.text
+										});
+										setCeStatus(v);
 									});
+									return;
 								}
 								setCeStatus(v);
 							},
-							className: "ce-status-select",
+							className: "ce-status-select" + (ceTpl3On && String(ceStatus).toLowerCase() === "for approval" ? " ce-for-approval" : ""),
 							title: "People may set Park, Wait for info, Sourcing, or No quote",
 							children: [!PEOPLE_SETTABLE.includes(ceStatus) && /* @__PURE__ */ jsx("option", {
 								value: ceStatus,
@@ -17073,7 +18150,13 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							}), PEOPLE_SETTABLE.map((s) => /* @__PURE__ */ jsx("option", {
 								value: s,
 								children: s
-							}, s))]
+							}, s)), engineOn ? /* @__PURE__ */ jsx("option", {
+								value: "Cancelled",
+								children: "Cancelled"
+							}) : null, engineOn ? /* @__PURE__ */ jsx("option", {
+								value: "Close bid",
+								children: "Close bid"
+							}) : null]
 						}),
 						/* @__PURE__ */ jsx("button", {
 							className: `ce-btn-ghost ce-btn-sm ${isParked ? "ce-btn-active" : ""}`,
@@ -17095,21 +18178,26 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 							type: "button",
 							children: [/* @__PURE__ */ jsx(Download, { size: 14 }), " Export"]
 						}),
-						/* @__PURE__ */ jsxs("button", {
+						canShowHeaderEdit({ editLocked }) ? /* @__PURE__ */ jsxs("button", {
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: onImportClick,
 							type: "button",
 							children: [/* @__PURE__ */ jsx(Upload, { size: 14 }), " Import"]
-						}),
-						!editing ? /* @__PURE__ */ jsxs("button", {
+						}) : null,
+						!editing ? canShowHeaderEdit({ editLocked }) ? /* @__PURE__ */ jsxs("button", {
 							className: "ce-btn-ghost ce-btn-sm",
 							onClick: () => {
 								setDraft(meta);
+								if (headerEdit) {
+									setDrawerDraft({ ...headerEdit.draft });
+									setDrawerOpen(true);
+									return;
+								}
 								setEditing(true);
 							},
 							type: "button",
 							children: [/* @__PURE__ */ jsx(Pencil, { size: 14 }), " Edit"]
-						}) : /* @__PURE__ */ jsxs("button", {
+						}) : null : /* @__PURE__ */ jsxs("button", {
 							className: "ce-btn-primary ce-btn-sm",
 							onClick: save,
 							type: "button",
@@ -17151,6 +18239,113 @@ function Header({ meta, grand, dispatch, onExport, onImportClick, ceStatus, setC
 					className: "ce-mono ce-header-total-val",
 					children: fmt(grand)
 				})]
+			}),
+			drawerOpen && drawerDraft && /* @__PURE__ */ jsx("div", {
+				className: "ce-drawer-overlay",
+				onClick: () => setDrawerOpen(false),
+				children: /* @__PURE__ */ jsxs("aside", {
+					className: "ce-drawer ce-header-drawer",
+					role: "dialog",
+					"aria-label": "Edit header",
+					onClick: (event) => event.stopPropagation(),
+					children: [
+						/* @__PURE__ */ jsxs("div", {
+							className: "ce-drawer-header",
+							children: [/* @__PURE__ */ jsx("h3", {
+								className: "ce-serif",
+								children: "Edit header"
+							}), /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => setDrawerOpen(false),
+								children: "Close"
+							})]
+						}),
+						/* @__PURE__ */ jsxs("div", {
+							className: "ce-drawer-body",
+							children: [
+								HEADER_EDIT_FIELDS.map((field) => {
+									const locked = headerEdit?.draft?.locked === true;
+									if (field.readOnly) return /* @__PURE__ */ jsxs("label", {
+										className: "ce-field",
+										children: [/* @__PURE__ */ jsx("span", {
+											className: "ce-field-label",
+											children: field.label
+										}), headerEdit?.onOpenRce ? /* @__PURE__ */ jsx("button", {
+											type: "button",
+											className: "ce-btn-ghost",
+											onClick: () => headerEdit.onOpenRce(),
+											children: drawerDraft.rceNo || "—"
+										}) : /* @__PURE__ */ jsx("input", {
+											className: "ce-input ce-input-disabled",
+											readOnly: true,
+											value: drawerDraft.rceNo || ""
+										})]
+									}, field.key);
+									if (field.key === "jobType") return /* @__PURE__ */ jsxs("label", {
+										className: "ce-field",
+										children: [/* @__PURE__ */ jsx("span", {
+											className: "ce-field-label",
+											children: field.label
+										}), /* @__PURE__ */ jsxs("select", {
+											className: "ce-input",
+											disabled: locked,
+											value: drawerDraft.jobType || "",
+											onChange: (e) => setDrawerDraft({
+												...drawerDraft,
+												jobType: e.target.value
+											}),
+											children: [/* @__PURE__ */ jsx("option", {
+												value: "",
+												children: "—"
+											}, "blank"), HEADER_JOB_TYPES.map((job) => /* @__PURE__ */ jsx("option", {
+												value: job,
+												children: job
+											}, job))]
+										})]
+									}, field.key);
+									const multiline = field.key === "projectDescription";
+									return /* @__PURE__ */ jsxs("label", {
+										className: "ce-field",
+										children: [/* @__PURE__ */ jsx("span", {
+											className: "ce-field-label",
+											children: field.label
+										}), /* @__PURE__ */ jsx(multiline ? "textarea" : "input", {
+											className: "ce-input",
+											disabled: locked,
+											type: multiline ? void 0 : field.key === "date" || field.key === "targetDeadline" ? "date" : "text",
+											rows: multiline ? 3 : void 0,
+											value: drawerDraft[field.key] || "",
+											onChange: (e) => setDrawerDraft({
+												...drawerDraft,
+												[field.key]: e.target.value
+											})
+										})]
+									}, field.key);
+								}),
+								/* @__PURE__ */ jsxs("div", {
+									className: "ce-drawer-actions",
+									children: [/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-ghost",
+										onClick: () => setDrawerOpen(false),
+										children: "Cancel"
+									}), /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-primary",
+										disabled: headerEdit?.draft?.locked === true,
+										onClick: () => {
+											if (headerEdit?.draft?.locked === true) return;
+											headerEdit?.onSave?.(drawerDraft);
+											setDrawerOpen(false);
+										},
+										children: "Save"
+									})]
+								})
+							]
+						})
+					]
+				})
 			})
 		]
 	});
@@ -17225,10 +18420,17 @@ var BOL_PARTS = [
 	{ dt: "Holiday", shift: "Day", label: "E. Holiday Day (Dayshift)" },
 	{ dt: "Holiday", shift: "Night", label: "F. Holiday Night (Nightshift)" }
 ];
-function buildBolExportSection(tasks, notes) {
+function appendGrandTotal(blocks, totalRow, meta = { kind: "total" }) {
+	const last = [...blocks].reverse().find((b) => b.columns?.length && Array.isArray(b.rows));
+	if (!last) return;
+	last.rows.push(totalRow);
+	last.rowMeta = [...(last.rowMeta || []), meta];
+	delete last.gapAfter;
+}
+function buildBolExportSection(tasks, notes, pricing) {
 	const columns = [
 		"Item No.",
-		"Role / Position",
+		"Designation",
 		"QTY",
 		"Days",
 		"Rate/Day",
@@ -17245,37 +18447,52 @@ function buildBolExportSection(tasks, notes) {
 		rowMeta.push({ kind });
 	};
 	WORK_TYPES.forEach((w) => {
-		const model = buildBolGroups(tasksOfType(tasks, w.id));
+		const model = buildBolGroups(tasksOfType(tasks, w.id), pricing);
 		if (!model.allBOL.length) return;
 		any = true;
-		grand = roundMoney(grand + model.grandTotal);
+		const perDiemBy = {};
+		if (isDirectPricing(pricing)) {
+			tasksOfType(tasks, w.id).forEach((t) => costNodes(t).forEach((sub) => (sub.items?.BOL || []).forEach((item) => {
+				const key = `${item.dayType || "Regular"}|${item.shift || "Day"}|${item.role || "Unnamed"}`;
+				perDiemBy[key] = roundMoney((perDiemBy[key] || 0) + calcBOL(item, pricing).perDiemAllow);
+			})));
+		}
+		const typeExtra = Object.values(perDiemBy).reduce((sum, n) => sum + n, 0);
+		const typeTotal = roundMoney(model.grandTotal + typeExtra);
+		grand = roundMoney(grand + typeTotal);
 		const banner = `${w.letter}. ${w.full}`;
 		blocks.push({
 			banner,
 			bannerFill: BOL_LIGHT_BLUE
 		});
 		pushFlat([banner], "group");
+		let lastPart = null;
 		BOL_PARTS.forEach((part) => {
 			const lines = summarySort(Object.values(model.groups[part.dt]?.[part.shift] || {}), "BOL", (r) => r.role);
 			if (!lines.length) return;
-			const partRows = lines.map((r, idx) => [
+			const partRows = lines.map((r, idx) => {
+				const extra = perDiemBy[`${part.dt}|${part.shift}|${r.role}`] || 0;
+				return [
 				idx + 1,
 				r.role,
 				r.qty,
 				r.days,
 				fmt(r.rate),
 				r.otHrs,
-				fmt(r.subtotal)
-			]);
-			blocks.push({
+				fmt(roundMoney(r.subtotal + extra))
+			];
+			});
+			lastPart = {
 				banner: part.label,
 				bannerFill: BOL_LIGHT_BLUE,
 				columns,
-				rows: partRows,
+				rows: partRows.slice(),
 				rowMeta: partRows.map(() => ({ kind: "line" })),
 				headFill: BOL_LIGHT_BLUE,
+				totalFill: BOL_LIGHT_BLUE,
 				afterTight: true
-			});
+			};
+			blocks.push(lastPart);
 			pushFlat([part.label], "group");
 			partRows.forEach((row) => pushFlat(row, "line"));
 		});
@@ -17286,7 +18503,7 @@ function buildBolExportSection(tasks, notes) {
 			"",
 			"",
 			"",
-			fmt(model.grandTotal)
+			fmt(typeTotal)
 		];
 		blocks.push({
 			columns,
@@ -17295,7 +18512,7 @@ function buildBolExportSection(tasks, notes) {
 			hideHead: true,
 			totalFill: BOL_LIGHT_BLUE,
 			afterTight: true,
-			gapAfter: 12
+			gapAfter: 0
 		});
 		pushFlat(subRow, "total");
 		for (let i = 0; i < 2; i++) pushFlat(["", "", "", "", "", "", ""], "line");
@@ -17310,13 +18527,7 @@ function buildBolExportSection(tasks, notes) {
 		"",
 		fmt(grand)
 	];
-	blocks.push({
-		columns,
-		rows: [totalRow],
-		rowMeta: [{ kind: "total" }],
-		hideHead: true,
-		totalFill: BOL_LIGHT_BLUE
-	});
+	appendGrandTotal(blocks, totalRow);
 	pushFlat(totalRow, "total");
 	return {
 		title: "BOL",
@@ -17328,14 +18539,14 @@ function buildBolExportSection(tasks, notes) {
 		notes
 	};
 }
-function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
+function buildCategoryExportSection(tasks, cat, exportTitle, notes, pricing) {
 	const bote = cat === "BOTE";
 	const columns = bote ? [
 		"Item No.",
 		"Item Description",
 		"Qty",
 		"Days",
-		"Rate / Unit Cost",
+		"Unit Price",
 		"kW",
 		"Hrs/Day",
 		"₱/kWh",
@@ -17345,7 +18556,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		"Item No.",
 		"Item Description",
 		"Qty",
-		"Rate / Unit Cost",
+		"Unit Price",
 		"Subtotal"
 	];
 	const blocks = [];
@@ -17362,7 +18573,17 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		const auto = buildCategoryAutoRows(subset, cat, w.id);
 		if (!auto.length) return;
 		any = true;
-		const blockTotal = roundMoney(auto.reduce((s, r) => s + num2(r.subtotal), 0));
+		const lineAmount = (description) => {
+			let sum = 0;
+			subset.forEach((t) => costNodes(t).forEach((s) => (s.items[cat] || []).forEach((it) => {
+				const name = cat === "PPE" ? it.item || it.description : it.description;
+				if (String(name || "") !== String(description || "")) return;
+				sum += itemSubtotal(cat, it, w.id, pricing);
+			})));
+			return roundMoney(sum);
+		};
+		const amounts = auto.map((r) => lineAmount(r.description));
+		const blockTotal = roundMoney(amounts.reduce((s, n) => s + n, 0));
 		grand = roundMoney(grand + blockTotal);
 		const lineRows = [];
 		const lineMeta = [];
@@ -17372,7 +18593,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 				let powerKw = 0;
 				let hoursPerDay = 0;
 				let kwhRate = 0;
-				if (powered) subset.forEach((t) => flattenSubs(t).forEach((s) => (s.items.BOTE || []).forEach((it) => {
+				if (powered) subset.forEach((t) => costNodes(t).forEach((s) => (s.items.BOTE || []).forEach((it) => {
 					if ((it.description || "") === r.description) {
 						powerKw = num2(it.powerKw);
 						hoursPerDay = num2(it.hoursPerDay);
@@ -17389,14 +18610,14 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 					powered ? hoursPerDay || "—" : "—",
 					powered && kwhRate ? fmt(kwhRate) : "—",
 					powered ? fmt(r.electricity) : "—",
-					fmt(r.subtotal)
+					fmt(amounts[idx])
 				]);
 			} else lineRows.push([
 				idx + 1,
 				r.description,
 				r.totalQty,
 				fmt(r.rate),
-				fmt(r.subtotal)
+				fmt(amounts[idx])
 			]);
 			lineMeta.push({ kind: "line" });
 		});
@@ -17415,8 +18636,8 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 			banner,
 			bannerFill: BOL_LIGHT_BLUE,
 			columns,
-			rows: lineRows,
-			rowMeta: lineMeta,
+			rows: lineRows.slice(),
+			rowMeta: lineMeta.slice(),
 			headFill: BOL_LIGHT_BLUE,
 			afterTight: true
 		});
@@ -17432,7 +18653,7 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 			hideHead: true,
 			totalFill: BOL_LIGHT_BLUE,
 			afterTight: true,
-			gapAfter: 12
+			gapAfter: 0
 		});
 		pushFlat(sub, "total");
 	});
@@ -17458,6 +18679,81 @@ function buildCategoryExportSection(tasks, cat, exportTitle, notes) {
 		notes
 	};
 }
+var MISC_EXPORT_GROUPS = [
+	{ section: "A", code: "E.1", title: "Accommodation" },
+	{ section: "B", code: "E.2", title: "Transportation" },
+	{ section: "C", code: "E.3", title: "Requirements" },
+	{ section: "D", code: "E.4", title: "Admin Cost" },
+	{ section: "I", code: "E.5", title: "Insurances" },
+	{ section: "E", code: "E.6", title: "Third Party Services" }
+];
+var MISC_HEAD = [238, 238, 238];
+function buildMiscExportSection(tasks, pricing, notes) {
+	// Light-blue banners (not green). SUB TOTAL and the sheet total sit on the
+	// table with unbroken borders and the same light-blue fill. Only rows with inputs.
+	const columns = ["ITEM NO.", "DESCRIPTION", "QTY", "UOM", "NO. OF DAYS", "UNIT PRICE", "TOTAL"];
+	const direct = isDirectPricing(pricing);
+	const blocks = [];
+	const rows = [];
+	const rowMeta = [];
+	let grand = 0;
+	const known = new Set(MISC_EXPORT_GROUPS.map((g) => g.section));
+	WORK_TYPES.forEach((w) => {
+		const items = [];
+		tasksOfType(tasks, w.id).forEach((t) => costNodes(t).forEach((st) => (st.items.MISC || []).forEach((it) => {
+			if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
+			items.push(it);
+		})));
+		if (!items.length) return;
+		let typeTotal = 0;
+		let firstInType = true;
+		const groups = [...MISC_EXPORT_GROUPS, { section: "*", code: "E.7", title: "Other" }];
+		groups.forEach((g) => {
+			const list = items.filter((it) => g.section === "*" ? !known.has(String(it.section || "")) : String(it.section || "") === g.section);
+			if (!list.length) return;
+			let catTotal = 0;
+			const part = list.map((it, i) => {
+				const amount = itemSubtotal("MISC", it, void 0, pricing);
+				catTotal = roundMoney(catTotal + amount);
+				const days = direct ? it.days == null || it.days === "" ? 1 : it.days : it.days || 1;
+				return [i + 1, String(it.description || "").toUpperCase(), it.qty, it.unit || it.uom || "", days, fmt(num2(it.unitCost)), fmt(amount)];
+			});
+			const meta = part.map(() => ({ kind: "line" }));
+			part.push(["", "", "", "", "", "SUB TOTAL:", fmt(catTotal)]);
+			meta.push({ kind: "labelled-total", labelCol: 5, fill: BOL_LIGHT_BLUE });
+			typeTotal = roundMoney(typeTotal + catTotal);
+			blocks.push({
+				...(firstInType ? { banner: `${w.letter}. ${w.full}`, bannerFill: BOL_LIGHT_BLUE } : {}),
+				heading: `${g.code} ${g.title}`,
+				headingTight: true,
+				columns,
+				rows: part,
+				rowMeta: meta,
+				headFill: MISC_HEAD,
+				afterTight: true,
+				gapAfter: 1
+			});
+			firstInType = false;
+			rows.push([`${w.letter}. ${w.full}`], [`${g.code} ${g.title}`], ...part);
+			rowMeta.push({ kind: "group" }, { kind: "group" }, ...meta);
+		});
+		grand = roundMoney(grand + typeTotal);
+		const typeRow = ["", `TOTAL — ${w.full}:`, "", "", "", "", fmt(typeTotal)];
+		const last = blocks[blocks.length - 1];
+		last.rows.push(typeRow);
+		last.rowMeta.push({ kind: "labelled-total", labelCol: 1, labelSpan: 5, fill: BOL_LIGHT_BLUE });
+		last.gapAfter = 5;
+		rows.push(typeRow);
+		rowMeta.push({ kind: "labelled-total", labelCol: 1, labelSpan: 5 });
+	});
+	if (!blocks.length) return null;
+	blocks.unshift({ banner: "MISCELLANEOUS", bannerFill: BOL_LIGHT_BLUE });
+	const totalRow = ["", "MISCELLANEOUS TOTAL:", "", "", "", "", fmt(grand)];
+	appendGrandTotal(blocks, totalRow, { kind: "labelled-total", labelCol: 1, labelSpan: 5, fill: BOL_LIGHT_BLUE });
+	rows.push(totalRow);
+	rowMeta.push({ kind: "labelled-total", labelCol: 1, labelSpan: 5 });
+	return { title: "MISC", exportTitle: "MISCELLANEOUS", columns, rows, rowMeta, blocks, notes };
+}
 function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	const scheduleDays = scheduleSpanDays(tasks);
 	const isMobDemob = title === "Mobilization" || title === "Demobilization";
@@ -17482,9 +18778,9 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	const aMeta = [];
 	let partATotal = 0;
 	partA.forEach((r, idx) => {
-		const allowanceAmount = MOB_ALLOWANCE_RATES[r.category] || MOB_ALLOWANCE_RATES[r.role] || 0;
-		const subtotalA = roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate));
-		const subtotalB = roundMoney(num2(r.qty) * num2(r.days) * allowanceAmount);
+		const edited = overrideA || edits[r.role];
+		const subtotalA = edited ? roundMoney(num2(r.qty) * num2(r.days) * num2(r.rate)) : 0;
+		const subtotalB = 0;
 		if (subtotalA === 0 && subtotalB === 0) return;
 		partATotal = roundMoney(partATotal + subtotalA);
 		aRows.push([
@@ -17496,7 +18792,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			fmt(r.rate),
 			fmt(subtotalA),
 			r.otHrs,
-			fmt(allowanceAmount),
+			fmt(0),
 			fmt(subtotalB),
 			fmt(roundMoney(subtotalA + subtotalB))
 		]);
@@ -17534,11 +18830,10 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 		"Skilled",
 		"Admin"
 	].map((cat) => {
-		const autoQty = partA.filter((r) => r.category === cat).reduce((s, r) => s + num2(r.qty), 0);
 		const patch = allowEdits[cat] || {};
-		const qty = patch.qty ?? autoQty;
-		const days = patch.days ?? dayDefault;
-		const rate = patch.rate ?? (MOB_ALLOWANCE_RATES[cat] || 0);
+		const qty = patch.qty ?? 0;
+		const days = patch.days ?? 0;
+		const rate = patch.rate ?? 0;
 		return {
 			category: cat,
 			qty,
@@ -17633,8 +18928,8 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			totalFill: BOL_LIGHT_BLUE,
 			totalQtyCol: isMobDemob ? 2 : void 0,
 			columns: [
-				"Item",
-				"Manpower Loading (Role)",
+				"Item No.",
+				"Manpower Loading (Designation)",
 				"Qty",
 				"UOM",
 				"No. of Days",
@@ -17646,20 +18941,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 				"Total"
 			],
 			rows: aRows,
-			rowMeta: aMeta,
-			columnStyles: {
-				0: { cellWidth: 11 },
-				1: { cellWidth: 32 },
-				2: { cellWidth: 11 },
-				3: { cellWidth: 12 },
-				4: { cellWidth: 14 },
-				5: { cellWidth: 20 },
-				6: { cellWidth: 20 },
-				7: { cellWidth: 13 },
-				8: { cellWidth: 16 },
-				9: { cellWidth: 20 },
-				10: { cellWidth: 21 }
-			}
+			rowMeta: aMeta
 		},
 		{
 			heading: "Part B: Allowance",
@@ -17688,16 +18970,16 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 			}
 		},
 		{
-			heading: "Part C: Line Items",
+			heading: "Part C: Items",
 			headFill: BOL_LIGHT_BLUE,
 			totalFill: BOL_LIGHT_BLUE,
 			columns: [
-				"Line Item",
+				"Item No.",
 				"Description/Manpower",
 				"Qty",
 				"UOM",
 				"No. of Days / Trips",
-				"Unit Cost",
+				"Unit Price",
 				"Total"
 			],
 			rows: cRows,
@@ -17716,6 +18998,7 @@ function buildMobExportSection(title, tasks, snap, notes, manpowerList) {
 	return {
 		title,
 		exportTitle: String(title || "MOBILIZATION").toUpperCase(),
+		sheetTotal: roundMoney(partATotal + partBTotal + partCTotal),
 		columns: blocks[0].columns,
 		rows: blocks.flatMap((b) => [[b.heading], ...b.rows]),
 		blocks,
@@ -17735,7 +19018,7 @@ var TABS = [
 	"ATTCH",
 	"RCE"
 ];
-function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange }) {
+function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkToggle, goToLibrary, goToSearch, editingUser, isEditorLocked, readOnly = false, onUserActivity, onLock, onTakeOver, onAssist, onTransfer, users = [], actingLevel, onSubmitApproval, onApprovalDecision, onDocumentChange, documentControl, rceList = [], taskTemplates = [], onTaskTemplatesChange, adminConfig, onBack, onEditingChange, onEngineUpdate = null, onRequestClosing = null, onDecideTakeover = null, onNotify = null, onSpawnSuffix = null, onSaveScope = null, combinedLabel = "", onAddCheckerWord = null, onSalesCeRequest = null, onAcceptSalesCeRequest = null, onMarkup = null, markup = null, proposal = null, onProposal = null, jobOrder = null, onJobOrder = null, ceOptions = [], release1Message = "", onCeWithdraw = null, onOpenLinkedRce = null }) {
 	const lastActivityRef = useRef(Date.now());
 	const [headerEditing, setHeaderEditing] = useState(false);
 	useEffect(() => {
@@ -17789,9 +19072,20 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		};
 	});
 	const historyRef = useRef([]);
+	const allowedChangeRef = useRef(false);
+	const baselineRef = useRef("");
 	const stateRef = useRef(state);
+	const readOnlyRef = useRef(readOnly);
 	stateRef.current = state;
+	readOnlyRef.current = readOnly;
+	const suffixesOn = adminConfig?.features?.docSuffixes === true;
+	const scopeOn = adminConfig?.features?.scopeLibraryV2 === true;
+	const priceOn = adminConfig?.features?.priceCheck === true;
 	const dispatch = (action) => {
+		const patchKeys = action?.patch && typeof action.patch === "object" ? Object.keys(action.patch) : [];
+		const revisionStart = action?.type === "PATCH_PROJECT_INFO" && patchKeys.length > 0 && patchKeys.every((key) => key === "revisionPending" || key === "revisionNote");
+		if (readOnly && !revisionStart && action?.type !== "SET_APPROVAL") return;
+		if (readOnly) allowedChangeRef.current = true;
 		if (!action || action.type === "REPLACE_STATE") {
 			baseDispatch(action);
 			return;
@@ -17803,6 +19097,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		baseDispatch(action);
 	};
 	const undoEdit = () => {
+		if (readOnlyRef.current) return;
 		const prev = historyRef.current.pop();
 		if (!prev) return;
 		baseDispatch({
@@ -17825,8 +19120,19 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const summaryEditsRef = useRef({});
 	const [sowText, setSowText] = useState(() => ceData?.sowText || "");
 	const [ceStatus, setCeStatus] = useState(() => ceData?.ceStatus || status || "Draft");
+	const [submitPulse, setSubmitPulse] = useState(false);
+	const pulseSubmit = () => {
+		if (ceTpl3On !== true) return;
+		if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		setSubmitPulse(true);
+		window.setTimeout(() => setSubmitPulse(false), 1200);
+	};
+	const estimateOpen = ceEditorOpen(ceStatus) && !readOnly && !isEditorLocked;
 	const [checkerOpen, setCheckerOpen] = useState(false);
 	const [ackWarnings, setAckWarnings] = useState(false);
+	const [warnReason, setWarnReason] = useState("");
+	const [ignoreOnce, setIgnoreOnce] = useState([]);
+	const masterlist = useMasterlist();
 	const [waitInfoOpen, setWaitInfoOpen] = useState(false);
 	const [infoGaps, setInfoGaps] = useState({});
 	const [infoNote, setInfoNote] = useState("");
@@ -17842,21 +19148,42 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	const [mobCopy, setMobCopy] = useState(null);
 	const mobSnaps = useRef({});
 	const mobManpower = useMasterlist().BOL || [];
+	const mobSheetTotals = (tasks, snaps) => {
+		const onsite = tasksOfType(tasks || [], "onsite");
+		return {
+			mobilization: buildMobExportSection("Mobilization", onsite, snaps?.Mobilization, [], mobManpower)?.sheetTotal || 0,
+			demobilization: buildMobExportSection("Demobilization", onsite, snaps?.Demobilization, [], mobManpower)?.sheetTotal || 0
+		};
+	};
 	const persistSkip = useRef(true);
 	useEffect(() => {
-		if (persistSkip.current) {
-			persistSkip.current = false;
-			return;
-		}
-		if (!ceData?.id || !onDocumentChange) return;
-		onDocumentChange(ceData.id, {
+		const snaps = mobSnaps.current || {};
+		const opened = snaps.Mobilization || snaps.Demobilization;
+		const mobSheets = opened ? mobSheetTotals(state.tasks, snaps) : state.mobSheets && typeof state.mobSheets === "object" ? state.mobSheets : mobSheetTotals(state.tasks, {});
+		const next = {
 			...state,
 			sowText,
 			ceStatus,
 			docNo,
 			revNo,
-			revDate
-		});
+			revDate,
+			mobSheets
+		};
+		if (persistSkip.current) {
+			persistSkip.current = false;
+			baselineRef.current = stableJson(next);
+			return;
+		}
+		if (!ceData?.id || !onDocumentChange) return;
+		if (!shouldSendDocChange({
+			readOnly: !!readOnly || !!isEditorLocked,
+			allowed: allowedChangeRef.current,
+			baseline: baselineRef.current,
+			next
+		})) return;
+		allowedChangeRef.current = false;
+		baselineRef.current = stableJson(next);
+		onDocumentChange(ceData.id, next);
 	}, [
 		state,
 		sowText,
@@ -17875,26 +19202,84 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 	}, [ceStatus]);
 	const [importError, setImportError] = useState("");
 	const [exportPreview, setExportPreview] = useState(null);
+	const [exportPlan, setExportPlan] = useState(null);
+	const [importWizard, setImportWizard] = useState(null);
 	const fileInputRef = useRef(null);
-	const grand = projectTotal(state.tasks);
-	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat), 0);
-	const contPct = num2(state.commercial?.contingencyPct);
+	activeCePricing = isDirectPricing(state.pricing) ? state.pricing : null;
+	bolLegendFlag = adminConfig?.features?.directCostTotalsForNew === true;
+	bolLegendRates = adminConfig?.directRates || null;
+	const directOn = Boolean(activeCePricing);
+	const approvalNow = ceData?.approval || state.approval;
+	const approvalV2 = approvalNow?.engine === "v2";
+	const engineOn = adminConfig?.features?.approvalEngineV2 === true;
+	const checkerOn = adminConfig?.features?.checkerV2 === true;
+	const quotationsOn = adminConfig?.features?.quotations === true;
+	const availabilityOn = adminConfig?.features?.availability === true;
+	const locationsOn = adminConfig?.features?.clientLocations === true;
+	const pendingOn = adminConfig?.features?.pendingRecords === true;
+	const sowOn = adminConfig?.features?.sowTagging === true;
+	const scheduleOn = adminConfig?.features?.schedule === true;
+	const [annexOff, setAnnexOff] = useState({});
+	const grand = projectTotal(state.tasks, state.pricing, state.mobSheets);
+	const sectionSum = (cat) => (state.tasks || []).reduce((sum, task2) => sum + categoryOnTask(task2, cat, state.pricing), 0);
+	const benefitSum = directOn ? directColumnTotals(state.tasks, state.pricing).A1 : 0;
+	const contPct = 0;
 	const discPct = num2(state.commercial?.discountPct);
-	const netTotal = checksumTotal(grand * (1 + contPct / 100) * (1 - discPct / 100));
-	const saveVersion = () => {
+	const netTotal = directOn ? grand : checksumTotal(grand * (1 + contPct / 100) * (1 - discPct / 100));
+	const switchOffer = offerDirectSwitch({
+		flag: adminConfig?.features?.directCostTotalsForNew === true,
+		status: ceStatus,
+		pricing: state.pricing,
+		readOnly: !!readOnly || !!isEditorLocked
+	});
+	const switchNext = switchOffer ? projectTotal(state.tasks, { model: "direct-v1", formula: directFormula(adminConfig?.directRates || {}) }, state.mobSheets) : grand;
+	const confirmDirectSwitch = () => {
+		if (!switchOffer) return;
+		const formula = directFormula(adminConfig?.directRates || {});
+		const next = { model: "direct-v1", formula };
+		const from = projectTotal(state.tasks, void 0, state.mobSheets);
+		const to = projectTotal(state.tasks, next, state.mobSheets);
+		dispatch({
+			type: "SET_PRICING",
+			pricing: next,
+			who: editingUser || "",
+			remarks: `Direct cost totals ${fmt(from)} → ${fmt(to)}`
+		});
+	};
+	const saveVersion = (report) => {
 		const snapshot = {
 			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 			ceStatus,
-			tasks: JSON.parse(JSON.stringify(state.tasks))
+			tasks: JSON.parse(JSON.stringify(state.tasks)),
+			sowText,
+			sow: Array.isArray(state.sow) ? JSON.parse(JSON.stringify(state.sow)) : []
 		};
+		if (scheduleOn) snapshot.schedule = refreshSchedule({
+			previous: state.schedule,
+			tasks: taskPlan(state.tasks),
+			startDate: state.schedule?.startDate || state.projectInfo?.date || "",
+			holidays: companyCalendar(adminConfig),
+			status: ceStatus
+		});
+		if (checkerOn && report?.findings) {
+			const stored = versionWithReport(snapshot, report, { reason: warnReason });
+			setVersionHistory((prev) => [...prev, stored]);
+			if (ceData?.id) onDocumentChange?.(ceData.id, {
+				...state,
+				sowText,
+				ceStatus,
+				checkerReports: [...(Array.isArray(ceData.checkerReports) ? ceData.checkerReports : []), stored.checker]
+			});
+			return;
+		}
 		setVersionHistory((prev) => [...prev, snapshot]);
 	};
 	const restoreVersion = (version) => {
+		if (readOnly) return;
 		dispatch({
 			type: "RESTORE_TASKS",
 			tasks: JSON.parse(JSON.stringify(version.tasks))
 		});
-		setCeStatus(version.ceStatus);
 	};
 	const prepareExportData = () => {
 		const sections = [];
@@ -17922,103 +19307,17 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			columns: ["Scope of Work"],
 			rows: sowLines.map((line) => [line])
 		});
-		const bolSheet = buildBolExportSection(tasks, noteTexts(state.sheetNotes?.BOL));
+		const bolSheet = buildBolExportSection(tasks, noteTexts(state.sheetNotes?.BOL), state.pricing);
 		if (bolSheet) sections.push(bolSheet);
-		const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(state.sheetNotes?.BOTE));
+		const boteSheet = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", noteTexts(state.sheetNotes?.BOTE), state.pricing);
 		if (boteSheet) sections.push(boteSheet);
-		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM));
+		const bocmSheet = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", noteTexts(state.sheetNotes?.BOCM), state.pricing);
 		if (bocmSheet) sections.push(bocmSheet);
-		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "Bill of Personal Protective Equipment", noteTexts(state.sheetNotes?.PPE));
+		const ppeSheet = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", noteTexts(state.sheetNotes?.PPE), state.pricing);
 		if (ppeSheet) sections.push(ppeSheet);
-		const miscColumns = [
-			"Work type",
-			"Section",
-			"Item No.",
-			"Description",
-			"QTY",
-			"Days",
-			"Unit cost",
-			"Subtotal"
-		];
-		const miscBlocks = [];
-		const miscRows = [];
-		const miscMeta = [];
-		let miscGrand = 0;
-		WORK_TYPES.forEach((w) => {
-			const part = [];
-			tasksOfType(tasks, w.id).forEach((t) => flattenSubs(t).forEach((st) => (st.items.MISC || []).forEach((it, i) => {
-				if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return;
-				part.push([
-					w.label,
-					it.section || "",
-					i + 1,
-					it.description,
-					it.qty,
-					it.days || 1,
-					fmt(it.unitCost),
-					fmt(itemSubtotal("MISC", it))
-				]);
-			})));
-			if (!part.length) return;
-			const partTotal = roundMoney(tasksOfType(tasks, w.id).reduce((sum, t) => sum + flattenSubs(t).reduce((s2, st) => s2 + (st.items.MISC || []).reduce((s3, it) => {
-				if (num2(it.qty) === 0 && num2(it.unitCost) === 0) return s3;
-				return s3 + itemSubtotal("MISC", it);
-			}, 0), 0), 0));
-			miscGrand = roundMoney(miscGrand + partTotal);
-			const banner = `${w.letter}. ${w.full}`;
-			miscBlocks.push({
-				banner,
-				bannerFill: BOL_LIGHT_BLUE,
-				columns: miscColumns,
-				rows: part,
-				rowMeta: part.map(() => ({ kind: "line" })),
-				headFill: BOL_LIGHT_BLUE,
-				afterTight: true
-			});
-			miscRows.push([banner]);
-			miscMeta.push({ kind: "group" });
-			part.forEach((row) => {
-				miscRows.push(row);
-				miscMeta.push({ kind: "line" });
-			});
-			const sub = Array(miscColumns.length).fill("");
-			sub[0] = `Subtotal — ${w.label}`;
-			sub[miscColumns.length - 1] = fmt(partTotal);
-			miscBlocks.push({
-				columns: miscColumns,
-				rows: [sub],
-				rowMeta: [{ kind: "total" }],
-				hideHead: true,
-				totalFill: BOL_LIGHT_BLUE,
-				gapAfter: 10
-			});
-			miscRows.push(sub);
-			miscMeta.push({ kind: "total" });
-		});
-		if (miscBlocks.length) {
-			const total = Array(miscColumns.length).fill("");
-			total[0] = "GRAND TOTAL";
-			total[miscColumns.length - 1] = fmt(miscGrand);
-			miscBlocks.push({
-				columns: miscColumns,
-				rows: [total],
-				rowMeta: [{ kind: "total" }],
-				hideHead: true,
-				totalFill: BOL_LIGHT_BLUE
-			});
-			miscRows.push(total);
-			miscMeta.push({ kind: "total" });
-			sections.push({
-				title: "MISC",
-				exportTitle: "MISCELLANEOUS",
-				columns: miscColumns,
-				rows: miscRows,
-				rowMeta: miscMeta,
-				blocks: miscBlocks,
-				notes: noteTexts(state.sheetNotes?.MISC)
-			});
-		}
-		const onsiteTasks = tasksOfType(tasks, "onsite");
+		const miscSheet = buildMiscExportSection(tasks, state.pricing, noteTexts(state.sheetNotes?.MISC));
+		if (miscSheet) sections.push(miscSheet);
+				const onsiteTasks = tasksOfType(tasks, "onsite");
 		const supplyTasks = [...tasksOfType(tasks, "shop"), ...tasksOfType(tasks, "trading")];
 		if (onsiteTasks.length) {
 			sections.push(buildMobExportSection("Mobilization", onsiteTasks, mobSnaps.current.Mobilization, noteTexts(state.sheetNotes?.MOB), mobManpower));
@@ -18044,20 +19343,19 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			}
 		});
 		const info = state.projectInfo || {};
-		const official = buildOfficialBaseRows(tasks);
-		const shown = (row) => {
-			const raw = state.summaryOverrides?.[row.key];
-			if (raw === void 0 || raw === "") return num2(row.computed);
-			return num2(raw);
-		};
+		const official = buildOfficialBaseRows(tasks, state.pricing, state.mobSheets);
+		const shown = (row) => shownOfficialAmount(row, state.summaryOverrides, state.pricing);
 		const bodyParts = official.rows.filter((r) => [
 			"A",
 			"B",
 			"C",
 			"D"
 		].includes(r.key)).reduce((sum, r) => sum + shown(r), 0);
-		const miscParts = official.rows.filter((r) => r.sub && !r.breakdown).reduce((sum, r) => sum + shown(r), 0);
-		const bodySum = bodyParts + miscParts;
+		const benefitRow = official.rows.find((r) => r.key === "A1");
+		const benefitParts = benefitRow ? shown(benefitRow) : 0;
+		const miscParts = official.rows.filter((r) => r.sub && !r.breakdown && r.key !== "A1").reduce((sum, r) => sum + shown(r), 0);
+		const mobParts = official.rows.filter((r) => r.key === "MOB" || r.key === "DEMOB").reduce((sum, r) => sum + shown(r), 0);
+		const bodySum = isDirectPricing(state.pricing) ? screenOfficialTotal(tasks, state.pricing, state.summaryOverrides, state.mobSheets) : bodyParts + benefitParts + miscParts + mobParts;
 		const qty = num2(info.quantity);
 		const docNoOut = info.docNo || ceData?.id || docNo || "";
 		const summaryRows = [];
@@ -18082,18 +19380,10 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			]);
 			summaryMeta.push({ kind: "sum-custom" });
 		});
-		summaryRows.push([
-			"",
-			"UNIT PRICE:",
-			qty ? fmt(bodySum / qty) : "—"
-		]);
-		summaryMeta.push({ kind: "sum-blue" });
-		summaryRows.push([
-			"",
-			"TOTAL AMOUNT:",
-			fmt(bodySum)
-		]);
-		summaryMeta.push({ kind: "sum-blue" });
+		summaryRows.push(["", "UNIT PRICE:", qty ? fmt(bodySum / qty) : "—"]);
+		summaryMeta.push({ kind: "sum-final" });
+		summaryRows.push(["", "TOTAL AMOUNT:", fmt(bodySum)]);
+		summaryMeta.push({ kind: "sum-final" });
 		const signSlot = (label, name, title, stamp) => ({
 			label,
 			name: honorificName(name, users),
@@ -18116,19 +19406,21 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				quantity: String(info.quantity || ""),
 				endUser: info.endUser || "",
 				docNo: docNoOut,
+				markupNo: ceData?.markupNo || info.markupNo || "",
 				revNo: info.revNo || "",
 				revDate: info.revDate || ""
 			},
 			columns: [
-				"ITEM",
+				"ITEM NO.",
 				"DESCRIPTION",
 				"TOTAL COST"
 			],
 			rows: summaryRows,
 			rowMeta: summaryMeta,
+			keepWidths: true,
 			columnStyles: {
 				0: {
-					cellWidth: 22,
+					cellWidth: 15,
 					halign: "center"
 				},
 				2: {
@@ -18152,6 +19444,17 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			if (section.exportTitle) return;
 			section.exportTitle = section.title || "";
 		});
+		if (adminConfig?.features?.schedule === true) {
+			sections.push(scheduleExportSection(refreshSchedule({
+				previous: state.schedule,
+				tasks: taskPlan(state.tasks),
+				startDate: state.schedule?.startDate || state.projectInfo?.date || "",
+				holidays: companyCalendar(adminConfig),
+				status: ceStatus
+			})));
+			const ordered = orderExportSections(sections);
+			sections.splice(0, sections.length, ...ordered);
+		}
 		return {
 			companyLogo: documentControl?.logoDataUrl || "",
 			docRevision: info.revNo || "",
@@ -18162,6 +19465,8 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			docDate: info.date || state.meta.date || todayLocal(),
 			ceNumber: docNoOut || ceData?.id || state.meta.title || "—",
 			attachmentFiles,
+			tasks,
+			pricing: state.pricing,
 			sections
 		};
 	};
@@ -18231,35 +19536,36 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		provisionalIds,
 		rateExceptions: state.rateExceptions || []
 	};
-	const runIssuePack = async () => {
-		const gaps = listEntryGaps(state.tasks);
+	const runIssuePack = async (mode = "preview", exportChoice = null) => {
+		const viewPack = release1SalesViewOn && (!!readOnly || !!isEditorLocked);
+		const gaps = viewPack ? [] : listEntryGaps(state.tasks);
 		if (gaps.length) {
 			window.alert(`These rows are missing quantity, days, or rate:\n\n${gaps.join("\n")}`);
 			return;
 		}
-		const { failures, warnings } = buildCePreflight(state.tasks, preflightOpts);
+		const { failures, warnings } = viewPack ? { failures: [], warnings: [] } : buildCePreflight(state.tasks, preflightOpts);
 		if (failures.length) {
 			setCheckerOpen(true);
 			window.alert("Fix Fail items before exporting the issue pack.");
 			return;
 		}
 		if (warnings.length && !issueAck) setIssueAck(true);
-		const data = prepareExportData();
-		const cont = num2(state.commercial?.contingencyPct);
+		const data = ceTpl5On && exportChoice ? applyExportPlan(prepareExportData(), exportChoice) : prepareExportData();
 		const disc = num2(state.commercial?.discountPct);
-		const grand2 = projectTotal(state.tasks);
-		const net = commercialNet(grand2, cont, disc);
+		const grand2 = projectTotal(state.tasks, state.pricing, state.mobSheets);
+		const net = directOn ? grand2 : commercialNet(grand2, 0, disc);
 		const typesInUse = [...new Set((state.enabledWorkTypes && state.enabledWorkTypes.length ? state.enabledWorkTypes : (state.tasks || []).map((t) => taskWorkType(t))).filter(Boolean))];
 		const tradingOnly = typesInUse.length === 1 && typesInUse[0] === "trading";
 		const parties = partiesFromApproval(linkedRce?.approval);
 		const payload = {
 			...data,
 			sheetMode: tradingOnly ? "trading" : "full",
-			attachments: allAttachments,
+			attachments: ceTpl7On === true ? applyAttachmentEdits(allAttachments, state.attachmentEdits) : allAttachments,
 			cover: {
 				client: state.meta.client,
 				location: state.meta.location,
 				ceNumber: ceData?.id,
+				markupNo: ceData?.markupNo || "",
 				rceLabel: linkedRce ? `${linkedRce.rceNo || linkedRce.id} Rev ${linkedRce.revNo || 0}` : "",
 				date: state.meta.date,
 				validityDays: state.commercial?.validityDays || 30,
@@ -18267,14 +19573,25 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 				reviewedBy: linkedRce?.reviewedBy || parties.reviewedBy || "",
 				approvedBy: linkedRce?.approvedBy || parties.approvedBy || "",
 				grandTotal: grand2,
-				netTotal: checksumTotal(net),
-				contingencyPct: cont,
-				discountPct: disc,
+				netTotal: directOn ? grand2 : checksumTotal(net),
+				contingencyPct: 0,
+				omitContingency: true,
+				discountPct: directOn ? 0 : disc,
 				assumptions: state.assumptions || sowText.replace(/<[^>]+>/g, " "),
 				exportedBy: editingUser,
 				exportedAt: nowIso()
-			}
+			},
+			draftWatermark: needsDraftWatermark({
+				flagOn: engineOn,
+				status: ceStatus,
+				approvalStatus: approvalNow?.status
+			}),
+			...(engineOn ? { approval: approvalNow || null } : {})
 		};
+		if (mode === "excel" || mode === "both") {
+			exportIssueExcel(payload);
+			if (mode === "excel") return;
+		}
 		let url = "";
 		try {
 			url = await previewIssuePdf(payload);
@@ -18297,12 +19614,89 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 			return null;
 		});
 	};
+	const readImportSheet = (file) => {
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => {
+			const book = XLSX.read(reader.result, { type: "array" });
+			const ken = importCostWorkbook(gridsFromWorkbook(XLSX, book));
+			if (ken.kind === "ken-ce" || ken.kind === "old-export") {
+				setImportWizard({
+					step: "map",
+					fileName: file.name,
+					sheetName: ken.kind,
+					mapped: ken.mapped
+				});
+				return;
+			}
+			const sheetName = book.SheetNames.find((name) => /bocm|bol|bote|ppe|misc/i.test(name)) || book.SheetNames[0];
+			const grid = XLSX.utils.sheet_to_json(book.Sheets[sheetName], { header: 1, raw: false, defval: "" });
+			const headerAt = Math.max(0, (grid || []).findIndex((row) => (row || []).some((cell) => /desc|qty|role|item|u\/m|rate/i.test(String(cell || "")))));
+			const mapped = mapCeSheet(grid[headerAt] || [], grid.slice(headerAt + 1));
+			const library = listMasterlistItems(masterlist);
+			const rules = adminConfig?.masterlistRules || {};
+			setImportWizard({
+				step: "map",
+				fileName: file.name,
+				sheetName,
+				mapped: {
+					...mapped,
+					rows: mapped.rows.map((row) => ({
+						...row,
+						match: row.skip ? null : classifyImportMatch(row.description, library, { similarity: rules.similarity, nameField: "description" })
+					}))
+				}
+			});
+		};
+		reader.readAsArrayBuffer(file);
+	};
+	const confirmCeImport = () => {
+		const mapped = importWizard?.mapped;
+		if (!mapped) return;
+		const task = (state.tasks || [])[0];
+		const sub = task?.subtasks?.[0];
+		if (!task || !sub) {
+			window.alert("Add a task before importing rows.");
+			return;
+		}
+		const toItem = (row) => {
+			const written = row.ken && row.total != null ? Number(row.total) || 0 : 0;
+			const price = written || Number(String(row.unitPrice).replace(/[^0-9.-]/g, "")) || 0;
+			const qty = written ? 1 : Number(String(row.qty).replace(/[^0-9.-]/g, "")) || 0;
+			return {
+				id: uid3("imp"),
+				description: row.description,
+				role: row.role || row.description,
+				qty,
+				unit: row.unit,
+				unitCost: price,
+				rate: price,
+				days: written ? 1 : Number(row.days) || 1,
+				otHrs: written ? 0 : Number(row.otHrs) || 0,
+				dayType: "Regular",
+				shift: "Day"
+			};
+		};
+		const sections = Array.isArray(mapped.kenSections) && mapped.kenSections.length ? mapped.kenSections : [{ category: sheetCategory(importWizard.sheetName), rows: mapped.rows || [] }];
+		sections.forEach((section) => {
+			const items = (section.rows || []).filter((row) => row.selected && !row.skip).map(toItem);
+			if (!items.length) return;
+			dispatch({
+				type: "ADD_ITEMS",
+				taskId: task.id,
+				subtaskId: sub.id,
+				category: section.category || sheetCategory(importWizard.sheetName),
+				items
+			});
+		});
+		setImportWizard(null);
+	};
 	useMemo(() => {
 		const items = [];
 		state.tasks.forEach((t) => t.subtasks.forEach((s) => (s.items.BOL || []).forEach((it) => items.push(it))));
 		return items;
 	}, [state.tasks]);
-	const officialBase = buildOfficialBaseRows(state.tasks || []);
+	const officialBase = buildOfficialBaseRows(state.tasks || [], state.pricing, state.mobSheets);
 	const workTypesInUse = state.enabledWorkTypes?.length ? state.enabledWorkTypes : [...new Set((state.tasks || []).map((t) => taskWorkType(t)))];
 	const seededNotes = (sheet) => {
 		const stored = state.sheetNotes?.[sheet];
@@ -18369,15 +19763,12 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		concurredStamp: infoView.concurredStamp || "",
 		concurredTitle: infoView.concurredTitle || ""
 	};
-	const shownAmount = (row) => {
-		const raw = state.summaryOverrides?.[row.key];
-		if (raw === void 0 || raw === "") return num2(row.computed);
-		return num2(raw);
-	};
-	const miscShown = roundMoney(officialBase.rows.filter((r) => r.sub && !r.breakdown).reduce((sum, r) => sum + roundMoney(shownAmount(r)), 0));
+	const shownAmount = (row) => shownOfficialAmount(row, state.summaryOverrides, state.pricing);
+	const miscShown = roundMoney(officialBase.rows.filter((r) => r.sub && !r.breakdown && r.key !== "A1").reduce((sum, r) => sum + roundMoney(shownAmount(r)), 0));
 	const sheetRows = withThirdPartyRows(officialBase.rows, officialBase.thirdLines, state.thirdPartyShow);
 	const officialRows = sheetRows.map((row) => ({
 		...row,
+		group: directOn ? true : row.group,
 		display: fmt(row.key === "E" ? miscShown : shownAmount(row)),
 		highlight: !!state.summaryHighlights?.[row.key]
 	}));
@@ -18388,7 +19779,7 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		num: `F.${i + 1}`
 	}));
 	const officialQty = num2(resolvedProject.quantity);
-	const officialTotal = roundMoney(officialBase.rows.filter((r) => [
+	const officialTotal = directOn ? screenOfficialTotal(state.tasks || [], state.pricing, state.summaryOverrides, state.mobSheets) : roundMoney(officialBase.rows.filter((r) => [
 		"A",
 		"B",
 		"C",
@@ -18409,9 +19800,49 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 		notes: seededNotes(sheet),
 		onChange: (notes) => saveSheetNotes(sheet, notes)
 	});
+	const makeCheckerReport = () => {
+		const db = {};
+		["BOL", "BOTE", "BOCM", "PPE", "MISC"].forEach((cat) => {
+			db[cat] = (masterlist[cat] || []).map((item) => ({
+				id: item.id,
+				label: cat === "BOL" ? item.role || item.name || "" : cat === "PPE" ? item.item || item.description || item.name || "" : item.description || item.name || item.item || ""
+			})).filter((item) => item.label);
+		});
+		return runChecker({
+			tasks: state.tasks,
+			...preflightOpts,
+			pricing: state.pricing,
+			summaryOverrides: state.summaryOverrides,
+			checker: adminConfig?.checker,
+			dictionary: [...(adminConfig?.checker?.words || []), ...(Array.isArray(ceData?.spellIgnore) ? ceData.spellIgnore : []), ...ignoreOnce],
+			db,
+			spell: browserSpell(),
+			features: {
+				quotations: quotationsOn,
+				availability: availabilityOn,
+				clientLocations: locationsOn,
+				pendingRecords: pendingOn,
+				sowTagging: sowOn
+			},
+			quotations: masterlist.quotations || [],
+			quotationRefs: state.quotationRefs || ceData?.quotationRefs || [],
+			items: listMasterlistItems(masterlist).map((item) => ({ id: item.id, availabilityKey: item.availabilityKey || "" })),
+			clientName: state.meta?.client || "",
+			clients: masterlist.clients || [],
+			pendingRecords: masterlist.pendingRecords || [],
+			sow: state.sow || []
+		});
+	};
+	const blockFinal = () => {
+		if (!checkerOn) return false;
+		const finalStep = approvalV2 ? openStepIndexes(approvalNow).some((index) => approvalNow?.steps?.[index]?.isFinal) : !!currentApprovalStep(approvalNow)?.isFinal;
+		if (!finalStep) return false;
+		return blocksFinalApproval(makeCheckerReport());
+	};
 	return /* @__PURE__ */ jsxs("div", {
 		className: "ce-editor-root",
 		children: [
+			release1Message ? /* @__PURE__ */ jsx("p", { className: "scope-edit-banner", role: "status", children: release1Message }) : null,
 			onBack ? /* @__PURE__ */ jsxs("div", {
 				className: "ce-editor-back",
 				children: [
@@ -18423,13 +19854,150 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 					}),
 					/* @__PURE__ */ jsx("span", {
 						className: isEditorLocked ? "ce-edit-flag off" : "ce-edit-flag on",
-						children: isEditorLocked ? "View only — you cannot edit this estimate" : headerEditing ? "You can edit — header changes are not saved yet" : "You can edit this estimate"
-					})
+						children: estimateOpen ? headerEditing ? "You can edit — header changes are not saved yet" : "You can edit this estimate" : "View only — you cannot edit this estimate"
+					}),
+					release1SalesViewOn && !estimateOpen ? /* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							void runIssuePack("preview");
+						},
+						children: "PDF"
+					}), /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							void runIssuePack("excel");
+						},
+						children: "Excel"
+					})] }) : null,
+					release1WithdrawRequestOn && release1SalesActor && !estimateOpen && onSalesCeRequest ? /* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							void askReason({ title: "Request revision", label: "Revision request", required: true }).then((result) => {
+								if (!result.ok) return;
+								onSalesCeRequest("revision", result.text);
+							});
+						},
+						children: "Request revision"
+					}), /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => {
+							void askReason({ title: "Request new CE", label: "New estimate request", required: true }).then((result) => {
+								if (!result.ok) return;
+								onSalesCeRequest("new", result.text);
+							});
+						},
+						children: "Request new CE"
+					})] }) : null,
+					release1WithdrawRequestOn && onAcceptSalesCeRequest && actorMayAcceptCeRequest(ceData?.salesCeRequest, release1ActorId) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => onAcceptSalesCeRequest(),
+						children: "Take CE request"
+					}) : null,
+					release1MarkupOn && onMarkup && canGenerateMarkup({ flagOn: true, sales: release1MarkupSales, status, existing: markup, ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: ceData?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) }) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => onMarkup("create", { directCost: officialTotal }),
+						children: "Generate Markup"
+					}) : null,
+					release1ProposalOn && onProposal && canGenerateProposal({ flagOn: true, sales: release1ProposalSales, markupStatus: markup?.status, existing: proposal, ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: ceData?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) }) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => {
+							const official = buildOfficialBaseRows(state.tasks || [], state.pricing, state.mobSheets);
+							const groups = (official.rows || []).filter((row) => row.main).map((row) => ({ key: row.key, label: row.label, direct: row.computed }));
+							onProposal("create", {
+								groups,
+								scope: sowText,
+								client: ceData?.client || state.meta?.client || "",
+								project: ceData?.project || state.meta?.title || "",
+								ceNo: ceData?.id || "",
+								ceRev: String(state.projectInfo?.revNo || "")
+							});
+						},
+						children: "Generate Proposal"
+					}) : null,
+					release1JobOrderOn && onJobOrder && canGenerateJobOrder({ flagOn: true, sales: release1JobOrderSales, proposalStatus: proposal?.status, existing: jobOrder }) ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => {
+							document.getElementById("job-order-form")?.scrollIntoView();
+						},
+						children: "Generate Job Order"
+					}) : null
 				]
+			}) : null,
+			release1MarkupOn && onMarkup ? /* @__PURE__ */ jsx(MarkupPanel, {
+				markup: markup || null,
+				sales: release1MarkupSales,
+				actorId: release1ActorId,
+				users,
+				onMarkup
+			}) : null,
+			release1ProposalOn && onProposal ? /* @__PURE__ */ jsx(ProposalPanel, {
+				proposal,
+				sales: release1ProposalSales,
+				actorId: release1ActorId,
+				users,
+				liveRev: String(state.projectInfo?.revNo || ""),
+				onProposal
+			}) : null,
+			release1JobOrderOn && onJobOrder ? /* @__PURE__ */ jsx(JobOrderPanel, {
+				jobOrder,
+				sales: release1JobOrderSales,
+				actorId: release1ActorId,
+				users,
+				ceOptions,
+				canCreate: canGenerateJobOrder({ flagOn: true, sales: release1JobOrderSales, proposalStatus: proposal?.status, existing: jobOrder }),
+				canCancel: canCancelJobOrder(jobOrder, { byUserId: release1ActorId, admin: actingLevel === "admin", salesManager: isSalesManager(findAccount(users, { userId: release1ActorId }), release1DepartmentsOn) }),
+				createDefaults: {
+					ceId: ceData?.id || "",
+					ceLabel: ceData?.id || "",
+					client: ceData?.client || state.meta?.client || "",
+					project: ceData?.project || state.meta?.title || "",
+					prNo: proposal?.prNo || "",
+					controlNo: proposal?.controlNo || "",
+					year: phYear(),
+					ceQuantity: state.tasks || [],
+					salesPosition: "Sales Rep",
+					salesperson: editingUser || ""
+				},
+				buildPackPdf: async (draft) => exportJobOrderPackPdf(draft, users, draft?.annexA === false ? null : prepareExportData(), { logo: documentControl?.logoDataUrl || "" }),
+				joScreenV2: adminConfig?.features?.joScreenV2 === true,
+				onJobOrder
 			}) : null,
 			/* @__PURE__ */ jsxs("div", {
 				style: { position: "relative" },
 				children: [
+			engineOn && ceData?.takeover?.status === "pending" && /* @__PURE__ */ jsxs("div", {
+				className: "scope-edit-banner",
+				children: [
+					`Take-over requested by ${ceData.takeover.by}: ${ceData.takeover.reason}`,
+					canDecideTakeover({
+						owner: ceData.takeover.owner || ceData.assignedTo,
+						actor: editingUser,
+						authorisedNames: adminConfig?.authorisations?.takeover
+					}) ? /* @__PURE__ */ jsxs("span", { children: [" ", /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-primary ce-btn-sm",
+						onClick: () => onDecideTakeover?.("approve"),
+						children: "Approve take-over"
+					}), " ", /* @__PURE__ */ jsx("button", {
+						type: "button",
+						className: "ce-btn-ghost ce-btn-sm",
+						onClick: () => onDecideTakeover?.("decline"),
+						children: "Decline"
+					})] }) : " Waiting for the owner or an authorised person."
+				]
+			}),
+			engineOn && rceWasChanged(ceData, (rceList || []).find((rce) => (rce.id || rce.rceNo) === (ceData?.rceId || ceData?.rceNo))) && /* @__PURE__ */ jsx("p", {
+				className: "scope-edit-banner",
+				children: "RCE changed. This cost estimate was not updated."
+			}),
 			isEditorLocked && /* @__PURE__ */ jsx("div", {
 				className: "editor-lock-overlay",
 				children: /* @__PURE__ */ jsxs("div", {
@@ -18449,7 +20017,17 @@ function CostEstimateTool({ ceData, status, onStatusChange, isParked, onParkTogg
 							type: "button",
 							onClick: onAssist || onTakeOver,
 							children: "Assist"
-						}), /* @__PURE__ */ jsx("button", {
+						}), engineOn ? /* @__PURE__ */ jsx("button", {
+							className: "ce-btn-primary",
+							type: "button",
+							onClick: () => {
+								void askReason({ title: "Take over", label: "Reason for taking over", required: true }).then((asked) => {
+									if (!asked.ok) return;
+									onTakeOver?.(asked.text);
+								});
+							},
+							children: "Take over"
+						}) : null, /* @__PURE__ */ jsx("button", {
 							className: "ce-btn-ghost",
 							type: "button",
 							onClick: () => {
@@ -18465,7 +20043,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 				})
 			}),
 			/* @__PURE__ */ jsxs("div", {
-				className: "ce-shell ce-sheet-theme" + (tab === "BREAKDOWN" ? " ce-shell-breakdown" : ""),
+				className: "ce-shell ce-sheet-theme" + (tab === "BREAKDOWN" ? " ce-shell-breakdown" : "") + (readOnly ? " ce-sealed" : ""),
 				style: {
 					...isEditorLocked ? {
 						pointerEvents: "none",
@@ -18492,12 +20070,124 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						meta: state.meta,
 						grand,
 						dispatch,
-						onExport: runIssuePack,
-						onImportClick: () => fileInputRef.current && fileInputRef.current.click(),
+						onExport: () => {
+							if (ceTpl5On !== true) {
+								void runIssuePack("preview");
+								return;
+							}
+							setExportPlan(defaultExportPlan());
+						},
+						onImportClick: () => {
+							if (ceTpl5On === true) {
+								setImportWizard({ step: "file", fileName: "", sheetName: "", mapped: null });
+								return;
+							}
+							if (fileInputRef.current) fileInputRef.current.click();
+						},
+						editLocked: !estimateOpen,
 						onEditingChange: (value) => {
 							setHeaderEditing(value);
 							onEditingChange?.(value);
-						}
+						},
+						engineOn,
+						onRequestClosing,
+						headerEdit: ceTpl4On ? {
+							draft: headerEditDraft({
+								status: ceStatus,
+								meta: state.meta,
+								projectInfo: state.projectInfo,
+								ce: ceData,
+								rce: linkedRce
+							}),
+							onSave: (nextDraft) => {
+								const applied = applyHeaderEdit({
+									status: ceStatus,
+									projectInfo: state.projectInfo,
+									meta: state.meta
+								}, nextDraft);
+								if (!applied.ok) return;
+								dispatch({ type: "PATCH_PROJECT_INFO", patch: applied.projectInfo });
+								["client", "location", "title", "date"].forEach((field) => dispatch({
+									type: "SET_META",
+									field,
+									value: applied.meta[field]
+								}));
+							},
+							onOpenRce: onOpenLinkedRce && (linkedRce || ceData?.rceId) ? () => onOpenLinkedRce(linkedRce || {
+								id: ceData?.rceId,
+								rceNo: ceData?.rceId
+							}) : null
+						} : null
+					}),
+					exportPlan && /* @__PURE__ */ jsx("div", {
+						className: "ce-modal-overlay",
+						onClick: () => setExportPlan(null),
+						children: /* @__PURE__ */ jsxs("div", {
+							className: "ce-modal-card",
+							role: "dialog",
+							"aria-label": "Export",
+							onClick: (event) => event.stopPropagation(),
+							children: [
+								/* @__PURE__ */ jsx("h3", { className: "ce-serif", style: { marginTop: 0 }, children: "Export" }),
+								/* @__PURE__ */ jsx("div", { className: "ce-summary-toggle", children: ["pdf", "excel", "both"].map((format) => /* @__PURE__ */ jsx("button", {
+									type: "button",
+									className: "ce-pill" + (exportPlan.format === format ? " ce-pill-active" : ""),
+									onClick: () => setExportPlan({ ...exportPlan, format }),
+									children: format === "pdf" ? "PDF" : format === "excel" ? "Excel" : "Both"
+								}, format)) }),
+								/* @__PURE__ */ jsxs("div", { className: "ce-summary-toggle", children: [
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-pill" + (exportPlan.whole ? " ce-pill-active" : ""), onClick: () => setExportPlan({ ...exportPlan, whole: true }), children: "Whole CE" }),
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-pill" + (!exportPlan.whole ? " ce-pill-active" : ""), onClick: () => setExportPlan({ ...exportPlan, whole: false }), children: "Selected parts" })
+								] }),
+								!exportPlan.whole && /* @__PURE__ */ jsx("div", { className: "ce-form-grid", children: EXPORT_PARTS.map((part) => /* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [
+									/* @__PURE__ */ jsx("input", { type: "checkbox", checked: exportPlan.parts.includes(part.id), onChange: () => setExportPlan({ ...exportPlan, parts: exportPlan.parts.includes(part.id) ? exportPlan.parts.filter((id) => id !== part.id) : [...exportPlan.parts, part.id] }) }),
+									part.label
+								] }, part.id)) }),
+								/* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [/* @__PURE__ */ jsx("input", { type: "checkbox", checked: exportPlan.hidePrices === true, onChange: () => setExportPlan({ ...exportPlan, hidePrices: !exportPlan.hidePrices }) }), " Hide prices"] }),
+								/* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [/* @__PURE__ */ jsx("input", { type: "checkbox", checked: exportPlan.includeSignatures !== false, onChange: () => setExportPlan({ ...exportPlan, includeSignatures: !exportPlan.includeSignatures }) }), " Include signatures"] }),
+								/* @__PURE__ */ jsxs("div", { className: "ce-confirm-actions", children: [
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost", onClick: () => setExportPlan(null), children: "Cancel" }),
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-primary", onClick: () => {
+										const choice = exportPlan;
+										setExportPlan(null);
+										void runIssuePack(choice.format === "excel" ? "excel" : choice.format === "both" ? "both" : "preview", choice);
+									}, children: `Export ${exportPlan.whole ? EXPORT_PARTS.length : exportPlan.parts.length} parts` })
+								] })
+							]
+						})
+					}),
+					importWizard && /* @__PURE__ */ jsx("div", {
+						className: "ce-modal-overlay",
+						onClick: () => setImportWizard(null),
+						children: /* @__PURE__ */ jsxs("div", {
+							className: "ce-modal-card",
+							role: "dialog",
+							"aria-label": "Import wizard",
+							onClick: (event) => event.stopPropagation(),
+							children: [
+								/* @__PURE__ */ jsx("h3", { className: "ce-serif", style: { marginTop: 0 }, children: "Import wizard" }),
+								/* @__PURE__ */ jsx("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: (event) => readImportSheet(event.target.files && event.target.files[0]) }),
+								importWizard.mapped && /* @__PURE__ */ jsxs("div", { children: [
+									/* @__PURE__ */ jsx("p", { className: "wiz-hint", children: `${importWizard.fileName} · ${importWizard.sheetName}. Unknown columns are ignored. Missing columns stay blank.` }),
+									/* @__PURE__ */ jsx("table", { className: "ce-table", children: /* @__PURE__ */ jsxs("tbody", { children: importWizard.mapped.columns.map((col) => /* @__PURE__ */ jsxs("tr", { children: [
+										/* @__PURE__ */ jsx("td", { children: col.header || "(none)" }),
+										/* @__PURE__ */ jsx("td", { children: col.field || "ignore" }),
+										/* @__PURE__ */ jsx("td", { children: col.status })
+									] }, col.header)) }) }),
+									/* @__PURE__ */ jsxs("div", { className: "ce-summary-toggle", children: [
+										/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setImportWizard({ ...importWizard, mapped: { ...importWizard.mapped, rows: setRowSelection(importWizard.mapped.rows, true) } }), children: "Select all" }),
+										/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setImportWizard({ ...importWizard, mapped: { ...importWizard.mapped, rows: setRowSelection(importWizard.mapped.rows, false) } }), children: "Clear" })
+									] }),
+									/* @__PURE__ */ jsx("p", { className: "wiz-hint", children: `${importWizard.mapped.rows.filter((row) => row.selected).length} selected · ${importWizard.mapped.rows.filter((row) => row.skip).length} skipped · total ${importedTotal(importWizard.mapped.rows).toFixed(2)}` }),
+									importWizard.mapped.rows.filter((row) => !row.skip).slice(0, 8).map((row) => /* @__PURE__ */ jsxs("label", { className: "ce-checkbox-row", children: [
+										/* @__PURE__ */ jsx("input", { type: "checkbox", checked: row.selected === true, onChange: () => setImportWizard({ ...importWizard, mapped: { ...importWizard.mapped, rows: importWizard.mapped.rows.map((item) => item.index === row.index ? { ...item, selected: !item.selected } : item) } }) }),
+										`${row.description} · ${row.match?.kind || "new"}`
+									] }, row.index)),
+									/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-primary", onClick: confirmCeImport, children: `Import ${importWizard.mapped.rows.filter((row) => row.selected).length} rows` })
+								] }),
+								/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost", onClick: () => setImportWizard(null), children: "Cancel" })
+							]
+						})
 					}),
 					exportPreview && /* @__PURE__ */ jsx("div", {
 						className: "ce-modal-overlay",
@@ -18542,7 +20232,10 @@ ${names.join(", ")}`, editingUser) : editingUser;
 										/* @__PURE__ */ jsx("button", {
 											className: "ce-btn-primary",
 											type: "button",
-											onClick: () => exportIssuePdf(exportPreview.payload),
+											onClick: () => exportIssuePdf(quotationsOn ? {
+											...exportPreview.payload,
+											annexes: annexesForExport(masterlist.quotations, state.quotationRefs || ceData?.quotationRefs || [], annexOff)
+										} : exportPreview.payload),
 											children: "PDF"
 										})
 									]
@@ -18558,6 +20251,36 @@ ${names.join(", ")}`, editingUser) : editingUser;
 						className: "scope-edit-banner",
 						children: "Editing a library template. Changes save here only. The source cost estimate is not changed."
 					}),
+					(quotationsOn || availabilityOn || locationsOn || pendingOn) && /* @__PURE__ */ jsx(Phase8CePanel, {
+						features: adminConfig?.features,
+						library: masterlist.quotations || [],
+						onLibrary: (quotations) => masterlist.setQuotations(quotations),
+						refs: state.quotationRefs || ceData?.quotationRefs || [],
+						onRefs: (refs) => dispatch({ type: "SET_QUOTATION_REFS", refs }),
+						tasks: state.tasks,
+						readOnly: !!readOnly || !!isEditorLocked,
+						clientName: state.meta?.client || "",
+						clients: masterlist.clients || [],
+						onUpdateClient: (id, patch) => masterlist.updateClient(id, patch),
+						items: listMasterlistItems(masterlist),
+						onUpdateItem: (categoryKey, id, patch) => masterlist.updateItem(categoryKey, id, patch),
+						keys: adminConfig?.availabilityKeys || [],
+						records: masterlist.pendingRecords || [],
+						onRecords: (records) => masterlist.setPendingRecords(records),
+						level: actingLevel,
+						actor: editingUser,
+						holidays: companyCalendar(adminConfig),
+						escalateAfter: adminConfig?.pendingEscalateDays || 3,
+						unticked: annexOff,
+						onUntick: (id, off) => setAnnexOff((prev) => ({ ...prev, [id]: off })),
+						onAddLine: (taskId, subtaskId, category, item) => dispatch({
+							type: "ADD_ITEMS",
+							taskId,
+							subtaskId,
+							category,
+							items: [item]
+						})
+					}),
 					/* @__PURE__ */ jsxs("div", {
 						className: "ce-status-bar",
 						children: [
@@ -18568,6 +20291,14 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									ceData?.assignedTo || editingUser,
 									ceData?.assisting ? ` \xB7 Editing ${ceData.assisting}` : ""
 								]
+							}),
+							adminConfig?.features?.mobileViewer === true && ceData?.id && !ceData?.libraryTemplate && /* @__PURE__ */ jsx("a", {
+								className: "ce-btn-ghost ce-btn-sm",
+								href: `/view/ce/${encodeURIComponent(ceData.id)}`,
+								children: "Mobile view"
+							}),
+							checkerOn && /* @__PURE__ */ jsx(CheckerReportList, {
+								report: (ceData?.checkerReports || []).slice(-1)[0]
 							}),
 							/* @__PURE__ */ jsxs("label", {
 								className: "ce-font-ctl",
@@ -18600,61 +20331,147 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								onClick: undoEdit,
 								children: "Undo"
 							}),
-							ceStatus === "For approval" && canActOnStep(currentApprovalStep(ceData?.approval || state.approval), actingLevel) && /* @__PURE__ */ jsxs("span", {
+							engineOn && (ceStatus === "For approval" || String(ceStatus || "").startsWith("Pending ")) && /* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost ce-btn-sm",
+								type: "button",
+								onClick: () => onNotify?.(ceData?.id),
+								children: "Notify"
+							}),
+							ceTpl3On && ceWithdrawAllowed({ status: ceStatus, approval: approvalNow, projectInfo: state.projectInfo }, true) && /* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost ce-btn-sm",
+								type: "button",
+								onClick: () => {
+									void askReason({ title: "Withdraw", label: "Withdraw reason", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										const ok = onCeWithdraw?.(ceData?.id, asked.text);
+										if (ok === false) return;
+										setCeStatus("Draft");
+										onStatusChange?.("Draft");
+									});
+								},
+								children: "Withdraw"
+							}),
+							ceStatus === "For approval" && !approvalV2 && canActOnStep(currentApprovalStep(approvalNow), actingLevel) && /* @__PURE__ */ jsxs("span", {
 								className: "ce-award-box",
 								children: [/* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-primary ce-btn-sm",
 									onClick: () => {
-										const remarks = window.prompt("Approval remarks") || "";
-										const step = currentApprovalStep(ceData?.approval || state.approval);
-										const finalStep = !!step?.isFinal;
-										if (finalStep && (state.projectInfo || {}).revisionPending) {
-											dispatch({
-												type: "PATCH_PROJECT_INFO",
-												patch: {
-													revNo: nextCeRevision((state.projectInfo || {}).revNo),
-													revDate: todayLocal(),
-													revisionPending: false
-												}
-											});
-										}
-										onApprovalDecision?.(ceData?.id, "accept", remarks);
-										if (finalStep) setCeStatus("Done");
+										if (blockFinal()) return;
+										void askReason({ title: "Approve step", label: "Approval remarks", required: false }).then((asked) => {
+											if (!asked.ok) return;
+											const step = currentApprovalStep(approvalNow);
+											const finalStep = !!step?.isFinal;
+											const result = onApprovalDecision?.(ceData?.id, "accept", asked.text);
+											if (!result?.ok) return;
+											if (finalStep) setCeStatus("Done");
+										});
 									},
 									children: "Approve step"
-								}), /* @__PURE__ */ jsx("button", {
+								}), !engineOn && /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
 									onClick: () => {
-										const remarks = window.prompt("Reject remarks (required)");
-										if (!remarks) return;
-										onApprovalDecision?.(ceData?.id, "reject", remarks);
-										setCeStatus("Ongoing");
+										void askReason({ title: "Reject", label: "Reject remarks", required: true }).then((asked) => {
+											if (!asked.ok) return;
+											const result = onApprovalDecision?.(ceData?.id, "reject", asked.text);
+											if (!result?.ok) return;
+											setCeStatus("Ongoing");
+										});
 									},
 									children: "Reject"
 								})]
 							}),
-							ceStatus === "Done" && /* @__PURE__ */ jsxs("span", {
+							approvalV2 && (ceStatus === "For approval" || approvalNow?.status === "in-progress" || (approvalNow?.comments || []).length > 0) && /* @__PURE__ */ jsxs("span", {
 								className: "ce-award-box",
 								children: [
-									/* @__PURE__ */ jsx("button", {
+									showDecisionButtons(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-primary ce-btn-sm",
+										onClick: () => {
+											if (blockFinal()) return;
+											void askReason({ title: "Approve", label: "Approval remarks", required: false }).then((asked) => {
+												if (!asked.ok) return;
+												const result = onApprovalDecision?.(ceData?.id, "approve", asked.text);
+												if (!result?.ok) return;
+												if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+												if (result.final) setCeStatus(result.nextStatus || "Done");
+											});
+										},
+										children: "Approve"
+									}),
+									showDecisionButtons(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
 										type: "button",
 										className: "ce-btn-ghost ce-btn-sm",
 										onClick: () => {
-											const instruction = window.prompt("Revision instruction from sales or the approver");
-											if (!instruction || !instruction.trim()) return;
-											dispatch({
-												type: "PATCH_PROJECT_INFO",
-												patch: {
-													revisionPending: true,
-													revisionNote: instruction.trim()
-												}
+											if (blockFinal()) return;
+											void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												const result = onApprovalDecision?.(ceData?.id, "approve-comment", asked.text);
+												if (!result?.ok) return;
+												if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+												if (result.final) setCeStatus(result.nextStatus || "Done");
 											});
-											setCeStatus("For revision");
 										},
-										children: "Revise"
+										children: "Approve with comment"
 									}),
+									showDecisionButtons(approvalNow, { actor: editingUser, level: actingLevel }) && /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-ghost ce-btn-sm",
+										onClick: () => {
+											void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+												if (!asked.ok) return;
+												const result = onApprovalDecision?.(ceData?.id, "request-edit", asked.text);
+												if (!result?.ok) return;
+												if (result.approval) dispatch({ type: "SET_APPROVAL", approval: result.approval });
+												setCeStatus(result.nextStatus || "For revision");
+											});
+										},
+										children: "Request edit"
+									}),
+									...(approvalNow?.comments || []).map((item) => /* @__PURE__ */ jsxs("span", { children: [
+										item.text || "Comment",
+										" · ",
+										item.status,
+										item.status === "Open" && /* @__PURE__ */ jsx("button", {
+											type: "button",
+											className: "ce-btn-ghost ce-btn-sm",
+											onClick: () => onApprovalDecision?.(ceData?.id, "fix-comment", item.id),
+											children: "Fixed"
+										})
+									] }, item.id))
+								]
+							}),
+							engineOn && onEngineUpdate && ceStatus !== "For approval" && !String(ceStatus || "").startsWith("Pending ") && /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									const result = onEngineUpdate?.(ceData?.id);
+									if (result?.ok) setCeStatus("Internal");
+								},
+								children: "Internal update"
+							}),
+							ceStatus === "Done" && !release1SalesActor && /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									void askReason({ title: "Revise", label: "Revision instruction from sales or the approver", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										dispatch({
+											type: "PATCH_PROJECT_INFO",
+											patch: {
+												revisionPending: true,
+												revisionNote: asked.text
+											}
+										});
+										setCeStatus("For revision");
+									});
+								},
+								children: "Revise"
+							}),
+							ceStatus === "Done" && !release1SalesViewOn && /* @__PURE__ */ jsxs("span", {
+								className: "ce-award-box",
+								children: [
 									/* @__PURE__ */ jsxs("label", { children: ["Awarded", /* @__PURE__ */ jsx("input", {
 										type: "radio",
 										name: "award",
@@ -18690,9 +20507,40 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									})
 								]
 							}),
+							onSpawnSuffix && suffixesOn ? /* @__PURE__ */ jsxs("span", {
+								className: "ce-award-box",
+								children: [
+									/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-ghost ce-btn-sm",
+										onClick: () => onSpawnSuffix("alt"),
+										children: "Alternate"
+									}),
+									/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-ghost ce-btn-sm",
+										onClick: () => onSpawnSuffix("ad"),
+										children: "Addendum"
+									}),
+									/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "ce-btn-ghost ce-btn-sm",
+										onClick: () => onSpawnSuffix("upd"),
+										children: "Update copy"
+									}),
+									combinedLabel ? /* @__PURE__ */ jsxs("span", { className: "wiz-hint", children: ["Combined ", combinedLabel] }) : null
+								]
+							}) : null,
+							onSaveScope && scopeOn ? /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => onSaveScope(state),
+								children: "Save as scope"
+							}) : null,
 							/* @__PURE__ */ jsx("button", {
 								className: `ce-btn-ghost ce-btn-sm ${isParked ? "ce-btn-active" : ""}`,
 								onClick: () => {
+									if (readOnly) return;
 									const next = !isParked;
 									onParkToggle && onParkToggle(next);
 									if (next) {
@@ -18722,18 +20570,50 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								onClick: () => setWaitInfoOpen(true),
 								children: "Request information"
 							}),
-							/* @__PURE__ */ jsx("button", {
+							estimateOpen && /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-primary ce-btn-sm",
 								onClick: () => {
 									setAckWarnings(false);
+									setWarnReason("");
 									setCheckerOpen(true);
-									saveVersion();
+									if (!checkerOn) saveVersion();
 								},
 								children: "Submit CE"
 							})
 						]
 					}),
+					switchOffer ? /* @__PURE__ */ jsxs("div", {
+						className: "ce-card",
+						style: { margin: "0.75rem 1rem 0" },
+						children: [
+							/* @__PURE__ */ jsx("p", { children: `Direct cost totals change this estimate from ${fmt(grand)} to ${fmt(switchNext)}. Contingency and discount are not applied. The change is logged.` }),
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-primary ce-btn-sm",
+								onClick: confirmDirectSwitch,
+								children: "Switch to direct cost"
+							})
+						]
+					}) : null,
+					priceOn && state.priceCheck && ((state.priceCheck.drifts || []).length || (state.priceCheck.constants || []).length) ? /* @__PURE__ */ jsx(PriceCheckPanel, {
+						report: state.priceCheck,
+						onApply: (mode, selectedIds) => {
+							const plan = resyncPlan({ mode, drifts: state.priceCheck.drifts || [], selectedIds });
+							const patched = new Set(plan.patches.map((row) => row.lineId));
+							const next = {
+								...state,
+								tasks: mode === "keep" ? state.tasks : applyLineRates(state.tasks, plan.patches),
+								priceCheck: {
+									...state.priceCheck,
+									drifts: mode === "keep" ? state.priceCheck.drifts : (state.priceCheck.drifts || []).filter((row) => !patched.has(row.lineId)),
+									log: [...state.priceCheck.log || [], plan.log]
+								}
+							};
+							dispatch({ type: "REPLACE_STATE", state: next });
+							if (ceData?.id) onDocumentChange?.(ceData.id, { ...next, ceStatus });
+						}
+					}) : null,
 					/* @__PURE__ */ jsx("div", {
 						className: "ce-tabnav",
 						children: TABS.map((t) => /* @__PURE__ */ jsx(Pill, {
@@ -18764,6 +20644,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									totalAmount: fmt(officialTotal),
 									project: resolvedProject,
 									users,
+									pendingTags: ceTpl2On,
 									onProject: (patch) => dispatch({
 										type: "PATCH_PROJECT_INFO",
 										patch
@@ -18850,21 +20731,18 @@ ${names.join(", ")}`, editingUser) : editingUser;
 												})] })
 											]
 										}),
-										/* @__PURE__ */ jsxs("div", {
+										directOn ? /* @__PURE__ */ jsxs("div", {
+											className: "ce-commercial",
+											children: [/* @__PURE__ */ jsx("b", { children: "Total" }), /* @__PURE__ */ jsx("div", { className: "ce-mono", children: fmt(grand) })]
+										}) : release1SalesViewOn ? /* @__PURE__ */ jsxs("div", {
+											className: "ce-commercial",
+											children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("b", { children: "Net" }), /* @__PURE__ */ jsx("div", {
+												className: "ce-mono",
+												children: fmt(grand * (1 - num2(state.commercial?.discountPct) / 100))
+											})] })]
+										}) : /* @__PURE__ */ jsxs("div", {
 											className: "ce-commercial",
 											children: [
-												/* @__PURE__ */ jsxs("label", { children: ["Contingency %", /* @__PURE__ */ jsx("input", {
-													className: "ce-input",
-													type: "number",
-													value: state.commercial?.contingencyPct ?? 0,
-													onChange: (e) => {
-														if (commercialLimits.reject("commercial", "contingencyPct", e.target.value)) return;
-														dispatch({
-															type: "PATCH_COMMERCIAL",
-															patch: { contingencyPct: e.target.value }
-														});
-													}
-												}), limitNote(commercialLimits.fieldNote("commercial", "contingencyPct"))] }),
 												/* @__PURE__ */ jsxs("label", { children: ["Discount %", /* @__PURE__ */ jsx("input", {
 													className: "ce-input",
 													type: "number",
@@ -18879,7 +20757,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 												}), limitNote(commercialLimits.fieldNote("commercial", "discountPct"))] }),
 												/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("b", { children: "Net" }), /* @__PURE__ */ jsx("div", {
 													className: "ce-mono",
-													children: fmt(grand * (1 + num2(state.commercial?.contingencyPct) / 100) * (1 - num2(state.commercial?.discountPct) / 100))
+													children: fmt(grand * (1 - num2(state.commercial?.discountPct) / 100))
 												})] })
 											]
 										}),
@@ -18903,7 +20781,9 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								}),
 								viewType !== "Summary" && /* @__PURE__ */ jsx(SummaryView, {
 									tasks: state.tasks,
-									viewType
+									viewType,
+									pricing: state.pricing,
+									mobSheets: state.mobSheets
 								})
 							] }),
 							tab === "BREAKDOWN" && /* @__PURE__ */ jsx(BreakdownView, {
@@ -18917,11 +20797,24 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								hiddenWorkTypes: state.hiddenWorkTypes,
 								rateExceptions: state.rateExceptions || []
 							}),
-							tab === "SOW" && /* @__PURE__ */ jsx(SOWTab, {
-								sowText,
-								setSowText
-							}),
-							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch: isEditorLocked ? null : summaryDispatch }), noteNode("BOL", "Notes", true)] }),
+							tab === "SOW" && /* @__PURE__ */ jsxs(Fragment, { children: [
+								/* @__PURE__ */ jsx(SOWTab, {
+									sowText,
+									setSowText
+								}),
+								sowOn ? /* @__PURE__ */ jsx(Phase10Sow, {
+									sow: state.sow || [],
+									tasks: state.tasks || [],
+									sowText,
+									onChange: (sow) => dispatch({ type: "SET_SOW", sow })
+								}) : null,
+								ceTpl9On === true ? /* @__PURE__ */ jsx(SowPlanPanel, {
+									lines: state.sowPlan || [],
+									holidays: companyCalendar(adminConfig),
+									onChange: (lines) => dispatch({ type: "SET_SOW_PLAN", lines })
+								}) : null
+							] }),
+							tab === "BOL" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(BOLMasterSummary, { tasks: state.tasks, editsRef: summaryEditsRef, dispatch: isEditorLocked ? null : summaryDispatch, pricing: state.pricing }), noteNode("BOL", "Notes", true)] }),
 							tab === "BOTE" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(AggregatedCategoryTab, {
 								tasks: state.tasks,
 								category: "BOTE",
@@ -18940,13 +20833,17 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								editsRef: summaryEditsRef,
 								dispatch: isEditorLocked ? null : summaryDispatch
 							}), noteNode("BOCM", "Notes", true)] }),
-							tab === "MISC" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(MISCSheet, { tasks: state.tasks }), noteNode("MISC", "Notes", true)] }),
+							tab === "MISC" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(MISCSheet, { tasks: state.tasks, pricing: state.pricing }), noteNode("MISC", "Notes", true)] }),
 							tab === "MOB/DEMOB" && (() => {
 								const onsiteTasks = tasksOfType(state.tasks, "onsite");
 								const supplyTasks = [...tasksOfType(state.tasks, "shop"), ...tasksOfType(state.tasks, "trading")];
 								const activePair = mobView || (supplyTasks.length && !onsiteTasks.length ? "supply" : "mob");
 								const remember = (name) => (snap) => {
 									mobSnaps.current[name] = snap;
+									const onsite = tasksOfType(stateRef.current.tasks, "onsite");
+									const mobilization = buildMobExportSection("Mobilization", onsite, mobSnaps.current.Mobilization, [], mobManpower)?.sheetTotal || 0;
+									const demobilization = buildMobExportSection("Demobilization", onsite, mobSnaps.current.Demobilization, [], mobManpower)?.sheetTotal || 0;
+									dispatch({ type: "SET_MOB_SHEETS", mobSheets: { mobilization, demobilization } });
 								};
 								const sheet = (name, tasks, copyLabel, sourceName) => /* @__PURE__ */ jsx(MobDemobSection, {
 									title: name,
@@ -19013,6 +20910,8 @@ ${names.join(", ")}`, editingUser) : editingUser;
 							})(),
 							tab === "ATTCH" && /* @__PURE__ */ jsx(AttachmentsTab, {
 								attachments: allAttachments,
+								edits: state.attachmentEdits || null,
+								onEdits: (next) => dispatch({ type: "SET_ATTACHMENT_EDITS", edits: next }),
 								rce: (rceList || []).find((r) => (r.id || r.rceNo) === (ceData?.rceId || ceData?.rceNo || ""))
 							}),
 							tab === "RCE" && /* @__PURE__ */ jsx(CeRceSheet, {
@@ -19024,7 +20923,64 @@ ${names.join(", ")}`, editingUser) : editingUser;
 					})
 				]
 			}),
-			checkerOpen && (() => {
+			checkerOpen && checkerOn && /* @__PURE__ */ jsx(CheckerPanel, {
+				report: makeCheckerReport(),
+				ackChecked: ackWarnings,
+				reason: warnReason,
+				readOnly,
+				onAck: setAckWarnings,
+				onReason: setWarnReason,
+				onClose: () => setCheckerOpen(false),
+				onSubmit: () => {
+					const report = makeCheckerReport();
+					if (!canSubmit(report, { checked: ackWarnings, reason: warnReason }).ok || readOnly) return;
+					setCeStatus("For approval");
+					onStatusChange?.("For approval");
+					pulseSubmit();
+					onSubmitApproval?.(ceData?.id, state.meta?.statusNote || "");
+					saveVersion(report);
+					setCheckerOpen(false);
+				},
+				onMerge: (finding) => {
+					dispatch({
+						type: "UPDATE_ITEM",
+						taskId: finding.taskId,
+						subtaskId: finding.subtaskId,
+						category: finding.category,
+						itemId: finding.keepId,
+						patch: { qty: finding.nextQty }
+					});
+					dispatch({
+						type: "DELETE_ITEM",
+						taskId: finding.taskId,
+						subtaskId: finding.subtaskId,
+						category: finding.category,
+						itemId: finding.dropId
+					});
+				},
+				onUseDb: (finding) => {
+					dispatch({
+						type: "UPDATE_ITEM",
+						taskId: finding.taskId,
+						subtaskId: finding.subtaskId,
+						category: finding.category,
+						itemId: finding.itemId,
+						patch: {
+							masterlistId: finding.dbId,
+							[finding.nameField]: finding.dbLabel
+						}
+					});
+				},
+				onIgnoreOnce: (word) => setIgnoreOnce((prev) => prev.includes(word) ? prev : [...prev, word]),
+				onIgnoreCe: (word) => {
+					if (!ceData?.id || !word) return;
+					const spellIgnore = [...(Array.isArray(ceData.spellIgnore) ? ceData.spellIgnore : [])];
+					if (!spellIgnore.some((item) => item.toLowerCase() === word.toLowerCase())) spellIgnore.push(word);
+					onDocumentChange?.(ceData.id, { ...state, sowText, ceStatus, spellIgnore });
+				},
+				onAddWord: (word) => onAddCheckerWord?.(word)
+			}),
+			checkerOpen && !checkerOn && (() => {
 				const { failures, warnings } = buildCePreflight(state.tasks, preflightOpts);
 				const canPass = failures.length === 0 && (warnings.length === 0 || ackWarnings);
 				return /* @__PURE__ */ jsx("div", {
@@ -19080,11 +21036,13 @@ ${names.join(", ")}`, editingUser) : editingUser;
 									children: "Back to editor"
 								}), /* @__PURE__ */ jsx("button", {
 									type: "button",
-									className: "ce-btn-primary",
+									className: "ce-btn-primary" + (submitPulse ? " ce-submit-pulse" : ""),
 									disabled: !canPass,
 									onClick: () => {
+										if (readOnly) return;
 										setCeStatus("For approval");
 										onStatusChange?.("For approval");
+										pulseSubmit();
 										onSubmitApproval?.(ceData?.id, state.meta?.statusNote || "");
 										saveVersion();
 										setCheckerOpen(false);
@@ -19143,6 +21101,7 @@ ${names.join(", ")}`, editingUser) : editingUser;
 								type: "button",
 								className: "ce-btn-primary",
 								onClick: () => {
+									if (readOnly) return;
 									const gaps = INFO_GAPS.filter((g) => infoGaps[g.id]).map((g) => g.label);
 									const note = infoNote.trim();
 									if (!gaps.length && !note) {
@@ -19176,11 +21135,12 @@ ${names.join(", ")}`, editingUser) : editingUser;
 					/* @__PURE__ */ jsxs("span", { children: ["BOCM ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("BOCM")) })] }),
 					/* @__PURE__ */ jsxs("span", { children: ["PPE ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("PPE")) })] }),
 					/* @__PURE__ */ jsxs("span", { children: ["MISC ", /* @__PURE__ */ jsx("b", { children: fmt(sectionSum("MISC")) })] }),
-					/* @__PURE__ */ jsxs("span", { children: ["Contingency ", contPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * contPct / 100) })] }),
-					/* @__PURE__ */ jsxs("span", { children: ["Discount ", discPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * (1 + contPct / 100) * discPct / 100) })] }),
+					directOn ? /* @__PURE__ */ jsxs("span", { children: ["A.1 ", /* @__PURE__ */ jsx("b", { children: fmt(benefitSum) })] }) : null,
+					directOn ? null : /* @__PURE__ */ jsxs("span", { children: ["Contingency ", contPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * contPct / 100) })] }),
+					directOn ? null : /* @__PURE__ */ jsxs("span", { children: ["Discount ", discPct, "% ", /* @__PURE__ */ jsx("b", { children: fmt(grand * (1 + contPct / 100) * discPct / 100) })] }),
 					/* @__PURE__ */ jsxs("span", {
 						className: "ce-sticky-net",
-						children: ["Net ", /* @__PURE__ */ jsx("b", { children: fmt(netTotal) })]
+						children: [directOn ? "Total " : "Net ", /* @__PURE__ */ jsx("b", { children: fmt(directOn ? grand : netTotal) })]
 					})
 				]
 			})
@@ -19250,7 +21210,7 @@ var DEFAULT_OIF_MON_COLUMNS = [
 var DEFAULT_OIF_MON_WIDTHS = {
 	itemNo: 80,
 	oifNo: 160,
-	ceId: 130,
+	ceId: 188,
 	projectDescription: 240,
 	customerName: 170,
 	date: 130,
@@ -19308,7 +21268,7 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 	const visibleCols = schema.columns.filter((c) => c.visible !== false);
 	const displayCols = useMemo(() => inspectionDisplayCols(visibleCols), [visibleCols]);
 	const { widths, updateWidth } = useResizableColumns("oif-mon-col-widths", useMemo(() => {
-		const next = { ...DEFAULT_OIF_MON_WIDTHS, __aging: 72, __ceStatus: 128 };
+		const next = { ...DEFAULT_OIF_MON_WIDTHS, __aging: 72, __ceStatus: 128, __actions: 96 };
 		schema.columns.forEach((c) => {
 			if (next[c.key] == null) next[c.key] = 140;
 		});
@@ -19419,8 +21379,9 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 					{ label: "Days since visit", value: visitDays }
 				] })
 			}),
-			/* @__PURE__ */ jsx("div", {
+			/* @__PURE__ */ jsx(StickyTable, {
 				className: "ce-gridwrap dash-user-gridwrap oif-mon-grid",
+				enabled: ceTpl1On,
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-table db-resizable-table oif-mon-table",
 					children: [
@@ -19442,7 +21403,28 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 							return /* @__PURE__ */ jsx("tr", {
 								onClick: () => setPreviewReport(r),
 								style: { cursor: "pointer" },
-								children: displayCols.map((c) => /* @__PURE__ */ jsx("td", { children: c.isCustom ? /* @__PURE__ */ jsx("input", {
+								children: displayCols.map((c) => /* @__PURE__ */ jsx("td", {
+									className: c.synthetic === "actions" ? "mon-actions" : "mon-clip",
+									title: c.synthetic || c.isCustom ? undefined : String(oifMonCellValue(r, c.key, idx) || ""),
+									children: c.synthetic === "actions" ? /* @__PURE__ */ jsxs("div", {
+										className: "mon-row-actions",
+										onClick: (event) => event.stopPropagation(),
+										children: [
+											/* @__PURE__ */ jsx(MonRowMenu, {
+												row: { ceId: r.id || r.oifNo || "inspection" },
+												onOpen: () => onOpenInspection?.(r),
+												onPreview: () => setPreviewReport(r)
+											}),
+											/* @__PURE__ */ jsx("button", {
+												type: "button",
+												className: "mon-icon-btn",
+												title: "Open",
+												"aria-label": "Open",
+												onClick: () => onOpenInspection?.(r),
+												children: /* @__PURE__ */ jsx(ArrowUpRight, { size: 14 })
+											})
+										]
+									}) : c.isCustom ? /* @__PURE__ */ jsx("input", {
 									className: "ce-input",
 									value: r[c.key] || "",
 									onClick: (e) => e.stopPropagation(),
@@ -19511,7 +21493,7 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 		]
 	});
 }
-function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspectionReports = [], onOpenInspection, onUpdateInspection, schemaConfig, onSchemaConfigChange, ceList = [], documents = {}, onOpenCE, actingLevel = "staff", documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors, onGeneratePending, onAssignPending }) {
+function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspectionReports = [], onOpenInspection, onUpdateInspection, schemaConfig, onSchemaConfigChange, ceList = [], documents = {}, onOpenCE, actingLevel = "staff", documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors, onGeneratePending, onAssignPending, engineOn = false, familiesOn = false, suffixesOn = false }) {
 	const view = tab === "archive" ? "active" : tab;
 	useEffect(() => {
 		if (tab === "archive") onTabChange?.("active");
@@ -19547,7 +21529,10 @@ function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspect
 				onStartRevision,
 				actingLevel,
 				onGeneratePending,
-				onAssignPending
+				onAssignPending,
+				engineOn,
+				familiesOn,
+				suffixesOn
 			}),
 			tab === "inspection" && /* @__PURE__ */ jsx(InspectionMonitoringView, {
 				reports: inspectionReports,
@@ -19577,7 +21562,10 @@ function MonitoringHub({ tab, onTabChange, rceList, onViewRCE, onNewRCE, inspect
 				rceList,
 				documents,
 				documentControl,
-				onOpenCE
+				onOpenCE,
+				engineOn,
+				familiesOn,
+				suffixesOn
 			})
 		]
 	});
@@ -19836,6 +21824,7 @@ function ceHistoryBundle(ce, documents, rce) {
 		summaryOverrides: doc.summaryOverrides || {},
 		summaryIncludes: doc.summaryIncludes || [],
 		thirdPartyShow: doc.thirdPartyShow || { mode: "off", keys: [] },
+		pricing: doc.pricing,
 		sowText: doc.sowText || "",
 		revisionNote: doc?.projectInfo?.revisionNote || "",
 		fileAttachments: doc.fileAttachments || {},
@@ -19864,9 +21853,27 @@ function plainSnapshot(value) {
 		return null;
 	}
 }
-function oifChecked(map, labels) {
-	const hits = Object.entries(labels).filter(([key]) => map?.[key]).map(([, label]) => label);
-	return hits.length ? hits.join(", ") : "—";
+// Onsite Inspection form document control (set once Document Control issues the numbers).
+const OIF_DOC_CONTROL = {
+	docControlNo: "SY3-F-EPD-000",
+	revisionNo: "00",
+	revisionDate: "02-16-2025"
+};
+// Bold black check mark for selected Job Type boxes (vector, no glyph needed).
+function oifDrawTick(doc, x, y) {
+	doc.setDrawColor(0, 0, 0);
+	doc.setLineWidth(.7);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("round");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("round");
+	doc.lines([[1.0, 1.25], [2.1, -2.9]], x + .55, y - 1.15, [1, 1], "S", false);
+	if (typeof doc.setLineCap === "function") doc.setLineCap("butt");
+	if (typeof doc.setLineJoin === "function") doc.setLineJoin("miter");
+	doc.setLineWidth(.25);
+}
+function oifListRows(list, text) {
+	const rows = (Array.isArray(list) ? list : []).filter((r) => String(r?.description || r?.item || "").trim());
+	if (rows.length) return rows.map((r) => ({ description: String(r.description || r.item || ""), qty: r.qty ?? "", unit: r.unit || "" }));
+	return String(text || "").split(/\n|,\s*(?![^()]*\))/).map((s) => s.trim()).filter(Boolean).map((s) => ({ description: s, qty: "", unit: "" }));
 }
 function exportOifToPDF(form = {}, hostDoc) {
 	const doc = hostDoc || new jsPDF({
@@ -19876,105 +21883,676 @@ function exportOifToPDF(form = {}, hostDoc) {
 	});
 	const pageW = doc.internal.pageSize.getWidth();
 	const pageH = doc.internal.pageSize.getHeight();
-	const m = 12;
-	const room = (y, need) => {
-		if (y + need <= pageH - 12) return y;
-		doc.addPage();
-		return 16;
+	const m = 10;
+	const innerW = pageW - m * 2;
+	const bottom = pageH - m;
+	const startPage = doc.getCurrentPageInfo?.().pageNumber || doc.getNumberOfPages();
+	const fontName = doc.getFont()?.fontName || "helvetica";
+	const fontStyles = (typeof doc.getFontList === "function" ? doc.getFontList()[fontName] : null) || ["normal", "bold", "italic"];
+	const italicStyle = fontStyles.includes("italic") ? "italic" : "normal";
+	const BLUE = [173, 216, 230];
+	const dcCfg = { ...OIF_DOC_CONTROL, ...(form.docControl || {}) };
+	const dcX = pageW - m - 46;
+	const headH = 22;
+	const pageRows = [];
+	const setText = (size, style = "normal") => {
+		doc.setFont(void 0, style);
+		doc.setFontSize(size);
+		doc.setTextColor(0, 0, 0);
 	};
-	let y = 16;
-	doc.setFont(void 0, "bold");
-	doc.setFontSize(14);
-	doc.text("ONSITE INSPECTION FORM", pageW / 2, y, { align: "center" });
-	y += 8;
-	const line = (label, value) => {
-		y = room(y, 6);
-		doc.setFontSize(9);
-		doc.setFont(void 0, "bold");
-		doc.text(label, m, y);
-		doc.setFont(void 0, "normal");
-		const lines = doc.splitTextToSize(String(value || "—"), pageW - m * 2 - 36);
-		doc.text(lines, m + 36, y);
-		y += Math.max(5, lines.length * 4);
+	const wrap = (text, width, size, style = "normal") => {
+		setText(size, style);
+		return String(text ?? "").split("\n").flatMap((part) => doc.splitTextToSize(part, width));
 	};
-	line("Date", form.date);
-	line("OIF No.", form.oifNo || form.id);
-	line("Project", form.projectDescription || form.project);
-	line("RFQ No.", form.rfqNo);
-	line("Customer", form.customerName || form.client);
-	line("Representative", form.customerRep);
-	line("Inspector", form.onsiteInspector || form.createdBy);
-	line("Contact", form.contactNo);
-	line("Activity", oifChecked(form.activity, {
-		onsite: "Onsite",
-		shopwork: "Shopwork",
-		supplyOnly: "Supply only"
-	}));
-	const service = oifChecked(form.serviceType, {
-		repair: "Repair",
-		electrical: "Electrical",
-		thermalSpray: "Thermal spray",
-		civilWorks: "Civil works",
-		ndt: "NDT",
-		protectiveCoating: "Protective coating",
-		fabrication: "Fabrication",
-		balancing: "Balancing",
-		mechanical: "Mechanical",
-		sandblasting: "Sandblasting",
-		others: "Others"
+	const lh = (size) => size * .3528 * 1.18;
+	// ---- Page frame + header (logo cell, address, document control) + title band ----
+	const drawHeader = () => {
+		doc.setDrawColor(0, 0, 0);
+		doc.setLineWidth(.5);
+		doc.rect(m, m, innerW, pageH - m * 2);
+		doc.setLineWidth(.3);
+		const logoBoxW = 42;
+		const logo = form.companyLogo || form.logoDataUrl;
+		let drewLogo = false;
+		if (logo) try {
+			const pad = 1.2;
+			const boxW = logoBoxW - pad * 2;
+			const boxH = headH - pad * 2;
+			let drawW = boxW;
+			let drawH = boxH;
+			try {
+				const props = doc.getImageProperties(logo);
+				const ratio = props.width / props.height;
+				if (boxW / boxH > ratio) drawW = boxH * ratio;
+				else drawH = boxW / ratio;
+			} catch { /* use whole box */ }
+			doc.addImage(logo, logoFormat(logo), m + pad + (boxW - drawW) / 2, m + pad + (boxH - drawH) / 2, drawW, drawH);
+			drewLogo = true;
+		} catch { /* text placeholder */ }
+		if (!drewLogo) {
+			setText(11, "bold");
+			doc.text("LOGO", m + logoBoxW / 2, m + headH / 2 + 1.5, { align: "center" });
+		}
+		doc.line(m + logoBoxW, m, m + logoBoxW, m + headH);
+		doc.line(dcX, m, dcX, m + headH);
+		const rowH = headH / 3;
+		for (let i = 1; i < 3; i += 1) doc.line(dcX, m + rowH * i, pageW - m, m + rowH * i);
+		setText(7.5, "bold");
+		doc.text(String(dcCfg.docControlNo || ""), dcX + 23, m + rowH / 2 + 1.2, { align: "center" });
+		setText(7.5, "normal");
+		doc.text(`REV. ${dcCfg.revisionNo || "__"} / ${dcCfg.revisionDate || "__"}`, dcX + 23, m + rowH * 1.5 + 1.2, { align: "center" });
+		pageRows.push({ page: doc.getCurrentPageInfo?.().pageNumber || doc.getNumberOfPages(), y: m + rowH * 2.5 + 1.2 });
+		const addr = form.companyAddress || "353 Amadeo Highway, Barangay Santiago, General Trias, Cavite, Philippines";
+		const tel = form.companyContact || "Tel. No.: (046) 683-7500 • (046) 683-7783  Telefax No.: (046) 432-5533";
+		setText(6.5, "normal");
+		doc.setTextColor(90, 90, 90);
+		const midX = (m + logoBoxW + dcX) / 2;
+		doc.text(doc.splitTextToSize(addr, dcX - m - logoBoxW - 6), midX, m + headH - 7, { align: "center" });
+		doc.text(tel, midX, m + headH - 2.5, { align: "center" });
+		doc.setTextColor(0, 0, 0);
+		let y = m + headH;
+		doc.setFillColor(...BLUE);
+		doc.rect(m, y, innerW, 9, "F");
+		doc.line(m, y, pageW - m, y);
+		setText(13, "bold");
+		doc.text("ONSITE INSPECTION FORM", pageW / 2, y + 6.3, { align: "center" });
+		y += 9;
+		doc.line(m, y, pageW - m, y);
+		return y;
+	};
+	const band = (y, title, x = m, w = innerW, h = 6) => {
+		doc.setFillColor(...BLUE);
+		doc.setLineWidth(.25);
+		doc.rect(x, y, w, h, "FD");
+		setText(9, "bold");
+		doc.text(title, x + w / 2, y + h / 2 + 1.2, { align: "center" });
+		return y + h;
+	};
+	const cellText = (lines, x, top, h, size, style, align = "left", w = 0) => {
+		setText(size, style);
+		const total = lines.length * lh(size);
+		const ty = top + (h - total) / 2 + size * .3528 * .85;
+		doc.text(lines, align === "center" ? x + w / 2 : x, ty, { align, lineHeightFactor: 1.18 });
+	};
+	let y = drawHeader();
+	// ---- Info block ----
+	const LW = 33;
+	const RLW = 27;
+	const RVW = 36;
+	const LVW = innerW - LW - RLW - RVW;
+	const xLV = m + LW;
+	const xRL = xLV + LVW;
+	const xRV = xRL + RLW;
+	const PAD = 1.8;
+	const infoRows = [
+		["DATE INSPECTED:", form.dateInspected || form.date, "OIF NO.:", form.oifNo || form.id],
+		["PROJECT DESCRIPTION:", form.projectDescription || form.project, "RCE NO.:", form.rceNo || form.rfqNo],
+		["CUSTOMER NAME:", form.customerName || form.client, "CUSTOMER REPRESENTATIVE:", form.customerRep],
+		["CLIENT ADDRESS:", form.clientAddress || form.address, "CONTACT NO.:", form.contactNo]
+	];
+	doc.setLineWidth(.25);
+	infoRows.forEach(([l1, v1, l2, v2]) => {
+		const c = [wrap(l1, LW - PAD * 2, 7.5, "bold"), wrap(v1 || "", LVW - PAD * 2, 8), wrap(l2, RLW - PAD * 2, 7, "bold"), wrap(v2 || "", RVW - PAD * 2, 8)];
+		const h = Math.max(6.5, ...c.map((ln, i) => ln.length * lh(i % 2 ? 8 : 7.5) + 2.6));
+		[[m, LW], [xLV, LVW], [xRL, RLW], [xRV, RVW]].forEach(([x, w]) => doc.rect(x, y, w, h));
+		cellText(c[0], m + PAD, y, h, 7.5, "bold");
+		cellText(c[1], xLV + PAD, y, h, 8, "normal");
+		cellText(c[2], xRL + PAD, y, h, 7, "bold");
+		cellText(c[3], xRV + PAD, y, h, 8, "normal");
+		y += h;
 	});
-	line("Service", [service !== "—" ? service : "", form.serviceType?.othersText || ""].filter(Boolean).join(", "));
-	line("Quantity", form.quantity);
-	line("Dimensions", [form.length && `L ${form.length}`, form.width && `W ${form.width}`, form.thk && `Thk ${form.thk}`].filter(Boolean).join(" · "));
-	line("Diameter", [form.outsideDia && `OD ${form.outsideDia}`, form.insideDia && `ID ${form.insideDia}`, form.dimLength && `L ${form.dimLength}`].filter(Boolean).join(" · "));
-	line("Weight", [form.weightValue, form.weightTons ? "tons" : "", form.weightKg ? "kg" : ""].filter(Boolean).join(" "));
-	line("Drawing", form.drawingAvailable);
-	line("Duration", form.duration);
-	const people = (form.manpower || []).filter((row) => String(row?.designation || "").trim() || String(row?.pax || "").trim());
-	if (people.length) {
-		y = room(y, 20);
+	// ---- A. Job Type | B. Work Piece Measurement ----
+	y += 2;
+	const JW = 116;
+	const MW = innerW - JW;
+	const mx = m + JW;
+	band(y, "A. JOB TYPE", m, JW);
+	band(y, "B. WORK PIECE MEASUREMENT", mx, MW);
+	y += 6;
+	const RH = 6;
+	const boxMark = (x, yy, on) => {
+		doc.setLineWidth(.3);
+		doc.setDrawColor(0, 0, 0);
+		doc.rect(x, yy - 3.4, 3.8, 3.8);
+		if (on) oifDrawTick(doc, x, yy - 1.5);
+		doc.setLineWidth(.25);
+	};
+	const opt = (x, yy, label, on, size = 7.5) => {
+		boxMark(x, yy, on);
+		setText(size, "normal");
+		doc.text(label, x + 5.2, yy);
+	};
+	const st = form.serviceType || {};
+	const othersLines = wrap(st.othersText || "", JW / 3 * 2 - 24 - PAD, 7, italicStyle).slice(0, 3);
+	const OTH_H = Math.max(9, othersLines.length * lh(7) + 3);
+	// Row heights shared by A (left) and B (right) so every boundary meets at the divider.
+	const rowHs = [RH, 5, RH, RH, RH, OTH_H, RH];
+	const jt = y;
+	doc.setLineWidth(.25);
+	// Activity row
+	doc.rect(m, y, JW, RH);
+	setText(7.5, "bold");
+	doc.text("ACTIVITY:", m + PAD, y + 4.1);
+	const act = form.activity || {};
+	opt(m + 24, y + 4.4, "ONSITE", !!act.onsite);
+	opt(m + 52, y + 4.4, "SHOPWORK", !!act.shopwork);
+	opt(m + 82, y + 4.4, "SUPPLY ONLY", !!act.supplyOnly);
+	y += RH;
+	doc.setFillColor(232, 244, 248);
+	doc.rect(m, y, JW, rowHs[1], "FD");
+	setText(7.5, "bold");
+	doc.text("SERVICE TYPE:", m + JW / 2, y + 3.6, { align: "center" });
+	y += rowHs[1];
+	const grid = [
+		[["repair", "REPAIR"], ["electrical", "ELECTRICAL"], ["thermalSpray", "THERMAL SPRAY"]],
+		[["civilWorks", "CIVIL WORKS"], ["ndt", "NDT"], ["protectiveCoating", "PROTECTIVE COATING"]],
+		[["fabrication", "FABRICATION"], ["balancing", "BALANCING"], ["sandblasting", "SANDBLASTING"]],
+		[["mechanical", "MECHANICAL"], ["others", "OTHERS:"]]
+	];
+	const cw = JW / 3;
+	grid.forEach((row, ri) => {
+		const h = rowHs[2 + ri];
+		row.forEach((cell, i) => {
+			const x = m + cw * i;
+			const w = cell[0] === "others" ? cw * 2 : cw;
+			doc.setLineWidth(.25);
+			doc.rect(x, y, w, h);
+			opt(x + PAD, y + h / 2 + 1.4, cell[1], !!st[cell[0]], 7);
+			if (cell[0] === "others") cellText(othersLines, x + 22, y, h, 7, italicStyle);
+		});
+		y += h;
+	});
+	// Drawing available row
+	doc.rect(m, y, JW, RH);
+	setText(7, "bold");
+	doc.text("CUSTOMER WORKING DRAWING AVAILABLE:", m + PAD, y + 4.1);
+	const dwg = String(form.drawingAvailable || "").trim().toLowerCase();
+	opt(m + 66, y + 4.4, "YES", /^y/.test(dwg));
+	opt(m + 84, y + 4.4, "NO", /^n/.test(dwg));
+	y += RH;
+	const jobEnd = y;
+	// Measurement column
+	let yy = jt;
+	const mRow = (h, cells) => {
+		let x = mx;
+		cells.forEach(([w, label, value, center]) => {
+			const cwid = w * MW;
+			doc.setLineWidth(.25);
+			doc.rect(x, yy, cwid, h);
+			const text = value === undefined ? label : `${label} ${value || "N/A"}`;
+			const lines = wrap(text, cwid - PAD * 2, 6.8, value === undefined ? "bold" : "normal");
+			cellText(lines, x + PAD, yy, h, 6.8, value === undefined ? "bold" : "normal", center ? "center" : "left", cwid - PAD * 2);
+			x += cwid;
+		});
+		yy += h;
+	};
+	mRow(rowHs[0], [[1, `QUANTITY: ${form.quantity || "N/A"}`, undefined, true]]);
+	mRow(rowHs[1], [[1, "GENERAL DIMENSIONS (APPROXIMATELY)", undefined, true]]);
+	mRow(rowHs[2], [[1 / 3, "LENGTH:", form.length], [1 / 3, "WIDTH:", form.width], [1 / 3, "THK:", form.thk]]);
+	mRow(rowHs[3], [[1 / 3, "OD:", form.outsideDia], [1 / 3, "ID:", form.insideDia], [1 / 3, "LENGTH:", form.dimLength]]);
+	mRow(rowHs[4], [[1, "ESTIMATED WEIGHT", undefined, true]]);
+	const wt = String(form.weightValue || "").trim();
+	mRow(rowHs[5], [[.5, "TONS:", form.weightTons ? wt : ""], [.5, "KG:", form.weightKg ? wt : ""]]);
+	mRow(rowHs[6], [[1, "DURATION:", form.duration]]);
+	y = jobEnd;
+	// ---- C. Scope of Work: main tasks bold, sub-tasks indented ----
+	y = band(y, "C. SCOPE OF WORK");
+	const scopeLines = (Array.isArray(form.scopeItems) && form.scopeItems.length
+		? form.scopeItems.map((s) => (typeof s === "string" ? s : `${s.no ? `${s.no} ` : ""}${s.text || ""}`))
+		: [form.scopeLeft, form.scopeRight].filter(Boolean).join("\n").split("\n")).map((s) => s.trim()).filter(Boolean);
+	const half = Math.ceil(scopeLines.length / 2);
+	const scopeCols = [scopeLines.slice(0, half), scopeLines.slice(half)];
+	const isSub = (s) => /^\d+\.\d+/.test(s) || /^[-•]/.test(s);
+	const colW2 = innerW / 2;
+	const scopeTop = y;
+	const colBottoms = scopeCols.map((list, ci) => {
+		let sy = scopeTop + 1.2;
+		list.forEach((s) => {
+			const sub = isSub(s);
+			const indent = sub ? 6 : 0;
+			const lines = wrap(s, colW2 - PAD * 2 - indent, 7.5, sub ? "normal" : "bold");
+			setText(7.5, sub ? "normal" : "bold");
+			doc.text(lines, m + ci * colW2 + PAD + indent, sy + 2.7, { lineHeightFactor: 1.18 });
+			sy += lines.length * lh(7.5) + .9;
+		});
+		return sy;
+	});
+	// No inner divider / bottom line: the page border frames the scope.
+	y = Math.max(...colBottoms) + 1;
+	// ---- D / E / F: three item tables side by side ----
+	y += 2;
+	const tables = [
+		["D. ESTIMATED MATERIALS", oifListRows(form.materials, form.materialsLeft)],
+		["E. CONSUMABLES", oifListRows(form.consumables, form.consumablesText)],
+		["F. TOOLS AND EQUIPMENT", oifListRows(form.tools, form.materialsRight)]
+	];
+	const gap = 2;
+	const INSET = 3; // tables stay clear of the page border
+	const tW = (innerW - INSET * 2 - gap * 2) / 3;
+	const tableStyles = {
+		font: fontName,
+		fontSize: 6.8,
+		cellPadding: { top: 1, bottom: 1, left: 1.4, right: 1.4 },
+		lineWidth: .25,
+		lineColor: [0, 0, 0],
+		textColor: [0, 0, 0],
+		valign: "middle",
+		overflow: "linebreak"
+	};
+	const headStyles = { font: fontName, fillColor: BLUE, textColor: [0, 0, 0], fontStyle: "bold", halign: "center", fontSize: 6.8 };
+	let tablesEnd = y;
+	tables.forEach(([title, rows], i) => {
+		const x = m + INSET + i * (tW + gap);
+		band(y, title, x, tW, 5.5);
 		autoTable(doc, {
-			startY: y,
-			margin: { left: m, right: m },
-			head: [["Manpower designation", "No. of pax"]],
-			body: people.map((row) => [row.designation || "", row.pax || ""]),
-			styles: { fontSize: 8, cellPadding: 1.2 },
-			headStyles: {
-				fillColor: [240, 240, 240],
-				textColor: [0, 0, 0]
-			}
+			startY: y + 5.5,
+			margin: { left: x, right: pageW - x - tW },
+			tableWidth: tW,
+			theme: "grid",
+			head: [["No.", "Description", "Qty", "Unit"]],
+			body: rows.length ? rows.map((r, k) => [k + 1, r.description, r.qty, r.unit]) : [["", "—", "", ""]],
+			styles: tableStyles,
+			headStyles,
+			columnStyles: { 0: { cellWidth: 7, halign: "center" }, 2: { cellWidth: 9, halign: "center" }, 3: { cellWidth: 10, halign: "center" } }
 		});
-		y = (doc.lastAutoTable?.finalY || y) + 6;
-	}
-	const block = (title, text) => {
-		y = room(y, 16);
-		doc.setFont(void 0, "bold");
-		doc.setFontSize(10);
-		doc.text(title, m, y);
-		y += 5;
-		doc.setFont(void 0, "normal");
-		doc.setFontSize(9);
-		doc.splitTextToSize(String(text || "—"), pageW - m * 2).forEach((part) => {
-			y = room(y, 5);
-			doc.text(part, m, y);
-			y += 4.2;
-		});
-		y += 2;
-	};
-	block("Scope of work", [form.scopeLeft, form.scopeRight].filter(Boolean).join("\n"));
-	block("Estimated materials, consumables, tools and equipment", [form.materialsLeft, form.materialsRight].filter(Boolean).join("\n"));
-	(form.photos || []).filter((photo) => photo?.dataUrl && /^data:image\//.test(photo.dataUrl)).forEach((photo) => {
-		y = room(y, 50);
-		try {
-			doc.addImage(photo.dataUrl, /png/i.test(photo.dataUrl.slice(0, 30)) ? "PNG" : "JPEG", m, y, 60, 40);
-			y += 44;
-			doc.setFontSize(8);
-			doc.text(String(photo.name || "Photo"), m, y);
-			y += 6;
-		} catch (err) {}
+		tablesEnd = Math.max(tablesEnd, doc.lastAutoTable?.finalY || y);
 	});
+	y = tablesEnd + 2;
+	// ---- G. Estimated activity duration with manpower ----
+	const people = (form.manpower || []).filter((row) => String(row?.designation || "").trim() || String(row?.pax || "").trim());
+	if (y + 24 > bottom) {
+		doc.addPage();
+		y = drawHeader() + 2;
+	}
+	y = band(y, `G. ESTIMATED ACTIVITY DURATION WITH MANPOWER${form.duration ? ` — ${String(form.duration).toUpperCase()}` : ""}`, m + 3, innerW - 6);
+	const halfP = Math.ceil(Math.max(people.length, 1) / 2);
+	const pRows = [];
+	for (let i = 0; i < halfP; i += 1) {
+		const a = people[i] || {};
+		const b = people[i + halfP] || {};
+		const bi = i + halfP;
+		pRows.push([a.designation ? i + 1 : "", a.designation || "", a.pax || "", a.days || "", b.designation ? bi + 1 : "", b.designation || "", b.pax || "", b.days || ""]);
+	}
+	autoTable(doc, {
+		startY: y,
+		margin: { left: m + 3, right: m + 3 },
+		theme: "grid",
+		head: [["NO.", "DESIGNATION", "NO. OF PERSONS", "DAYS / HOURS", "NO.", "DESIGNATION", "NO. OF PERSONS", "DAYS / HOURS"]],
+		body: pRows,
+		styles: tableStyles,
+		headStyles: { ...headStyles, fillColor: [232, 244, 248] },
+		columnStyles: { 0: { cellWidth: 9, halign: "center" }, 2: { cellWidth: 18, halign: "center" }, 3: { cellWidth: 18, halign: "center" }, 4: { cellWidth: 9, halign: "center" }, 6: { cellWidth: 18, halign: "center" }, 7: { cellWidth: 18, halign: "center" } }
+	});
+	// ---- Last page: photos (3 x 2), remarks and notes, signatories ----
+	doc.addPage();
+	y = drawHeader();
+	y = band(y, "H. PHOTOS");
+	const photos = (form.photos || []).filter((p) => p?.dataUrl && /^data:image\//.test(p.dataUrl)).slice(0, 6);
+	const pw = innerW / 3;
+	const ph = pw * 2 / 3; // photos fill their cells: no gutters
+	const capH = 7;
+	for (let r = 0; r < 2; r += 1) for (let c = 0; c < 3; c += 1) {
+		const x = m + c * pw;
+		const top = y + r * (ph + capH);
+		doc.setLineWidth(.25);
+		doc.rect(x, top, pw, ph + capH);
+		doc.line(x, top + ph, x + pw, top + ph);
+		const p = photos[r * 3 + c];
+		if (!p) continue;
+		try {
+			doc.addImage(p.dataUrl, /png/i.test(p.dataUrl.slice(0, 30)) ? "PNG" : "JPEG", x, top, pw, ph);
+			doc.setLineWidth(.25);
+			doc.rect(x, top, pw, ph + capH);
+		} catch { /* skip broken image */ }
+		const cap = wrap(p.name || "Photo", pw - PAD * 2, 6.8, "normal").slice(0, 2);
+		cellText(cap, x + PAD, top + ph, capH, 6.8, "normal", "center", pw - PAD * 2);
+	}
+	y += 2 * (ph + capH);
+	y = band(y, "I. REMARKS AND NOTES");
+	const remarks = wrap(form.remarks || "", innerW - PAD * 2 - 2, 8, "normal");
+	const notes = (Array.isArray(form.notes) ? form.notes : String(form.notes || "").split("\n")).map((s) => String(s).trim()).filter(Boolean);
+	const noteLines = notes.flatMap((n, i) => wrap(`${i + 1}. ${n}`, innerW - PAD * 2 - 2, 7.5, italicStyle));
+	const rmH = Math.max(18, (remarks.length + 1) * lh(8) + (noteLines.length + 1) * lh(7.5) + 6);
+	// Top edge only: no line between Remarks/Notes and the signatories.
+	let ry = y + 4;
+	setText(8, "bold");
+	doc.text("REMARKS:", m + PAD, ry);
+	ry += lh(8);
+	setText(8, "normal");
+	doc.text(remarks, m + PAD + 2, ry, { lineHeightFactor: 1.18 });
+	ry += remarks.length * lh(8) + 1.5;
+	if (noteLines.length) {
+		setText(8, "bold");
+		doc.text("NOTES:", m + PAD, ry);
+		ry += lh(8);
+		setText(7.5, italicStyle);
+		doc.setTextColor(180, 0, 0);
+		doc.text(noteLines, m + PAD + 2, ry, { lineHeightFactor: 1.18 });
+		doc.setTextColor(0, 0, 0);
+	}
+	y += rmH;
+	if (y + 56 > bottom) {
+		doc.addPage();
+		y = drawHeader() + 2;
+	}
+	// Signatories: same drawing as the RCE / Cost Estimate, 2 rows of 3, no box.
+	drawExportSigns(doc, [
+		{ label: "Prepared by:", name: form.preparedBy || form.createdBy, title: form.preparedTitle, stamp: form.preparedStamp },
+		{ label: "Inspected by:", name: form.inspectedBy || form.onsiteInspector, title: form.inspectedTitle, stamp: form.inspectedStamp },
+		{ label: "Reviewed by:", name: form.reviewedBy, title: form.reviewedTitle, stamp: form.reviewedStamp },
+		{ label: "Checked by:", name: form.checkedBy, title: form.checkedTitle, stamp: form.checkedStamp },
+		{ label: "Noted by:", name: form.notedBy, title: form.notedTitle, stamp: form.notedStamp },
+		{ label: "Approved by:", name: form.approvedBy, title: form.approvedTitle, stamp: form.approvedStamp }
+	], y + 2, m, { cols: 3 });
+	// ---- PAGE X OF Y ----
+	const endPage = doc.getNumberOfPages();
+	const total = endPage - startPage + 1;
+	pageRows.forEach(({ page, y: py }) => {
+		doc.setPage(page);
+		setText(7.5, "normal");
+		doc.text(`PAGE ${page - startPage + 1} OF ${total}`, dcX + 23, py, { align: "center" });
+	});
+	doc.setPage(endPage);
+	if (!hostDoc && needsDraftWatermark({ flagOn: exportEngineOn, status: form.status, approvalStatus: form.approval?.status, docType: "oif" })) stampDraftWatermark(doc);
 	if (!hostDoc) doc.save(`Inspection_${form.oifNo || form.id || "report"}.pdf`);
 	return doc;
+}
+// ---- Job Order pack: SY3 JO form page(s) + the attached Cost Estimate with prices hidden ----
+// JO form document control (SY3 format). Set the official number once Document Control issues it.
+const JO_DOC_CONTROL = {
+	docControlNo: "F-SMD-____",
+	revisionNo: "00",
+	revisionDate: "N/A"
+};
+const CE_MONEY_HEADER = /price|rate|sub-?total|total|amount|cost|allowance|electricity|₱|markup/i;
+// Blank every price and amount in CE export data (keeps descriptions, qty, unit, days, labels such as "SUB TOTAL:").
+function hideCePrices(data = {}) {
+	const isMoneyText = (v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !/[A-Za-z]/.test(v.replace(/₱|PHP/gi, "")));
+	const blankRows = (columns, rows) => {
+		const money = (columns || []).map((c, i) => (CE_MONEY_HEADER.test(String(c)) ? i : -1)).filter((i) => i >= 0);
+		return (rows || []).map((row) => Array.isArray(row) ? row.map((cell, i) => {
+			const v = cell && typeof cell === "object" && "content" in cell ? cell.content : cell;
+			const hide = (money.includes(i) && isMoneyText(v)) || (typeof v === "string" && v.includes("₱"));
+			if (!hide) return cell;
+			return cell && typeof cell === "object" && "content" in cell ? { ...cell, content: "" } : "";
+		}) : row);
+	};
+	const sections = (data.sections || []).map((section) => {
+		const next = { ...section };
+		const dropValues = (meta) => (Array.isArray(meta) ? meta.map((mt) => (mt && "value" in mt ? { ...mt, value: null } : mt)) : meta);
+		if (Array.isArray(section.rows)) next.rows = blankRows(section.columns, section.rows);
+		next.rowMeta = dropValues(section.rowMeta);
+		if (Array.isArray(section.blocks)) next.blocks = section.blocks.map((block) => {
+			const b = { ...block };
+			delete b.planRows;
+			delete b.planMeta;
+			if (Array.isArray(block.rows)) b.rows = blankRows(block.columns, block.rows);
+			b.rowMeta = dropValues(block.rowMeta);
+			return b;
+		});
+		if (next.projectBlock) next.projectBlock = { ...next.projectBlock, ceLabel: "REF. CE NO." };
+		return next;
+	});
+	const cover = data.cover ? { ...data.cover, grandTotal: 0, netTotal: 0 } : data.cover;
+	return { ...data, sections, cover, pricing: undefined, pricesHidden: true, footerTag: "FOR JO — PRICES HIDDEN" };
+}
+function joLongDate(iso) {
+	const d = new Date(`${String(iso || "").slice(0, 10)}T00:00:00`);
+	if (Number.isNaN(d.getTime())) return String(iso || "");
+	return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+function joManilaStamp(name, at) {
+	if (!name || !at) return "";
+	const d = new Date(new Date(at).getTime() + 8 * 3600 * 1000);
+	if (Number.isNaN(d.getTime())) return "";
+	return `${name} ${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 16)}`;
+}
+function drawJobOrderForm(doc, jo = {}, users = [], opts = {}) {
+	const pageW = doc.internal.pageSize.getWidth();
+	const m = 12;
+	const innerW = pageW - m * 2;
+	const nameOf = (id) => {
+		const hit = (users || []).find((u) => u.userId === id || u.id === id);
+		return hit?.name || "";
+	};
+	const dc = { ...JO_DOC_CONTROL, ...(opts.docControl || {}) };
+	doc.setTextColor(0, 0, 0);
+	doc.setDrawColor(0, 0, 0);
+	// Header: logo, big title, doc-control text. No box or grid lines.
+	const headTop = 10;
+	const headH = 22;
+	const logo = opts.logo;
+	if (logo) try {
+		let w = 42;
+		let h = headH;
+		try {
+			const p = doc.getImageProperties(logo);
+			const r = p.width / p.height;
+			if (w / h > r) w = h * r;
+			else h = w / r;
+		} catch { /* box */ }
+		doc.addImage(logo, logoFormat(logo), m, headTop + (headH - h) / 2, w, h);
+	} catch { /* no logo */ }
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(22);
+	doc.text("JOB ORDER FORM", pageW / 2 - 4, headTop + headH / 2 + 3, { align: "center" });
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(7.5);
+	const dcX = pageW - m - 48;
+	[["Document No.:", dc.docControlNo], ["Revision No.:", dc.revisionNo], ["Revision Date:", dc.revisionDate]].forEach(([l, v], i) => {
+		const ty = headTop + 6 + i * 5;
+		doc.text(l, dcX, ty);
+		doc.text(String(v || ""), dcX + 21, ty);
+	});
+	// JO number + date, top right
+	let y = headTop + headH + 7;
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(12);
+	doc.text(String(jo.joNo || "—"), pageW - m, y, { align: "right" });
+	y += 5;
+	doc.setFont(void 0, "normal");
+	doc.setFontSize(10);
+	doc.text(joLongDate(jo.dateIssued), pageW - m, y, { align: "right" });
+	y += 9;
+	// Date issued + REF. CE No. (plain text, no line or box)
+	const issued = jo.dateIssued ? `${joLongDate(jo.dateIssued).toUpperCase()} (${new Date(`${jo.dateIssued}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" }).toUpperCase()})` : "—";
+	doc.setFontSize(9);
+	doc.setFont(void 0, "bold");
+	doc.text("DATE ISSUED:", m + 2, y);
+	const diW = doc.getTextWidth("DATE ISSUED: ");
+	doc.setFont(void 0, "normal");
+	doc.text(issued, m + 2 + diW, y);
+	const ceRef = (Array.isArray(jo.ceIds) ? jo.ceIds : []).join(", ") || "—";
+	const ceW = doc.getTextWidth(ceRef);
+	doc.text(ceRef, pageW - m, y, { align: "right" });
+	doc.setFont(void 0, "bold");
+	doc.text("REF. CE NO.:", pageW - m - ceW - 2, y, { align: "right" });
+	y += 3;
+	// Client block: labelled values with underlined inputs, as on the company form.
+	const leftW = innerW * .62;
+	const rows = [
+		["CLIENT NAME:", jo.client, "PO REFERENCE NO.:", jo.poRef],
+		["PROJECT DESCRIPTION:", jo.projectDescription || jo.project, "PR REFERENCE NO.:", jo.prNo],
+		["SALESPERSON IN-CHARGE:", nameOf(jo.salesRepId), "DEPT./POSITION:", jo.salesPosition],
+		["PROJECT IN CHARGE:", jo.inCharge, "DEPT./POSITION:", jo.inChargePosition],
+		["CLIENT:", jo.clientContact, "DEPT./POSITION:", jo.clientContactPosition]
+	];
+	doc.setLineWidth(.3);
+	rows.forEach(([l1, v1, l2, v2]) => {
+		doc.setFontSize(8.5);
+		doc.setFont(void 0, "normal");
+		const lw1 = doc.getTextWidth(l1) + 1.5;
+		const lw2 = doc.getTextWidth(l2) + 1.5;
+		doc.setFont(void 0, "bold");
+		const val1 = doc.splitTextToSize(String(v1 || "—").toUpperCase(), leftW - lw1 - 5);
+		const val2 = doc.splitTextToSize(String(v2 || "—").toUpperCase(), innerW - leftW - lw2 - 5);
+		const lines = Math.max(val1.length, val2.length);
+		const h = Math.max(8.5, lines * 3.8 + 4.5);
+		doc.rect(m, y, leftW, h);
+		doc.rect(m + leftW, y, innerW - leftW, h);
+		const ty = y + (h - lines * 3.8) / 2 + 2.8;
+		doc.setFont(void 0, "normal");
+		doc.text(l1, m + 2, ty);
+		doc.text(l2, m + leftW + 2, ty);
+		doc.setFont(void 0, "bold");
+		doc.text(val1, m + 2 + lw1, ty, { lineHeightFactor: 1.27 });
+		doc.text(val2, m + leftW + 2 + lw2, ty, { lineHeightFactor: 1.27 });
+		y += h;
+	});
+	y += 9;
+	// Scope of work + lead time
+	doc.setFontSize(9);
+	doc.setFont(void 0, "normal");
+	doc.text("SCOPE OF WORK:", m, y);
+	doc.setFont(void 0, "bolditalic");
+	doc.text(String(jo.scopeRef || "**PLEASE SEE ANNEX A (ATTACHED COST ESTIMATE)**"), m + 28, y);
+	y += 5;
+	doc.setFont(void 0, "normal");
+	doc.text("PROJECT LEADTIME:", m + 4, y);
+	doc.setFont(void 0, "bold");
+	doc.text(String(jo.duration || ""), m + 37, y);
+	y += 5;
+	(jo.leadtime || []).forEach((item) => {
+		const bold = Array.isArray(item) ? String(item[0] || "") : String(item?.span || item?.days || "");
+		const rest = Array.isArray(item) ? String(item[1] || "") : String(item?.text || item?.note || (typeof item === "string" ? item : ""));
+		doc.circle(m + 32, y - 1, .6, "F");
+		doc.setFont(void 0, "bold");
+		doc.text(bold, m + 35, y);
+		const bw = doc.getTextWidth(bold);
+		doc.setFont(void 0, "normal");
+		if (rest) doc.text(doc.splitTextToSize(` – ${rest}`, innerW - 40 - bw)[0], m + 35 + bw, y);
+		y += 4.6;
+	});
+	y += 4;
+	doc.setFont(void 0, "normal");
+	doc.text("DATE OF MOBILIZATION:", m, y);
+	doc.setFont(void 0, "bold");
+	doc.text(String(jo.mobilization || "—"), m + 40, y);
+	y += 6;
+	// Signatories: CE / RCE style (e-sign, date/time stamp, name over line, designation).
+	const steps = Array.isArray(jo.steps) ? jo.steps : [];
+	const finalStep = steps.find((s) => s.isFinal) || steps[steps.length - 1] || {};
+	const submitted = (jo.timeline || []).find((t) => /submitted/i.test(t.action || ""));
+	const preparer = nameOf(jo.salesRepId);
+	const approver = nameOf(finalStep.byUserId || jo.approverId);
+	const forName = finalStep.forUserId && finalStep.forUserId !== finalStep.byUserId ? nameOf(finalStep.forUserId) : "";
+	y = drawExportSigns(doc, [
+		{ label: "Prepared by:", name: preparer, title: jo.salesPosition || "Sales Representative", stamp: joManilaStamp(preparer, submitted?.at) },
+		{ label: "Checked and Approved by:", name: approver, title: [jo.approverPosition || "Sales Manager", forName ? `for ${forName}` : ""].filter(Boolean).join(" — "), stamp: joManilaStamp(approver, finalStep.at) }
+	], y, m, { cols: 2 });
+	y += 4;
+	// JO reference guide: light-blue strip, type-of-project chips, then the JO number split into captioned chips.
+	const NAVY = [20, 40, 90];
+	const type = String(jo.type || "").toUpperCase();
+	y += 2;
+	doc.setFillColor(173, 216, 230);
+	doc.setDrawColor(...NAVY);
+	doc.setLineWidth(.3);
+	doc.rect(m, y, innerW, 6.5, "FD");
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(9.5);
+	doc.setTextColor(...NAVY);
+	doc.text("JO REFERENCE NO. GUIDE", pageW / 2, y + 4.6, { align: "center" });
+	y += 10.5;
+	// Type of project: a tidy chip row; the selected type is tinted, bold-bordered and ticked.
+	doc.setFontSize(7.5);
+	doc.setFont(void 0, "bold");
+	doc.text("TYPE OF PROJECT:", m + 1, y + 4);
+	const legend = [["SW", "SW: Shop Work"], ["F", "F: Field / On-Site"], ["T", "T: Trading / Supply"], ["O", "Others: ________"]];
+	const lgX0 = m + 30;
+	const lgGap = 2;
+	const lgW = (pageW - m - lgX0 - lgGap * 3) / 4;
+	legend.forEach(([code, label], i) => {
+		const x = lgX0 + i * (lgW + lgGap);
+		const on = code === type || (code === "F" && type === "OS");
+		if (on) doc.setFillColor(214, 234, 244);
+		else doc.setFillColor(255, 255, 255);
+		doc.setDrawColor(...(on ? NAVY : [150, 160, 175]));
+		doc.setLineWidth(on ? .6 : .25);
+		doc.roundedRect(x, y, lgW, 6, 1.6, 1.6, "FD");
+		doc.setLineWidth(.3);
+		doc.setDrawColor(...NAVY);
+		doc.setFillColor(255, 255, 255);
+		doc.rect(x + 1.8, y + 1.3, 3.4, 3.4, "FD");
+		if (on) {
+			oifDrawTick(doc, x + 1.8, y + 3.1);
+			doc.setDrawColor(...NAVY);
+		}
+		doc.setFont(void 0, on ? "bold" : "normal");
+		let fs = 7;
+		doc.setFontSize(fs);
+		while (fs > 5.5 && doc.getTextWidth(label) > lgW - 8) doc.setFontSize(fs -= .25);
+		doc.setTextColor(...NAVY);
+		doc.text(label, x + 6.6, y + 4.1);
+	});
+	y += 10;
+	// JO number: segments in rounded chips joined by dashes, caption under each chip.
+	const segs = String(jo.joNo || "").split("-");
+	while (segs.length < 6) segs.push("—");
+	const caps = ["Job Order", "JO Ref. #", "Type of Project", "Client's Code", "Year", "Proposal Control No."];
+	const fills = [[226, 238, 248], [214, 234, 244], [222, 240, 238], [232, 236, 246], [238, 242, 248], [220, 232, 246]];
+	doc.setFont(void 0, "bold");
+	doc.setFontSize(13);
+	const chipH = 9;
+	const dashW = 5;
+	const widths = segs.slice(0, 6).map((sg, i) => {
+		doc.setFont(void 0, "bold");
+		doc.setFontSize(13);
+		const tw = doc.getTextWidth(sg) + 7;
+		doc.setFont(void 0, "normal");
+		doc.setFontSize(6.5);
+		return Math.max(tw, doc.getTextWidth(caps[i]) + 2, 15);
+	});
+	const totalW = widths.reduce((a, w) => a + w, 0) + dashW * 5;
+	let cx = pageW / 2 - totalW / 2;
+	segs.slice(0, 6).forEach((sg, i) => {
+		const w = widths[i];
+		doc.setFillColor(...fills[i]);
+		doc.setDrawColor(...NAVY);
+		doc.setLineWidth(.4);
+		doc.roundedRect(cx, y, w, chipH, 2.2, 2.2, "FD");
+		doc.setFont(void 0, "bold");
+		doc.setFontSize(13);
+		doc.setTextColor(...NAVY);
+		doc.text(sg, cx + w / 2, y + chipH / 2 + 1.7, { align: "center" });
+		doc.setFont(void 0, "normal");
+		doc.setFontSize(6.5);
+		doc.setTextColor(60, 70, 90);
+		doc.text(caps[i], cx + w / 2, y + chipH + 3.6, { align: "center" });
+		if (i < 5) {
+			doc.setDrawColor(...NAVY);
+			doc.setLineWidth(.5);
+			doc.line(cx + w + 1.2, y + chipH / 2, cx + w + dashW - 1.2, y + chipH / 2);
+		}
+		cx += w + dashW;
+	});
+	y += chipH + 6;
+	doc.setTextColor(0, 0, 0);
+	doc.setDrawColor(0, 0, 0);
+	doc.setLineWidth(.3);
+	doc.line(m, y, pageW - m, y);
+	return y;
+}
+async function exportJobOrderPackPdf(jo = {}, users = [], ceData = null, opts = {}) {
+	if (shouldLoadExportSignatures(exportEngineOn)) {
+		const names = (users || []).filter((u) => [jo.salesRepId, jo.approverId, ...(jo.steps || []).map((s) => s.byUserId)].includes(u.userId)).map((u) => u.name);
+		await warmExportSignatures(names, { approval: { status: jo.finalApproved ? "accepted" : "" } });
+	}
+	const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+	try {
+		await ensureExportFonts();
+		applyExportFonts(doc);
+	} catch { /* helvetica */ }
+	drawJobOrderForm(doc, jo, users, opts);
+	const out = await PDFDocument.create();
+	const joPdf = await PDFDocument.load(doc.output("arraybuffer"));
+	(await out.copyPages(joPdf, joPdf.getPageIndices())).forEach((p) => out.addPage(p));
+	if (ceData) {
+		const ceHandle = await renderCostEstimatePdf(hideCePrices(ceData));
+		const cePdf = await PDFDocument.load(await ceHandle.output("blob").arrayBuffer());
+		(await out.copyPages(cePdf, cePdf.getPageIndices())).forEach((p) => out.addPage(p));
+	}
+	return new Uint8Array(await out.save());
 }
 function exportOifExcel(form = {}) {
 	const rows = [
@@ -20012,24 +22590,31 @@ function exportRceExcel(rce, documentControl) {
 		["Item", "Description", "Complete", "Remarks"],
 		...(src.checklistItems || []).map((it) => [it.num, it.desc, it.complete || "", it.remarks || ""])
 	];
-	if (src.otherRemarks) rows.push([], ["Other remarks", src.otherRemarks]);
+	if (remarkPlain(src.otherRemarks)) rows.push([], ["Other remarks", remarkPlain(src.otherRemarks)]);
 	const wb = XLSX.utils.book_new();
 	XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "RCE");
 	XLSX.writeFile(wb, `RCE_${src.rceNo || src.id || "export"}.xlsx`);
 }
 async function previewRcePdf(rce, documentControl) {
-	return exportRceToPDF(rceForExport(rce, documentControl), new jsPDF({
+	const src = rceForExport(rce, documentControl);
+	if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([src.preparedBy, src.reviewedBy, src.approvedBy], { approval: src.approval });
+	const doc = exportRceToPDF(src, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
 		format: "a4"
-	})).output("bloburl");
+	}));
+	if (needsDraftWatermark({ flagOn: exportEngineOn, status: src.status, approvalStatus: src.approval?.status })) stampDraftWatermark(doc);
+	return doc.output("bloburl");
 }
 async function previewOifPdf(form) {
-	return exportOifToPDF(form, new jsPDF({
+	if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([form?.preparedBy, form?.createdBy, form?.inspectedBy, form?.onsiteInspector, form?.reviewedBy, form?.checkedBy, form?.notedBy, form?.approvedBy], { approval: form?.approval });
+	const doc = exportOifToPDF(form, new jsPDF({
 		orientation: "portrait",
 		unit: "mm",
 		format: "a4"
-	})).output("bloburl");
+	}));
+	if (needsDraftWatermark({ flagOn: exportEngineOn, status: form?.status, approvalStatus: form?.approval?.status, docType: "oif" })) stampDraftWatermark(doc);
+	return doc.output("bloburl");
 }
 function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [], facts = [], docNoun = "document", backLabel = "Back to document", emptyFiles = "No files were saved with this version.", missingDoc = "This revision was not kept as its own copy. History is still available.", buildPdf, exportPdf, exportExcel, ceBundle = null }) {
 	const list = versions.length ? versions : [];
@@ -20067,8 +22652,10 @@ function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [],
 		(async () => {
 			try {
 				url = await buildRef.current?.(current);
-				if (alive) setPdfUrl(url || "");
-				else if (url) URL.revokeObjectURL(url);
+				if (alive) {
+					if (url) setPdfUrl(url);
+					else setPdfError(`Could not build the ${docNoun} preview.`);
+				} else if (url) URL.revokeObjectURL(url);
 			} catch (err) {
 				if (alive) setPdfError(`Could not build the ${docNoun} preview.`);
 			}
@@ -20294,7 +22881,7 @@ function MonRecordPreview({ title, onClose, onOpen, versions = [], history = [],
 		})
 	});
 }
-function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = [] }) {
+function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = [], engineOn = false }) {
 	const versions = row?.versions?.length ? row.versions : [];
 	const [selectedId, setSelectedId] = useState(versions[versions.length - 1]?.id || "");
 	const [pane, setPane] = useState("estimate");
@@ -20323,11 +22910,19 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 		let url = "";
 		setPdfError("");
 		setPdfUrl("");
+		const data = buildMonitoringExportData(version, documentControl, users, row);
+		const payload = !engineOn ? data : {
+			...data,
+			approval: version?.approval || row?.approval || null,
+			draftWatermark: needsDraftWatermark({ flagOn: true, status: row?.status, approvalStatus: version?.approval?.status })
+		};
 		(async () => {
 			try {
-				url = await previewIssuePdf(buildMonitoringExportData(version, documentControl, users, row));
-				if (alive) setPdfUrl(url);
-				else URL.revokeObjectURL(url);
+				url = await previewIssuePdf(payload);
+				if (alive) {
+					if (url) setPdfUrl(url);
+					else setPdfError("Could not build the cost estimate preview.");
+				} else if (url) URL.revokeObjectURL(url);
 			} catch (err) {
 				if (alive) setPdfError("Could not build the cost estimate preview.");
 			}
@@ -20336,10 +22931,18 @@ function MonCePreview({ row, onClose, onOpen, documentControl, users, rceList = 
 			alive = false;
 			if (url) URL.revokeObjectURL(url);
 		};
-	}, [version, documentControl, users, row]);
+	}, [version, documentControl, users, row, engineOn]);
 	if (!version) return null;
 	const hot = /high|urgent|emergency/i.test(row?.priority || "");
-	const exportData = () => buildMonitoringExportData(version, documentControl, users, row);
+	const exportData = () => {
+		const data = buildMonitoringExportData(version, documentControl, users, row);
+		if (!engineOn) return data;
+		return {
+			...data,
+			approval: version?.approval || row?.approval || null,
+			draftWatermark: needsDraftWatermark({ flagOn: true, status: row?.status, approvalStatus: version?.approval?.status })
+		};
+	};
 	const panelHead = (title) => /* @__PURE__ */ jsxs("div", {
 		className: "mon-preview-panel-head",
 		children: [
@@ -20564,7 +23167,7 @@ function fixedViewport() {
 	const z = uiZoom();
 	return { width: window.innerWidth / z, height: window.innerHeight / z };
 }
-function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, canAssign, assignChoices }) {
+function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, canAssign, assignChoices, onExport, extras = [] }) {
 	const [open, setOpen] = useState(false);
 	const [pos, setPos] = useState(null);
 	const [assigning, setAssigning] = useState(false);
@@ -20620,13 +23223,50 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 						},
 						children: "Preview"
 					}),
+					row.ceId && onExport ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							onExport(row);
+						},
+						children: "Export"
+					}) : null,
+					templatesFromDocsOn && row.ceId ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							const tpl = stripCeTemplate({ client: row.client || "", project: row.projectDesc || "", notes: "", attachments: [] });
+							if (typeof saveCeTemplateNow === "function") saveCeTemplateNow(row, tpl);
+						},
+						children: "Save as CE template"
+					}) : null,
+					templatesFromDocsOn && row.ceId ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							openAsNewCe(row);
+						},
+						children: "Use as new CE"
+					}) : null,
+					monitoringExportOn && row.ceId ? /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							const data = salesSafeExport({ ceNumber: row.ceNo || row.ceId, cover: { client: row.client || "", contingencyPct: 0 } }, release1SalesActor === true);
+							const book = XLSX.utils.book_new();
+							XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["CE", data.ceNumber || ""], ["Sales safe", data.salesSafe ? "yes" : "no"]]), "CE");
+							XLSX.writeFile(book, `${row.ceNo || "ce"}.xlsx`);
+						},
+						children: "Export Excel"
+					}) : null,
 					row.canRevise ? /* @__PURE__ */ jsx("button", {
 						type: "button",
 						onClick: () => {
-							const note = window.prompt("Revision instruction or RCE change");
-							if (!note || !String(note).trim()) return;
-							setOpen(false);
-							onRevise?.(row.ceId, String(note).trim());
+							void askReason({ title: "Revise", label: "Revision instruction or RCE change", required: true }).then((asked) => {
+								if (!asked.ok) return;
+								setOpen(false);
+								onRevise?.(row.ceId, asked.text);
+							});
 						},
 						children: "Revise"
 					}) : null,
@@ -20668,7 +23308,15 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 						type: "button",
 						onClick: () => setAssigning(true),
 						children: "Assign…"
-					}) : null
+					}) : null,
+					...(Array.isArray(extras) ? extras.filter(Boolean).map((item) => /* @__PURE__ */ jsx("button", {
+						type: "button",
+						onClick: () => {
+							setOpen(false);
+							item.onClick?.();
+						},
+						children: item.label
+					}, item.label)) : [])
 				]
 			}) : null
 		]
@@ -20725,7 +23373,7 @@ function MonHistoryPanel({ entries }) {
 		]
 	});
 }
-function MonitoringDashboard({ variant = "active", profile = "monitor", ceList = [], rceList = [], documents = {}, documentControl = {}, users = [], onOpenCE, onReceivedBy, onStampSubmitted, onStartRevision, onRowOpen, onDecide, actingLevel = "staff", boardColors, onGeneratePending, onAssignPending }) {
+function MonitoringDashboard({ variant = "active", profile = "monitor", ceList = [], rceList = [], documents = {}, documentControl = {}, users = [], onOpenCE, onReceivedBy, onStampSubmitted, onStartRevision, onRowOpen, onDecide, actingLevel = "staff", boardColors, onGeneratePending, onAssignPending, engineOn = false, familiesOn = false, suffixesOn = false }) {
 	const colors = boardColors || defaultBoardColors();
 	const [statusFilter, setStatusFilter] = useState("All");
 	const [groupFilter, setGroupFilter] = useState("Active");
@@ -20733,6 +23381,10 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	const [sortBy, setSortBy] = useState("priority");
 	const [chip, setChip] = useState("");
 	const [previewRow, setPreviewRow] = useState(null);
+	const [exportAsk, setExportAsk] = useState(null);
+	const [threadRow, setThreadRow] = useState(null);
+	const [hideTeam, setHideTeam] = useState(false);
+	const [openFamilies, setOpenFamilies] = useState({});
 	const [groupOpen, setGroupOpen] = useState(false);
 	const groupMenuRef = useRef(null);
 	const clients = useMasterlist().clients || [];
@@ -20751,12 +23403,14 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 		if (variant === "executive") return true;
 		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === ce.rceId);
 		if (!rce) return true;
+		if (profile === "user") return true;
 		if (rceIsFinalAccepted(rce)) return true;
 		return lead;
 	}).map((ce) => {
 		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === ce.rceId);
 		const doc = documents?.[ce.id] || {};
-		const deadline = rce?.ceDeadline || rce?.submissionDeadline || "";
+		const headerShown = ceTpl4On ? listHeaderValues(ce, doc, rce) : null;
+		const deadline = headerShown ? headerShown.deadline : rce?.ceDeadline || rce?.submissionDeadline || "";
 		const received = rce?.dateReceived || rce?.rceDate || ce.lastEdited;
 		const start = Date.parse(received || "") || Date.now();
 		const aging = Math.max(0, Math.round((Date.now() - start) / 864e5));
@@ -20767,9 +23421,9 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			ceId: ce.id,
 			rceKey: rce?.id || ce.rceId || "",
 			rceNo: ce.rceId || "—",
-			client: ce.client,
-			clientCode: clientCodeForCe(ce, clients),
-			projectDesc: ce.project,
+			client: headerShown ? headerShown.client : ce.client,
+			clientCode: clientCodeForCe(headerShown ? { ...ce, client: headerShown.client } : ce, clients),
+			projectDesc: headerShown ? headerShown.project : ce.project,
 			companyKey,
 			companyDesignation: companyDesignationName(companyKey, documentControl) || "—",
 			department: ceDepartmentLabel(doc, rce),
@@ -20795,6 +23449,14 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			awardStatus: ce.status === "Done" ? doc.awardStatus || ce.awardStatus || "" : "",
 			awardRemarks: ce.status === "Done" ? doc.awardJo || ce.awardJo || "" : "",
 			isNew: !!ce.isNew,
+			targetedIds: [ce.assignedToId, ce.salesOwnerId, rce?.assignedToId, rce?.salesOwnerId].filter(Boolean),
+			seenBy: ce.seenBy || {},
+			createdAt: ce.createdAt || ce.lastEdited || "",
+			unreadReplies: ceThreadsOn === true ? unreadCount(doc.thread, personalActorId) : 0,
+			thread: doc.thread || null,
+			waitingInfo: String(ce.status || "").toLowerCase() === "waiting for information",
+			assigneeId: ce.assignedToId || "",
+			rceChanged: !!engineOn && rceWasChanged(ce, rce),
 			overdue: deadline ? Date.parse(deadline) < Date.now() && ce.status !== "Done" && ce.status !== "Cancelled" : false,
 			baseKey: ceBaseId(ce),
 			revRank: ceRevRank(ce, doc),
@@ -20809,9 +23471,11 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			summaryOverrides: doc.summaryOverrides || {},
 			summaryIncludes: doc.summaryIncludes || [],
 			thirdPartyShow: doc.thirdPartyShow || { mode: "off", keys: [] },
+		pricing: doc.pricing,
 			sowText: doc.sowText || "",
 			revisionNote: doc?.projectInfo?.revisionNote || "",
-			fileAttachments: doc.fileAttachments || {}
+			fileAttachments: doc.fileAttachments || {},
+			urgentTag: ce.urgentTag || doc.urgentTag || ""
 		};
 	});
 	const pendingJobs = (rceList || []).filter((r) => rceIsFinalAccepted(r) && !ceLinkedToRce(ceList, r)).map((r) => {
@@ -20851,6 +23515,10 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			awardStatus: "",
 			awardRemarks: "",
 			isNew: true,
+			targetedIds: [r.assignedToId, r.salesOwnerId].filter(Boolean),
+			seenBy: r.seenBy || {},
+			createdAt: received || new Date().toISOString(),
+			openLabel: personalNewTagOn === true ? openStage({ hasCe: false, openedByAssigneeOrLead: !!(r.seenBy && r.assignedToId && r.seenBy[r.assignedToId]) }) : "",
 			overdue: r.ceDeadline ? Date.parse(r.ceDeadline) < Date.now() : false,
 			rceOnly: true,
 			priority: monPriorityLabel(r.priorityLevel),
@@ -20885,7 +23553,8 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	const showToolbar = profile !== "approval";
 	const showChips = variant === "active" && profile !== "approval";
 	const colCount = profile === "monitor" ? 18 : 10 + (showEstimator ? 1 : 0) + (showJobType ? 1 : 0) + (showTracking ? 4 : 0) + (showAwards ? 2 : 0);
-	const data = variant === "active" ? [...pendingJobs, ...foldMonitoringRows(liveRows)] : liveRows;
+	const folded = familiesOn ? foldFamilyRows(liveRows) : foldMonitoringRows(liveRows);
+	const data = variant === "active" ? [...pendingJobs, ...folded] : liveRows;
 	const activeGroup = profile === "approval" ? "All" : groupFilter;
 	const groupRows = variant !== "active" || activeGroup === "All" ? data : data.filter((row) => activeGroup === "Non-active" ? monIsNonActive(row.status) : !monIsNonActive(row.status));
 	const statusChoices = activeGroup === "Non-active" ? ["Done", "Cancelled", "Close bid", "No quote"] : activeGroup === "Active" ? ["Pending", ...JOB_STATUSES.filter((status) => !monIsNonActive(status))] : ["Pending", ...JOB_STATUSES];
@@ -20897,13 +23566,14 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 		{ id: "due3", label: "Due in 3 days", color: "#b45309", test: (row) => !monIsNonActive(row.status) && row.deadlineAge != null && row.deadlineAge >= 0 && row.deadlineAge <= 3 },
 		{ id: "wait", label: "Waiting for info", color: "#a16207", test: (row) => String(row.status || "").toLowerCase() === "waiting for information" },
 		{ id: "approval", label: "For approval", color: "#4338ca", test: (row) => String(row.status || "").toLowerCase() === "for approval" },
-		{ id: "new", label: "New", color: "#1f5c4c", test: (row) => !!row.isNew }
+		{ id: "new", label: "New", color: "#1f5c4c", test: (row) => personalNewTagOn === true ? showNewForUser({ userId: personalActorId, targetedIds: row.targetedIds || [], seenBy: row.seenBy || {}, createdAt: row.createdAt || row.rceReceivedDate || row.received, now: new Date().toISOString(), config: personalNewConfig }) : !!row.isNew },
+		...(ceThreadsOn === true ? [{ id: "unread", label: "Unread replies", color: "#1877F2", test: (row) => (row.unreadReplies || 0) > 0 }] : [])
 	];
 	const chipPick = showChips ? ceChips.find((item) => item.id === chip) : null;
 	const chipRows = chipPick ? matched.filter(chipPick.test) : matched;
 	const shown = variant === "active" ? sortMonitoringRows(chipRows, sortBy) : matched;
-	const awardedCount = matched.filter((d) => d.awardStatus === "Awarded").length;
-	const winRate = matched.length ? Math.round(awardedCount / matched.length * 100) : 0;
+	const winRatio = awardWinRate(matched.map((row) => ({ awardStatus: row.awardStatus })));
+	const winPct = winRatio == null ? null : Math.round(winRatio * 100);
 	const avgAgingLabel = averageNumber(matched.map((row) => row.deadlineAge));
 	const statusColors = {
 		Done: "#10B981",
@@ -20919,6 +23589,45 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 		"No quote": "#EF4444",
 		"No Quote": "#EF4444"
 	};
+	function confirmMonitorExport(request, plan) {
+		const doc = documents?.[request.ceId] || {};
+		const ce = (ceList || []).find((row) => row.id === request.ceId) || {};
+		const tasks = doc.tasks || [];
+		const sections = [];
+		const bol = buildBolExportSection(tasks, [], doc.pricing);
+		if (bol) sections.push(bol);
+		const bote = buildCategoryExportSection(tasks, "BOTE", "BILL OF TOOLS & EQUIPMENT", [], doc.pricing);
+		if (bote) sections.push(bote);
+		const bocm = buildCategoryExportSection(tasks, "BOCM", "BILL OF CONSUMABLES & MATERIALS", [], doc.pricing);
+		if (bocm) sections.push(bocm);
+		const ppe = buildCategoryExportSection(tasks, "PPE", "BILL OF PERSONAL PROTECTIVE EQUIPMENT", [], doc.pricing);
+		if (ppe) sections.push(ppe);
+		const misc = buildMiscExportSection(tasks, doc.pricing, []);
+		if (misc) sections.push(misc);
+		const grand = projectTotal(tasks, doc.pricing, doc.mobSheets);
+		const payload = applyExportPlan({
+			sections,
+			ceNumber: request.ceId,
+			cover: {
+				client: ce.client || doc.projectInfo?.client || "",
+				ceNumber: request.ceId,
+				grandTotal: grand,
+				netTotal: grand,
+				contingencyPct: request.salesSafe ? 0 : Number(doc.commercial?.contingencyPct) || 0,
+				omitContingency: request.salesSafe === true,
+				discountPct: Number(doc.commercial?.discountPct) || 0
+			}
+		}, plan);
+		const format = plan?.format || "pdf";
+		if (format === "excel" || format === "both") exportIssueExcel(payload);
+		if (format !== "excel") exportIssuePdf(payload);
+		setExportAsk(null);
+	}
+	function freshFor(row) {
+		if (personalNewTagOn !== true) return !!row.isNew;
+		return showNewForUser({ userId: personalActorId, targetedIds: row.targetedIds || [], seenBy: row.seenBy || {}, createdAt: row.createdAt || row.rceReceivedDate || row.received, now: new Date().toISOString(), config: personalNewConfig });
+	}
+	const teamRows = personalNewTagOn === true ? pendingJobs.filter((row) => freshFor(row)) : [];
 	return /* @__PURE__ */ jsxs("div", {
 		className: profile === "monitor" ? "mon-dashboard" : "mon-dashboard mon-dashboard-embed",
 		children: [
@@ -20926,13 +23635,22 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 				className: "mon-title",
 				children: "Monitoring Dashboard"
 			}) : null,
+			personalNewTagOn === true && profile === "monitor" && !hideTeam && teamRows.length ? /* @__PURE__ */ jsxs("div", {
+				className: "team-banner",
+				children: [
+					/* @__PURE__ */ jsx("p", { children: `Team: ${teamRows.length} new requests received today` }),
+					/* @__PURE__ */ jsx("p", { children: teamRows.map((row) => `${row.rceNo || row.id} · ${row.projectDesc || ""} · ${row.estimator || "unassigned"}`).join("; ") }),
+					/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setHideTeam(true), children: "Dismiss" })
+				]
+			}) : null,
+			(personalNewTagOn === true || ceThreadsOn === true) && profile === "monitor" ? /* @__PURE__ */ jsx("p", { className: "wiz-hint", children: "Green NEW is a new item for you. A blue dot is an unread message." }) : null,
 			showChips ? /* @__PURE__ */ jsx(MonChipStrip, {
 				chips: ceChips.map((item) => ({ ...item, count: matched.filter(item.test).length })),
 				active: chip,
 				onToggle: setChip,
 				context: /* @__PURE__ */ jsx(MonChipContext, { parts: [
 					{ label: "Avg aging", value: avgAgingLabel },
-					{ label: "Win rate", value: `${winRate}%` }
+					{ label: "Win rate", value: winPct == null ? "—" : `${winPct}%` }
 				] })
 			}) : null,
 			variant === "active" && showToolbar ? /* @__PURE__ */ jsxs("div", {
@@ -21031,8 +23749,9 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 					})]
 				})
 			}),
-			/* @__PURE__ */ jsx("div", {
+			/* @__PURE__ */ jsx(StickyTable, {
 				className: "mon-table-container",
+				enabled: ceTpl1On,
 				children: /* @__PURE__ */ jsxs("table", {
 					className: variant === "active" ? profile === "monitor" ? "mon-table mon-active-table mon-ce-board" : "mon-table mon-active-table" : "mon-table",
 					children: variant === "active" ? [
@@ -21042,7 +23761,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							/* @__PURE__ */ jsx("th", { className: "mon-priority", children: "Priority" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-st", children: "Status" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-project", children: "Project Description" }),
-							/* @__PURE__ */ jsx("th", { children: "CE #" }),
+							/* @__PURE__ */ jsx("th", { className: "mon-ce-head", children: "CE #" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-company", children: "Company" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-dept", children: "Department" }),
 							/* @__PURE__ */ jsx("th", { children: "RCE Received" }),
@@ -21062,7 +23781,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							/* @__PURE__ */ jsx("th", { children: "Deadline" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-wrap", children: "Aging" }),
 							/* @__PURE__ */ jsx("th", { children: "Amount" }),
-							/* @__PURE__ */ jsx("th", { children: "CE #" }),
+							/* @__PURE__ */ jsx("th", { className: "mon-ce-head", children: "CE #" }),
 							showEstimator ? /* @__PURE__ */ jsx("th", { className: "mon-estimator", children: "Estimator" }) : null,
 							/* @__PURE__ */ jsx("th", { className: "mon-company", children: "Company" }),
 							/* @__PURE__ */ jsx("th", { children: "Department" }),
@@ -21079,19 +23798,36 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							const receivedChoices = sales.slice();
 							if (row.receivedByValue && !receivedChoices.some((user) => user.name === row.receivedByValue)) receivedChoices.unshift({ id: `by-${row.id}`, name: row.receivedByValue });
 							const priorityCell = /* @__PURE__ */ jsx("td", { className: "mon-priority", children: /* @__PURE__ */ jsx(MonPriorityText, { label: row.priority, boardColors: colors }) });
-							const statusCell = /* @__PURE__ */ jsx("td", { className: "mon-st", children: /* @__PURE__ */ jsx(MonStatusText, { status: row.status, boardColors: colors, group: "ce" }) });
-							const projectCell = (client) => /* @__PURE__ */ jsx("td", { className: "mon-project", children: /* @__PURE__ */ jsx(MonProjectStack, {
+							const statusCell = /* @__PURE__ */ jsx("td", { className: "mon-st", children: /* @__PURE__ */ jsx(MonStatusText, { status: row.openLabel || row.status, boardColors: colors, group: "ce" }) });
+							const projectCell = (client) => /* @__PURE__ */ jsxs("td", { className: "mon-project", children: [
+								ceThreadsOn === true && row.unreadReplies > 0 ? /* @__PURE__ */ jsx("span", { className: "ce-unread-dot", title: `${row.unreadReplies} new reply` }) : null,
+								/* @__PURE__ */ jsx(MonProjectStack, {
 								title: row.projectDesc,
 								client,
-								badge: row.isNew,
-								badgeText: profile === "monitor" && row.isNew ? "NEW!" : "NEW"
-							}) });
+								badge: freshFor(row),
+								badgeText: profile === "monitor" && freshFor(row) ? "NEW!" : "NEW"
+							})] });
 							const deadlineCell = /* @__PURE__ */ jsx("td", { className: "mon-date", children: row.deadlineRaw ? formatUmDate(row.deadlineRaw) : "—" });
-							const amountCell = /* @__PURE__ */ jsx("td", { className: "mon-amount", children: row.amount || "—" });
+							const amountCell = /* @__PURE__ */ jsxs("td", { className: "mon-amount", children: [
+								row.amount || "—",
+								suffixesOn && row.family && Number.isFinite(row.combinedAmount) ? /* @__PURE__ */ jsxs("span", { className: "mon-rce-under", children: ["Combined ", fmt(row.combinedAmount)] }) : null
+							] });
 							const ceCell = /* @__PURE__ */ jsxs("td", { className: "ce-mono mon-ce", children: [
 								row.ceDisplay || "—",
 								row.rceNo && row.rceNo !== "—" ? /* @__PURE__ */ jsx("span", { className: "mon-rce-under", children: row.rceNo }) : null,
-								row.revOpen ? /* @__PURE__ */ jsx("span", { className: "mon-rev-under", children: `Rev ${row.revNo || "01"} in progress` }) : monRevKey(row.revNo) !== "0" ? /* @__PURE__ */ jsx("span", { className: "mon-rev-under", children: `Rev ${row.revNo}` }) : null
+								row.rceChanged ? /* @__PURE__ */ jsx("span", { className: "mon-rce-under", children: "RCE changed" }) : null,
+								row.revOpen ? /* @__PURE__ */ jsx("span", { className: "mon-rev-under", children: `Rev ${row.revNo || "01"} in progress` }) : monRevKey(row.revNo) !== "0" ? /* @__PURE__ */ jsx("span", { className: "mon-rev-under", children: `Rev ${row.revNo}` }) : null,
+								familiesOn && row.family ? /* @__PURE__ */ jsx("button", {
+									type: "button",
+									className: "ce-btn-ghost ce-btn-sm",
+									onClick: (event) => {
+										event.stopPropagation();
+										setOpenFamilies((prev) => ({ ...prev, [row.id]: !prev[row.id] }));
+									},
+									children: openFamilies[row.id] ? "Hide family" : "Family"
+								}) : null,
+								familiesOn && row.familyTags?.length ? /* @__PURE__ */ jsx("span", { className: "mon-rce-under", children: row.familyTags.join(" · ") }) : null,
+								(familiesOn || suffixesOn) && row.urgentTag ? /* @__PURE__ */ jsx("span", { className: "mon-rce-under", children: row.urgentTag }) : null
 							] });
 							const estimatorCell = /* @__PURE__ */ jsx("td", { className: "mon-estimator", children: row.estimator || "—" });
 							const companyCell = /* @__PURE__ */ jsx("td", { className: "mon-company", children: (companyCodeFromDesignation(row.companyKey, documentControl) || "—").slice(0, 5) });
@@ -21116,36 +23852,71 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 									...receivedChoices.map((user) => /* @__PURE__ */ jsx("option", { value: user.name, children: shortPersonName(user.name) }, user.id || user.name))
 								]
 							}) });
-							const actionsCell = /* @__PURE__ */ jsx("td", { className: profile === "approval" ? "mon-actions mon-decide" : "mon-actions", children: profile === "approval" ? /* @__PURE__ */ jsxs("div", {
-								className: "mon-decide-btns",
+							const followText = followLabel({ status: row.status, waitingInfo: row.waitingInfo }, { estimator: release1SalesActor !== true, sales: release1SalesActor === true, owner: release1SalesActor === true }) || "Follow up";
+							const approvalV2 = engineOn && (documents?.[row.ceId]?.approval || {}).engine === "v2";
+							const actionsCell = /* @__PURE__ */ jsx("td", { className: "mon-actions", children: /* @__PURE__ */ jsxs("div", {
+								className: "mon-row-actions",
 								onClick: (event) => event.stopPropagation(),
 								children: [
-									/* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-primary ce-btn-sm",
-										onClick: () => onDecide?.(row, "accept", "Approved from dashboard"),
-										children: "Approve"
-									}),
-									/* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "ce-btn-ghost ce-btn-sm mon-reject",
-										onClick: () => {
-											const note = window.prompt("Reason for sending this estimate back");
-											if (note == null || !String(note).trim()) return;
-											onDecide?.(row, "reject", String(note).trim());
+									/* @__PURE__ */ jsx(MonRowMenu, {
+										row,
+										onOpen: onOpenCE,
+										onPreview: setPreviewRow,
+										onRevise: onStartRevision,
+										onGenerate: profile === "monitor" ? onGeneratePending : void 0,
+										onAssign: profile === "monitor" ? onAssignPending : void 0,
+										canAssign: lead,
+										assignChoices: costingMembers(users),
+										onExport: (picked) => {
+											const request = monitoringExportRequest(picked, release1SalesActor === true);
+											if (request) setExportAsk(request);
 										},
-										children: "Reject"
-									})
+										extras: profile === "approval" ? [
+											approvalV2 ? { label: "Approve with comment", onClick: () => {
+												void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+													if (!asked.ok) return;
+													onDecide?.(row, "approve-comment", asked.text);
+												});
+											} } : null,
+											approvalV2 ? { label: "Request edit", onClick: () => {
+												void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+													if (!asked.ok) return;
+													onDecide?.(row, "request-edit", asked.text);
+												});
+											} } : null,
+											!engineOn ? { label: "Reject", onClick: () => {
+												void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
+													if (!asked.ok) return;
+													onDecide?.(row, "reject", asked.text);
+												});
+											} } : null
+										] : []
+									}),
+									profile !== "approval" && ceThreadsOn === true && row.ceId ? /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn is-chat",
+										title: followText,
+										"aria-label": followText,
+										onClick: () => setThreadRow(row),
+										children: /* @__PURE__ */ jsx(MessageCircle, { size: 14 })
+									}) : null,
+									profile === "approval" ? /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn is-ok",
+										title: "Approve",
+										"aria-label": "Approve",
+										onClick: () => onDecide?.(row, "accept", "Approved from dashboard"),
+										children: /* @__PURE__ */ jsx(Check, { size: 14 })
+									}) : null,
+									row.ceId && onOpenCE ? /* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn",
+										title: "Open",
+										"aria-label": "Open",
+										onClick: () => onOpenCE(row.ceId),
+										children: /* @__PURE__ */ jsx(ArrowUpRight, { size: 14 })
+									}) : null
 								]
-							}) : /* @__PURE__ */ jsx(MonRowMenu, {
-								row,
-								onOpen: onOpenCE,
-								onPreview: setPreviewRow,
-								onRevise: onStartRevision,
-								onGenerate: profile === "monitor" ? onGeneratePending : void 0,
-								onAssign: profile === "monitor" ? onAssignPending : void 0,
-								canAssign: lead,
-								assignChoices: costingMembers(users)
 							}) });
 							const cells = profile === "monitor" ? [
 								/* @__PURE__ */ jsx("td", { className: "mon-item", children: idx + 1 }),
@@ -21189,14 +23960,26 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							return /* @__PURE__ */ jsxs(Fragment, {
 								children: [
 									/* @__PURE__ */ jsx("tr", {
-										className: row.isNew ? "mon-row-new" : "",
+										className: [freshFor(row) ? "mon-row-new" : "", row.unreadReplies > 0 ? "mon-row-unread" : ""].filter(Boolean).join(" "),
 										onClick: () => {
 											if (onRowOpen) onRowOpen(row);
 											else if (row.ceId) setPreviewRow(row);
 										},
 										style: row.ceId && onOpenCE ? { cursor: "pointer" } : void 0,
 										children: cells
-									})
+									}),
+									familiesOn && openFamilies[row.id] && row.familyMembers?.length ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", {
+										colSpan: colCount,
+										children: row.familyMembers.map((member) => /* @__PURE__ */ jsxs("button", {
+											type: "button",
+											className: "ce-btn-ghost ce-btn-sm",
+											onClick: (event) => {
+												event.stopPropagation();
+												if (member.id) onOpenCE?.(member.id);
+											},
+											children: [member.ceDisplay || member.id, member.tags?.length ? ` (${member.tags.join(", ")})` : "", member.amount ? ` ${member.amount}` : ""]
+										}, member.id))
+									}) }) : null
 								]
 							}, row.id);
 						}), shown.length === 0 && /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", {
@@ -21222,7 +24005,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 						/* @__PURE__ */ jsx("th", { children: "Award Remarks" }),
 						/* @__PURE__ */ jsx("th", { children: "Recommended Action" })
 					] }) }), /* @__PURE__ */ jsxs("tbody", { children: [shown.map((row) => /* @__PURE__ */ jsxs("tr", {
-						className: row.isNew ? "mon-row-new" : "",
+						className: [freshFor(row) ? "mon-row-new" : "", row.unreadReplies > 0 ? "mon-row-unread" : ""].filter(Boolean).join(" "),
 						onClick: () => onOpenCE && row.ceNo && row.ceNo !== "—" && onOpenCE(row.ceNo),
 						style: onOpenCE ? { cursor: "pointer" } : void 0,
 						children: [
@@ -21231,7 +24014,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							/* @__PURE__ */ jsx("td", { children: row.rceNo }),
 							/* @__PURE__ */ jsx("td", { children: row.client }),
 							/* @__PURE__ */ jsxs("td", { children: [
-								row.isNew ? /* @__PURE__ */ jsx("span", {
+								freshFor(row) ? /* @__PURE__ */ jsx("span", {
 									className: "ce-new-badge",
 									children: "NEW"
 								}) : null,
@@ -21282,11 +24065,34 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 				documentControl,
 				users,
 				rceList,
+				engineOn,
 				onClose: () => setPreviewRow(null),
 				onOpen: (ceId) => {
 					setPreviewRow(null);
 					onOpenCE?.(ceId);
 				}
+			}) : null,
+			exportAsk ? /* @__PURE__ */ jsx(CeExportDialog, {
+				request: exportAsk,
+				onClose: () => setExportAsk(null),
+				onExport: confirmMonitorExport
+			}) : null,
+			ceThreadsOn === true && threadRow?.ceId ? /* @__PURE__ */ jsx(CeThreadPanel, {
+				ceId: threadRow.ceId,
+				thread: (() => {
+					const stored = documents?.[threadRow.ceId] || {};
+					const ce = { ...(stored.projectInfo || {}), ...stored, ...threadRow, assigneeId: threadRow.assigneeId || stored.assigneeId || stored.assignedToId || "" };
+					const participants = threadParticipants(ce, users);
+					const saved = threadRow.thread || stored.thread;
+					return saved ? { ...saved, participants } : { participants, messages: [], seen: {} };
+				})(),
+				ce: { ...(documents?.[threadRow.ceId] || {}), ...threadRow },
+				users,
+				actorId: personalActorId,
+				label: followLabel({ status: threadRow.status, waitingInfo: threadRow.waitingInfo }, { estimator: release1SalesActor !== true, sales: release1SalesActor === true, owner: release1SalesActor === true }) || "Follow up",
+				onSave: (ceId, thread) => saveThreadNow(ceId, thread),
+				onNotices: (rows) => notifyThreadNow(rows, threadRow.ceId),
+				onClose: () => setThreadRow(null)
 			}) : null
 		]
 	});
@@ -21303,7 +24109,7 @@ function buildDefaultSchemaConfig() {
 		manpower: sheetSchema([
 			{
 				key: "role",
-				label: "Role / Position",
+				label: "Designation",
 				type: "text",
 				visible: true,
 				isCustom: false
@@ -21426,7 +24232,7 @@ function buildDefaultSchemaConfig() {
 			},
 			{
 				key: "unitCost",
-				label: "Unit Cost",
+				label: "Unit Price",
 				type: "number",
 				visible: true,
 				isCustom: false
@@ -21463,7 +24269,7 @@ function buildDefaultSchemaConfig() {
 			},
 			{
 				key: "unitCost",
-				label: "Unit Cost",
+				label: "Unit Price",
 				type: "number",
 				visible: true,
 				isCustom: false
@@ -21610,7 +24416,7 @@ function mergeSheetSchema(sheetKey, stored) {
 function defaultDbColWidths(columns) {
 	const w = {
 		_no: 64,
-		_actions: 140
+		_actions: 96
 	};
 	(columns || []).forEach((c) => {
 		if (c.type === "number") w[c.key] = 128;
@@ -22079,7 +24885,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 			fields: [
 				{
 					key: "role",
-					label: "Role / Position",
+					label: "Designation",
 					type: "text"
 				},
 				{
@@ -22176,7 +24982,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 				},
 				{
 					key: "unitCost",
-					label: "Unit Cost",
+					label: "Unit Price",
 					type: "number"
 				},
 				{
@@ -22207,7 +25013,7 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 				},
 				{
 					key: "unitCost",
-					label: "Unit Cost",
+					label: "Unit Price",
 					type: "number"
 				},
 				{
@@ -22282,7 +25088,8 @@ function DatabaseManager({ schemaConfig: schemaConfigProp, onSchemaConfigChange,
 		...colDefaults,
 		...storedColWidths
 	};
-	const tableWidth = (Number(widths._no) || 64) + (Number(widths._actions) || 148) + fields.reduce((sum, f) => sum + (Number(widths[f.key]) || 160), 0) + customFields.reduce((sum, cf) => sum + (Number(widths[`cf_${cf.id}`]) || 140), 0);
+	const actionsW = 96;
+	const tableWidth = (Number(widths._no) || 64) + actionsW + fields.reduce((sum, f) => sum + (Number(widths[f.key]) || 160), 0) + customFields.reduce((sum, cf) => sum + (Number(widths[`cf_${cf.id}`]) || 140), 0);
 	const activeLabel = (allTabs.find((t) => t.key === activeTab) || {}).label || activeTab;
 	const nameField = MASTERLIST_SHEETS.find((s) => s.key === activeTab)?.nameField || currentSheetConfig.labelKey || (isClients ? "fullName" : "description");
 	const sheetSort = sheetRule(rules, activeTab);
@@ -22793,20 +25600,20 @@ Import anyway? Cancel skips the whole file.`)) return;
 					children: isAdmin ? "Review approval" : "View request"
 				})]
 			}),
-			/* @__PURE__ */ jsx("div", {
+			/* @__PURE__ */ jsx(StickyTable, {
 				className: "db-table-card",
+				enabled: ceTpl1On,
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "db-table db-resizable-table",
 					style: {
-						width: Math.max(tableWidth, 720),
-						minWidth: "calc(100% + 320px)"
+						width: Math.max(tableWidth, 0)
 					},
 					children: [
 						/* @__PURE__ */ jsxs("colgroup", { children: [
 							/* @__PURE__ */ jsx("col", { style: { width: `${widths._no}px` } }),
 							fields.map((f) => /* @__PURE__ */ jsx("col", { style: { width: `${widths[f.key] || 160}px` } }, f.key)),
 							customFields.map((cf) => /* @__PURE__ */ jsx("col", { style: { width: `${widths[`cf_${cf.id}`] || 140}px` } }, cf.id)),
-							/* @__PURE__ */ jsx("col", { style: { width: `${widths._actions}px` } })
+							/* @__PURE__ */ jsx("col", { style: { width: `${actionsW}px` } })
 						] }),
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
 							/* @__PURE__ */ jsx(ResizableTh, {
@@ -22880,8 +25687,9 @@ Import anyway? Cancel skips the whole file.`)) return;
 							}, cf.id)),
 							/* @__PURE__ */ jsx(ResizableTh, {
 								colKey: "_actions",
-								width: widths._actions,
-								onResize: updateWidth,
+								className: "db-actions-head",
+								width: actionsW,
+								onResize: (key) => updateWidth(key, actionsW),
 								style: {
 									position: "sticky",
 									top: 0,
@@ -23311,6 +26119,8 @@ function displayCeNo(ce, doc) {
 	return fullCeNumber(ce, doc);
 }
 function ceJobTypeLabel(ce, doc, rce) {
+	const explicit = String(doc?.projectInfo?.jobType || "").trim();
+	if (explicit) return ceJobTypeLabel({ templateType: explicit }, { enabledWorkTypes: [explicit] }, null);
 	const types = new Set();
 	const add = (value) => {
 		const w = String(value || "").toLowerCase();
@@ -23371,7 +26181,7 @@ function umStatusStyle(status) {
 	if (key === "for approval" || key === "for revision") return { label, color: "#1e4b8a" };
 	return { label, color: "#18170f" };
 }
-function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel = "staff", onApprovalDecision, documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors }) {
+function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel = "staff", onApprovalDecision, documentControl = {}, users = [], onReceivedBy, onStampSubmitted, onStartRevision, boardColors, numbersOnline = true, engineOn = false, familiesOn = false, suffixesOn = false }) {
 	const me = currentUserName || "Estimator A";
 	const [status, setStatus] = useState("All");
 	const [sortBy, setSortBy] = useState("newest");
@@ -23391,7 +26201,9 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	};
 	const deadlineOf = (ce) => {
 		const rce = linkedRce(ce);
-		return ce?.deadline || ce?.ceDeadline || rce?.ceDeadline || rce?.submissionDeadline || "";
+		const doc = documents?.[ce.id] || {};
+		const saved = ceTpl4On ? String(doc?.projectInfo?.targetDeadline || ce?.targetDeadline || "").trim() : "";
+		return saved || ce?.deadline || ce?.ceDeadline || rce?.ceDeadline || rce?.submissionDeadline || "";
 	};
 	const priorityOf = (ce) => {
 		const rce = linkedRce(ce);
@@ -23405,9 +26217,13 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	const moneyOf = (ce) => {
 		const doc = documents?.[ce.id] || {};
 		if (!Array.isArray(doc.tasks)) return "—";
-		return fmt(projectTotal(doc.tasks));
+		return fmt(projectTotal(doc.tasks, doc.pricing, doc.mobSheets));
 	};
-	const mine = (ceList || []).filter((ce) => (ce.assignedTo || ce.lastEditedBy || me) === me);
+	const mine = (ceList || []).filter((ce) => ceOnMyList(ce, {
+		me,
+		level: actingLevel,
+		approval: documents?.[ce.id]?.approval || ce.approval
+	}));
 	const filtered = (status === "All" ? mine : mine.filter((ce) => ce.status === status)).slice().sort((a, b) => {
 		if (sortBy === "deadline") return Date.parse(deadlineOf(a) || "9999-12-31") - Date.parse(deadlineOf(b) || "9999-12-31");
 		if (sortBy === "priority") return (priRank[String(priorityOf(a)).toLowerCase()] ?? 9) - (priRank[String(priorityOf(b)).toLowerCase()] ?? 9);
@@ -23417,6 +26233,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 	const rows = Array.from({ length: rowCount }, (_, i) => filtered[i] || null);
 	const approvalRows = (ceList || []).filter((ce) => {
 		const approval = documents?.[ce.id]?.approval || ce.approval;
+		if (approval?.engine === "v2") return approval.status === "in-progress" && showDecisionButtons(approval, { actor: me, level: actingLevel });
 		return approval?.status === "in-progress" && canActOnStep(currentApprovalStep(approval), actingLevel);
 	});
 	const showApprovals = approvalRows.length > 0 || actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin";
@@ -23432,7 +26249,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 		(async () => {
 			try {
 				const tasks = doc.tasks || [];
-				const official = tasks.length ? buildOfficialBaseRows(tasks) : { rows: [], thirdLines: [] };
+				const official = tasks.length ? buildOfficialBaseRows(tasks, doc.pricing, doc.mobSheets) : { rows: [], thirdLines: [] };
 				const shown = (row) => num2(row.computed);
 				const body = official.rows.filter((r) => [
 					"A",
@@ -23440,8 +26257,9 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					"C",
 					"D"
 				].includes(r.key)).reduce((s, r) => s + shown(r), 0);
-				const misc = official.rows.filter((r) => r.sub && !r.breakdown).reduce((s, r) => s + shown(r), 0);
-				const total = body + misc;
+				const benefit = official.rows.filter((r) => r.key === "A1").reduce((s, r) => s + shown(r), 0);
+				const misc = official.rows.filter((r) => r.sub && !r.breakdown && r.key !== "A1").reduce((s, r) => s + shown(r), 0);
+				const total = body + benefit + misc;
 				const summaryRows = [];
 				const summaryMeta = [];
 				if (tasks.length) {
@@ -23501,6 +26319,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 							quantity: String(info.quantity || ""),
 							endUser: info.endUser || "",
 							docNo: info.docNo || approvalCe.id,
+							markupNo: approvalCe.markupNo || info.markupNo || "",
 							revNo: info.revNo || "",
 							revDate: info.revDate || ""
 						},
@@ -23545,18 +26364,24 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 						className: "ce-btn-ghost",
 						onClick: onNewInspection,
 						type: "button",
+						disabled: !numbersOnline,
+						title: numbersOnline ? undefined : DOC_NUMBER_OFFLINE,
 						children: "Create Inspection Report"
 					}),
 					/* @__PURE__ */ jsxs("button", {
 						className: "ce-btn-primary",
 						onClick: onNewCE,
 						type: "button",
+						disabled: !numbersOnline,
+						title: numbersOnline ? undefined : DOC_NUMBER_OFFLINE,
 						children: [/* @__PURE__ */ jsx(Plus, { size: 15 }), " Cost Estimate"]
 					}),
 					/* @__PURE__ */ jsxs("button", {
 						className: "ce-btn-ghost",
 						onClick: onNewRCE,
 						type: "button",
+						disabled: !numbersOnline,
+						title: numbersOnline ? undefined : DOC_NUMBER_OFFLINE,
 						children: [/* @__PURE__ */ jsx(Plus, { size: 15 }), " RCE"]
 					})
 				]
@@ -23576,7 +26401,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					variant: "active",
 					profile: "user",
 					ceList: mine,
-					rceList: [],
+					rceList: engineOn ? rceList : [],
 					documents,
 					documentControl,
 					users,
@@ -23588,7 +26413,10 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					onReceivedBy,
 					onStampSubmitted,
 					onStartRevision,
-					actingLevel
+					actingLevel,
+					engineOn,
+					familiesOn,
+					suffixesOn
 				})]
 			}),
 			showApprovals && /* @__PURE__ */ jsxs("section", {
@@ -23600,7 +26428,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 						children: "Approval Monitoring"
 					}), /* @__PURE__ */ jsx("p", {
 						className: "wiz-sub",
-						children: "Estimates waiting on your approval. Open a row to preview, then approve or reject."
+						children: engineOn ? "Estimates waiting on your approval. Open a row to preview, then approve or request an edit." : "Estimates waiting on your approval. Open a row to preview, then approve or reject."
 					})] })]
 				}), /* @__PURE__ */ jsx(MonitoringDashboard, {
 					variant: "active",
@@ -23625,7 +26453,10 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					},
 					onReceivedBy,
 					onStampSubmitted,
-					actingLevel
+					actingLevel,
+					engineOn,
+					familiesOn,
+					suffixesOn
 				})]
 			}),
 			approvalCe && /* @__PURE__ */ jsxs("div", {
@@ -23647,16 +26478,39 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 									setApprovalCe(null);
 								},
 								children: "Approve"
-							}), /* @__PURE__ */ jsx("button", {
+							}), !engineOn && /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm mon-reject",
 								onClick: () => {
-									const note = window.prompt("Reason for sending this estimate back");
-									if (note == null || !String(note).trim()) return;
-									onApprovalDecision?.(approvalCe.id, "reject", String(note).trim());
-									setApprovalCe(null);
+									void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										onApprovalDecision?.(approvalCe.id, "reject", asked.text);
+										setApprovalCe(null);
+									});
 								},
 								children: "Reject"
+							}), engineOn && ((documents?.[approvalCe.id]?.approval || approvalCe.approval || {}).engine === "v2") && /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										onApprovalDecision?.(approvalCe.id, "approve-comment", asked.text);
+										setApprovalCe(null);
+									});
+								},
+								children: "Approve with comment"
+							}), engineOn && ((documents?.[approvalCe.id]?.approval || approvalCe.approval || {}).engine === "v2") && /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
+										if (!asked.ok) return;
+										onApprovalDecision?.(approvalCe.id, "request-edit", asked.text);
+										setApprovalCe(null);
+									});
+								},
+								children: "Request edit"
 							}), /* @__PURE__ */ jsx("button", {
 								type: "button",
 								className: "ce-btn-ghost ce-btn-sm",
@@ -23912,7 +26766,7 @@ var SCOPE_JOBS = [
 function scopeJobLabel(id) {
 	return SCOPE_JOBS.find((j) => j.id === id)?.label || "Onsite";
 }
-function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mode = "library", taskTemplates = [], onTaskTemplatesChange, ceList = [], documents = {}, rceList = [], scopeTemplates = [], onScopeTemplatesChange, onEditScopeTemplate, currentUserName = "", documentControl = {} }) {
+function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mode = "library", taskTemplates = [], onTaskTemplatesChange, ceList = [], documents = {}, rceList = [], scopeTemplates = [], onScopeTemplatesChange, onEditScopeTemplate, currentUserName = "", actorLevel = "", documentControl = {}, scopeV2 = false, methodologies = [], onMethodologiesChange, onInsertMethodology }) {
 	const [activeTab, setActiveTab] = useState(mode === "archive" ? "archive" : "task-templates");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [selectedCE, setSelectedCE] = useState(null);
@@ -23923,22 +26777,25 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 	const [tplName, setTplName] = useState("");
 	const [reviseOpen, setReviseOpen] = useState(false);
 	const [reviseRemark, setReviseRemark] = useState("");
+	const [scopeOwner, setScopeOwner] = useState(currentUserName || "");
+	const [scopeOfficial, setScopeOfficial] = useState(false);
 	const clients = useMasterlist().clients || [];
 	const scopeList = scopeTemplates || [];
 	const filteredArchivedCEs = (ceList || []).filter((ce) => ce.status === "Done" || ce.status === "Cancelled" || ce.status === "No quote" || ce.status === "Close bid" || ce.archived).map((ce) => {
 		const doc = documents?.[ce.id] || {};
 		const rce = (rceList || []).find((r) => (r.id || r.rceNo) === ce.rceId) || null;
 		const companyKey = rce?.company || "";
+		const shown = ceTpl4On ? listHeaderValues(ce, doc, rce) : null;
 		return {
 			id: ce.id,
-			client: ce.client,
-			clientCode: clientCodeForCe(ce, clients),
-			project: ce.project,
+			client: shown ? shown.client : ce.client,
+			clientCode: clientCodeForCe(shown ? { ...ce, client: shown.client } : ce, clients),
+			project: shown ? shown.project : ce.project,
 			date: ce.lastEdited,
 			rceNo: ce.rceId || "",
 			status: ce.awardStatus || ce.status,
 			jobStatus: ce.status,
-			description: ce.project,
+			description: shown ? shown.project : ce.project,
 			timeline: documents[ce.id]?.timeline || [],
 			companyName: companyDesignationName(companyKey, documentControl) || "—",
 			department: ceDepartmentLabel(doc, rce),
@@ -23997,7 +26854,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 			revNo: "",
 			revDate: ""
 		};
-		saveScope([{
+		const row = {
 			id: uid3("scope-tpl"),
 			name,
 			jobType,
@@ -24006,7 +26863,20 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 			updatedAt: today,
 			total: 0,
 			snapshot
-		}, ...scopeList]);
+		};
+		if (scopeV2) {
+			const extra = saveAsScope({
+				name,
+				owner: scopeOwner || who,
+				official: scopeOfficial,
+				snapshot,
+				jobType
+			});
+			row.owner = extra.owner;
+			row.official = extra.official;
+			row.usage = extra.usage;
+		}
+		saveScope([row, ...scopeList]);
 		setAddOpen(false);
 		setPickId("onsite");
 		setTplName("");
@@ -24020,14 +26890,20 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 					/* @__PURE__ */ jsx("button", {
 						className: `ce-pill ${activeTab === "templates" ? "ce-pill-active" : ""}`,
 						onClick: () => setActiveTab("templates"),
-						children: "Templates"
+						children: libraryTabLabel(libraryMethodologiesOn === true, "ce")
 					}),
 					mode !== "archive" && /* @__PURE__ */ jsx("button", {
 						className: `ce-pill ${activeTab === "task-templates" ? "ce-pill-active" : ""}`,
 						onClick: () => setActiveTab("task-templates"),
 						type: "button",
-						children: "Per Task Template"
+						children: libraryTabLabel(libraryMethodologiesOn === true, "task")
 					}),
+					libraryMethodologiesOn === true ? /* @__PURE__ */ jsx("button", {
+						className: `ce-pill ${activeTab === "methodologies" ? "ce-pill-active" : ""}`,
+						onClick: () => setActiveTab("methodologies"),
+						type: "button",
+						children: "Methodologies"
+					}) : null,
 					/* @__PURE__ */ jsx("button", {
 						className: `ce-pill ${activeTab === "archive" ? "ce-pill-active" : ""}`,
 						onClick: () => setActiveTab("archive"),
@@ -24035,6 +26911,14 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 					})
 				]
 			}),
+			activeTab === "methodologies" && libraryMethodologiesOn === true ? /* @__PURE__ */ jsx(MethodologiesPanel, {
+				items: methodologies,
+				onChange: onMethodologiesChange,
+				onInsert: onInsertMethodology,
+				rich: methodologyEditorOn === true,
+				actor: currentUserName,
+				level: actorLevel
+			}) : null,
 			activeTab === "templates" && /* @__PURE__ */ jsxs("div", {
 				className: "scope-lib",
 				children: [
@@ -24042,7 +26926,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 						className: "scope-lib-bar",
 						children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("h2", {
 							className: "ce-serif",
-							children: "Templates"
+							children: libraryTabLabel(libraryMethodologiesOn === true, "ce")
 						}), /* @__PURE__ */ jsx("p", {
 							className: "wiz-sub",
 							children: "Start from an onsite, shop, trading, or hybrid template and fill it in here."
@@ -24095,7 +26979,10 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 									" · ",
 									tpl.updatedAt || "—",
 									" · ",
-									fmt(tpl.total || 0)
+									fmt(tpl.total || 0),
+									scopeV2 && tpl.official ? " · Official" : "",
+									scopeV2 ? ` · Owner ${tpl.owner || tpl.createdBy || "—"}` : "",
+									scopeV2 ? ` · Used ${Number(tpl.usage) || 0}` : ""
 								]
 							})] }), /* @__PURE__ */ jsxs("div", {
 								className: "scope-lib-actions",
@@ -24186,6 +27073,25 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 										}, job.id))
 									})]
 								}),
+								scopeV2 ? /* @__PURE__ */ jsxs("label", {
+									className: "ce-field",
+									children: [/* @__PURE__ */ jsx("span", {
+										className: "ce-field-label",
+										children: "Owner"
+									}), /* @__PURE__ */ jsx("input", {
+										className: "ce-input",
+										value: scopeOwner,
+										onChange: (e) => setScopeOwner(e.target.value)
+									})]
+								}) : null,
+								scopeV2 ? /* @__PURE__ */ jsxs("label", {
+									className: "ce-picker-row",
+									children: [/* @__PURE__ */ jsx("input", {
+										type: "checkbox",
+										checked: scopeOfficial,
+										onChange: (e) => setScopeOfficial(e.target.checked)
+									}), " Official"]
+								}) : null,
 								/* @__PURE__ */ jsxs("div", {
 									className: "ce-confirm-actions",
 									children: [/* @__PURE__ */ jsx("button", {
@@ -24232,7 +27138,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 							/* @__PURE__ */ jsx("th", { className: "mon-wrap-co", children: "Company Designation" }),
 							/* @__PURE__ */ jsx("th", { children: "Department" }),
 							/* @__PURE__ */ jsx("th", { children: "RCE #" }),
-							/* @__PURE__ */ jsx("th", { children: "CE #" }),
+							/* @__PURE__ */ jsx("th", { className: "mon-ce-head", children: "CE #" }),
 							/* @__PURE__ */ jsx("th", { children: "Client" }),
 							/* @__PURE__ */ jsx("th", { children: "Project Description" }),
 							/* @__PURE__ */ jsx("th", { children: "Amount" })
@@ -24313,7 +27219,7 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 									children: [(selectedCE.timeline || []).length === 0 && /* @__PURE__ */ jsx("li", { children: "No timeline rows yet." }), (selectedCE.timeline || []).map((t) => /* @__PURE__ */ jsxs("li", { children: [
 										/* @__PURE__ */ jsx("b", { children: t.action }),
 										" · ",
-										t.who,
+										t.whoName || t.who,
 										t.remarks ? ` \u2014 ${t.remarks}` : "",
 										/* @__PURE__ */ jsx("time", { children: t.at })
 									] }, t.id))]
@@ -24338,17 +27244,17 @@ function LibraryView({ onCloneTemplate, onOpenArchivedCE, onReviseArchivedCE, mo
 									onClick: () => onOpenArchivedCE(selectedCE.id),
 									type: "button",
 									children: "Open this CE"
-								}), ceFullySigned(documents?.[selectedCE.id]) ? /* @__PURE__ */ jsx("button", {
+								}), ceFullySigned(documents?.[selectedCE.id]) && !release1SalesActor ? /* @__PURE__ */ jsx("button", {
 									className: "ce-btn-ghost ce-btn-sm",
 									onClick: () => setReviseOpen(true),
 									type: "button",
 									children: "Revision"
-								}) : /* @__PURE__ */ jsx("button", {
+								}) : !ceFullySigned(documents?.[selectedCE.id]) ? /* @__PURE__ */ jsx("button", {
 									className: "ce-btn-ghost ce-btn-sm",
 									onClick: () => onOpenArchivedCE(selectedCE.id),
 									type: "button",
 									children: "Edit"
-								})]
+								}) : null]
 							}), reviseOpen && ceFullySigned(documents?.[selectedCE.id]) && /* @__PURE__ */ jsxs("label", {
 								className: "ce-field",
 								style: {
@@ -24427,54 +27333,54 @@ var RCE_CHECKLIST_ITEMS = [
 	},
 	{
 		key: "item8",
-		num: "8",
+		num: "7",
 		desc: "ASSET AND EQUIPMENT DETAILS (DRAWING, PHOTOS, ETC.)"
 	},
 	{
 		key: "item9",
-		num: "9",
+		num: "8",
 		desc: "MATERIAL SPECIFICATION"
 	},
 	{
 		key: "item10",
-		num: "10",
+		num: "9",
 		desc: "CONSUMABLES AND SPARE (IF ANY)"
 	},
 	{
 		key: "item11",
-		num: "11",
+		num: "10",
 		desc: "ACCEPTANCE CRITERIA"
 	},
 	{
 		key: "item12",
-		num: "12",
+		num: "11",
 		desc: "COMPLETION LEAD TIME / WORK DURATION"
 	},
 	{
 		key: "item13",
-		num: "13",
+		num: "12",
 		desc: "IMPLEMENTATION SCHEDULE"
 	},
 	{
 		key: "item14",
-		num: "14",
+		num: "13",
 		desc: "RECOMMENDATION"
 	},
 	{
 		key: "item14_1",
-		num: "14.1",
+		num: "13.1",
 		desc: "TO PROCEED THE RCE",
 		indent: true
 	},
 	{
 		key: "item14_2",
-		num: "14.2",
+		num: "13.2",
 		desc: "TO SECURE COMPLETE REFERENCE DATA",
 		indent: true
 	},
 	{
 		key: "item14_3",
-		num: "14.3",
+		num: "13.3",
 		desc: "TO DECLINE / NO QUOTE",
 		indent: true
 	}
@@ -24581,7 +27487,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			projectType: "New Project",
 			inquiryNumber: "",
 			inquiryDate: "",
-			rceNo: initialData?.rceNo || initialData?.id || nextDocNo("RCE", rceList),
+			rceNo: initialData?.rceNo || initialData?.id || "",
 			rceDate: todayLocal(),
 			customer: "",
 			address: "",
@@ -24607,12 +27513,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 			customer: initialData.customer || initialData.client || "",
 			address: initialData.address || ""
 		};
-		return base;
+		return rceTplOn === true ? prefillRceSigns(base, rceRouteNow, rceUsersNow) : base;
 	});
+	const rceListRef = useRef(rceList);
+	rceListRef.current = rceList;
 	const [checklist, setChecklist] = useState(() => ({
 		...emptyRceChecklist(),
 		...initialData?.checklist || {}
 	}));
+	const [answerUndo, setAnswerUndo] = useState(null);
 	const [attachments, setAttachments] = useState(() => {
 		return (initialData?.attachmentFiles?.length ? initialData.attachmentFiles : initialData?.attachments || []).map((name) => typeof name === "string" ? {
 			name,
@@ -24722,9 +27631,11 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 	}
 	function applyRceDraft(saved) {
 		if (!saved?.form) return;
+		const form = { ...saved.form };
+		delete form.status;
 		setForm((prev) => ({
 			...prev,
-			...saved.form
+			...form
 		}));
 		if (saved.checklist) setChecklist(saved.checklist);
 		if (saved.company) setCompany(saved.company);
@@ -24784,9 +27695,19 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		}, 700);
 		return () => clearTimeout(timer);
 	}, [form, checklist, company, readOnly, draftKey]);
-	const handleSubmit = () => {
+	const handleSubmit = async () => {
 		if (readOnly) return;
-		const hard = rceHardBlocks(form, company);
+		let rceNo = String(form.rceNo || "").trim();
+		if (rceNeedsNumber(rceNo)) {
+			try {
+				rceNo = await takeDocNo("rce", "");
+				setForm((prev) => ({ ...prev, rceNo }));
+			} catch (err) {
+				setFieldErrors([err?.message || DOC_NUMBER_RETRY]);
+				return;
+			}
+		}
+		const hard = rceHardBlocks({ ...form, rceNo }, company);
 		setFieldErrors(hard);
 		if (hard.length) {
 			requestAnimationFrame(() => {
@@ -24800,30 +27721,27 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		const soft = rceSoftWarns(form, checklist, attachments);
 		let overrideReason = "";
 		if (soft.length) {
-			overrideReason = window.prompt(`Soft warnings (enter a reason to submit anyway):
-
-- ${soft.join("\n- ")}`);
-			if (overrideReason == null) return;
-			if (!String(overrideReason).trim()) {
-				window.alert("Override reason is required when warnings remain.");
-				return;
-			}
+			const asked = await askReason({ title: "Submit anyway", label: `Soft warnings:\n- ${soft.join("\n- ")}`, required: true });
+			if (!asked.ok) return;
+			overrideReason = asked.text;
 		}
 		try {
 			localStorage.removeItem(draftKey);
 			localStorage.removeItem("ce-rce-draft:new");
 		} catch {}
+		const rowFiles = rceTplOn === true ? rowFilesInOrder(checklist, RCE_CHECKLIST_ITEMS.map((it) => it.key)) : [];
+		const savedFiles = [...attachments, ...rowFiles];
 		const rceData = {
 			...form,
 			company,
 			client: form.customer,
 			customer: form.customer,
 			address: form.address,
-			id: form.rceNo,
-			rceNo: form.rceNo,
+			id: rceNo,
+			rceNo,
 			checklist,
-			attachments: attachments.map((a) => a.name || a),
-			attachmentFiles: attachments.map((a) => ({
+			attachments: savedFiles.map((a) => a.name || a),
+			attachmentFiles: savedFiles.map((a) => ({
 				...typeof a === "string" ? { name: a } : a,
 				...attachmentSourceTag("RCE", form.revNo || "0"),
 				sheet: "RCE"
@@ -24838,7 +27756,8 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 		};
 		onSubmitRCE?.(rceData);
 	};
-	function handleExport() {
+	async function handleExport() {
+		if (shouldLoadExportSignatures(exportEngineOn)) await warmExportSignatures([form.preparedBy, form.reviewedBy, form.approvedBy], { approval: form.approval });
 		exportRceToPDF({
 			...form,
 			company,
@@ -24954,7 +27873,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 				]
 			}),
 			/* @__PURE__ */ jsxs("div", {
-				className: "rce-form-sheet",
+				className: "rce-form-sheet" + (rceTplOn === true ? " rce-tpl" : ""),
 				children: [
 					/* @__PURE__ */ jsxs("div", {
 						className: "rce-sheet-head",
@@ -24980,7 +27899,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 										children: "RCE no."
 									}), /* @__PURE__ */ jsx("input", {
 										className: "ce-input",
-										value: form.rceNo,
+										value: rceNumberLabel(form.rceNo),
 										readOnly: true
 									})]
 								}), /* @__PURE__ */ jsxs("label", {
@@ -25023,8 +27942,26 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 					/* @__PURE__ */ jsxs("div", {
 						className: "rce-field-grid",
 						children: [
+							rceTplOn === true ? /* @__PURE__ */ jsxs("label", {
+								className: "ce-field rce-fl rce-cell-rceNo",
+								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "RCE no." }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									value: rceNumberLabel(form.rceNo),
+									readOnly: true
+								})]
+							}) : null,
+							rceTplOn === true ? /* @__PURE__ */ jsxs("label", {
+								className: "ce-field rce-fl rce-cell-rceDate",
+								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "RCE date" }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									type: "date",
+									value: form.rceDate,
+									disabled: readOnly,
+									onChange: (e) => patchForm({ rceDate: e.target.value })
+								})]
+							}) : null,
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-customer",
 								children: [
 									/* @__PURE__ */ jsx("span", {
 										className: "ce-field-label",
@@ -25049,7 +27986,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-inquiry",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Inquiry number & date"
@@ -25071,7 +28008,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-address",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Address"
@@ -25083,7 +28020,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									onChange: (e) => patchForm({ address: e.target.value })
 								})]
 							}),
-							/* @__PURE__ */ jsxs("label", {
+							rceTplOn === true ? null : /* @__PURE__ */ jsxs("label", {
 								className: "ce-field rce-fl",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
@@ -25097,7 +28034,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-span-2 rce-cell-priority",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Priority"
@@ -25116,7 +28053,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								}), rceErr((m) => m.startsWith("Priority")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Priority is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl rce-fl-span",
+								className: "ce-field rce-fl rce-fl-span rce-span-2 rce-cell-project",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Project title"
@@ -25129,7 +28066,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								}), rceErr((m) => m.startsWith("Project title")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Project title is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-projectType",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Project type"
@@ -25163,7 +28100,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 												onChange: (e) => patchForm({ trading: e.target.checked })
 											}), "Trading"]
 										}),
-										form.onsite ? /* @__PURE__ */ jsxs("label", {
+										form.onsite && rceTplOn !== true ? /* @__PURE__ */ jsxs("label", {
 											className: "ce-field",
 											style: { minWidth: 110 },
 											children: [/* @__PURE__ */ jsx("span", {
@@ -25182,7 +28119,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-ceDeadline",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "CE deadline"
@@ -25198,7 +28135,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								}), rceErr((m) => m.startsWith("CE deadline")) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "CE deadline is required." }) : null]
 							}),
 							/* @__PURE__ */ jsxs("div", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-department",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Department"
@@ -25230,7 +28167,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 								})]
 							}),
 							/* @__PURE__ */ jsxs("label", {
-								className: "ce-field rce-fl",
+								className: "ce-field rce-fl rce-cell-submission",
 								children: [/* @__PURE__ */ jsx("span", {
 									className: "ce-field-label",
 									children: "Submission deadline"
@@ -25247,11 +28184,11 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							})
 						]
 					}),
-					/* @__PURE__ */ jsx("p", {
+					rceTplOn === true ? null : /* @__PURE__ */ jsx("p", {
 						className: "rce-section-label",
 						children: "Attachments"
 					}),
-					/* @__PURE__ */ jsxs("div", {
+					rceTplOn === true ? null : /* @__PURE__ */ jsxs("div", {
 						className: "rce-upload",
 						children: [/* @__PURE__ */ jsx("input", {
 							type: "file",
@@ -25264,7 +28201,7 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							children: attachments.length ? `${attachments.length} file${attachments.length === 1 ? "" : "s"} attached` : "PDF or images. Optional, but drawings and specs help costing."
 						})]
 					}),
-					attachments.length > 0 && /* @__PURE__ */ jsx("ul", {
+					rceTplOn === true ? null : attachments.length > 0 && /* @__PURE__ */ jsx("ul", {
 						className: "rce-file-names",
 						children: attachments.map((att, idx) => {
 							const name = typeof att === "string" ? att : att.name || "Attachment";
@@ -25285,15 +28222,49 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 							type: "button",
 							className: "ce-btn-ghost ce-btn-sm",
 							disabled: readOnly,
-							onClick: () => markAllChecklist("YES", false),
-							children: "Mark all Yes"
+							onClick: () => {
+								if (rceTplOn === true) setAnswerUndo(copyAnswers(checklist));
+								markAllChecklist("YES", false);
+							},
+							"aria-label": "Mark all Yes",
+							title: "Mark all Yes",
+							children: rceTplOn === true ? "Yes" : "Mark all Yes"
 						}), /* @__PURE__ */ jsx("button", {
 							type: "button",
 							className: "ce-btn-ghost ce-btn-sm",
 							disabled: readOnly,
-							onClick: () => markAllChecklist("N/A", true),
-							children: "Set remaining to N/A"
-						}), rceErr((m) => /work type/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Tick at least one work type (Onsite, Shopwork, or Trading)." }) : null]
+							onClick: () => {
+								if (rceTplOn === true) setAnswerUndo(copyAnswers(checklist));
+								markAllChecklist("N/A", true);
+							},
+							"aria-label": "Set remaining to N/A",
+							title: "Set remaining to N/A",
+							children: rceTplOn === true ? "N/A" : "Set remaining to N/A"
+						}), rceTplOn === true ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly || !answerUndo,
+							"aria-label": "Undo",
+							title: "Undo",
+							onClick: () => {
+								if (!answerUndo) return;
+								setChecklist(answerUndo);
+								setAnswerUndo(null);
+							},
+							children: "Undo"
+						}) : null, rceTplOn === true ? /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							disabled: readOnly,
+							"aria-label": "Clear all answers",
+							title: "Clear all answers",
+							onClick: () => {
+								if (!window.confirm("Clear all answers? Remarks and attachments stay.")) return;
+								setAnswerUndo(copyAnswers(checklist));
+								setChecklist((prev) => clearAnswers(prev, RCE_CHECKLIST_ITEMS.map((it) => it.key)));
+							},
+							children: "Clear"
+						}) : null, rceErr((m) => /work type/i.test(m)) ? /* @__PURE__ */ jsx("span", { className: "rce-field-error", children: "Tick at least one work type (Onsite, Shopwork, or Trading)." }) : null]
 					}),
 					/* @__PURE__ */ jsx("p", {
 						className: "rce-section-label",
@@ -25342,8 +28313,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 									indent: !!it.indent,
 									complete: checklist[it.key]?.complete || "",
 									remarks: checklist[it.key]?.remarks || "",
+									files: checklist[it.key]?.files || [],
 									onCompleteChange: (v) => handleChecklistChange(it.key, "complete", v),
-									onRemarksChange: (v) => handleChecklistChange(it.key, "remarks", v),
+									onRemarksChange: (v) => handleChecklistChange(it.key, "remarks", rceTplOn === true ? applyRemarkMark(checklist[it.key]?.remarks, { text: v }) : v),
+									onFiles: (files) => handleChecklistChange(it.key, "files", files),
+									onOpenFile: (index) => {
+										const files = rowFilesInOrder(checklist, RCE_CHECKLIST_ITEMS.map((row) => row.key));
+										const start = files.findIndex((file) => file.rowKey === it.key);
+										void compileAttachmentsToPdf(files, form.rceNo || "RCE", null, fileStartPage(files, Math.max(0, start) + index));
+									},
 									readOnly
 								}, it.key)) })
 							]
@@ -25354,11 +28332,15 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						children: [/* @__PURE__ */ jsx("label", {
 							className: "ce-field-label",
 							children: "Other remarks"
-						}), /* @__PURE__ */ jsx("textarea", {
+						}), rceTplOn === true ? /* @__PURE__ */ jsxs("span", { children: [
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Bold remarks", onClick: () => patchForm({ otherRemarks: applyRemarkMark(form.otherRemarks, { bold: !remarkFont(form.otherRemarks).bold }) }), children: "B" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Italic remarks", onClick: () => patchForm({ otherRemarks: applyRemarkMark(form.otherRemarks, { italic: !remarkFont(form.otherRemarks).italic }) }), children: "I" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Red remarks", onClick: () => patchForm({ otherRemarks: applyRemarkMark(form.otherRemarks, { color: remarkFont(form.otherRemarks).color === "red" ? "" : "red" }) }), children: "Red" })
+						] }) : null, /* @__PURE__ */ jsx("textarea", {
 							rows: "3",
 							className: "ce-input rce-area",
-							value: form.otherRemarks,
-							onChange: (e) => patchForm({ otherRemarks: e.target.value }),
+							value: rceTplOn === true ? remarkPlain(form.otherRemarks) : form.otherRemarks,
+							onChange: (e) => patchForm(rceTplOn === true ? { otherRemarks: applyRemarkMark(form.otherRemarks, { text: e.target.value }) } : { otherRemarks: e.target.value }),
 							disabled: readOnly,
 							placeholder: "Anything costing should know that is not on the checklist"
 						})]
@@ -25368,16 +28350,31 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						children: [/* @__PURE__ */ jsx("label", {
 							className: "ce-field-label",
 							children: "Reason to decline / no quote"
-						}), /* @__PURE__ */ jsx("textarea", {
+						}), rceTplOn === true ? /* @__PURE__ */ jsxs("span", { children: [
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Bold decline reason", onClick: () => patchForm({ declineReason: applyRemarkMark(form.declineReason, { bold: !remarkFont(form.declineReason).bold }) }), children: "B" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Italic decline reason", onClick: () => patchForm({ declineReason: applyRemarkMark(form.declineReason, { italic: !remarkFont(form.declineReason).italic }) }), children: "I" }),
+							/* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Red decline reason", onClick: () => patchForm({ declineReason: applyRemarkMark(form.declineReason, { color: remarkFont(form.declineReason).color === "red" ? "" : "red" }) }), children: "Red" })
+						] }) : null, /* @__PURE__ */ jsx("textarea", {
 							rows: "3",
 							className: "ce-input rce-area",
-							value: form.declineReason,
-							onChange: (e) => patchForm({ declineReason: e.target.value }),
+							value: rceTplOn === true ? remarkPlain(form.declineReason) : form.declineReason,
+							onChange: (e) => patchForm(rceTplOn === true ? { declineReason: applyRemarkMark(form.declineReason, { text: e.target.value }) } : { declineReason: e.target.value }),
 							disabled: readOnly,
 							placeholder: "Leave blank unless this request will not be quoted"
 						})]
 					}),
-					/* @__PURE__ */ jsxs("div", {
+					rceTplOn === true ? /* @__PURE__ */ jsx("div", {
+						className: "rce-signatures rce-sign-slots",
+						children: signatorySlots(form, rceRouteNow, rceUsersNow).map((slot) => /* @__PURE__ */ jsxs("div", {
+							className: "ce-field rce-sign-slot",
+							children: [
+								/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: slot.label }),
+								/* @__PURE__ */ jsx("span", { className: "rce-sign-name", children: slot.name || "—" }),
+								/* @__PURE__ */ jsx("span", { className: "rce-sign-position", children: slot.position }),
+								slot.pending ? /* @__PURE__ */ jsx("span", { className: "rce-sign-pending", children: "Pending" }) : null
+							]
+						}, slot.id))
+					}) : /* @__PURE__ */ jsxs("div", {
 						className: "rce-signatures",
 						children: [
 							/* @__PURE__ */ jsxs("div", {
@@ -25506,13 +28503,34 @@ function SalesRCEForm({ onSubmitRCE, onBack, readOnly = false, initialData = nul
 						type: "button",
 						onClick: handleExport,
 						children: "Export PDF"
-					})
+					}),
+					templatesFromDocsOn === true ? /* @__PURE__ */ jsx("button", {
+						className: "ce-btn-ghost",
+						type: "button",
+						onClick: () => {
+							const name = window.prompt("RCE template name", form.projectTitle || "RCE template");
+							if (!name) return;
+							saveRceTemplateNow({ id: `rce-tpl-${Date.now()}`, name, snapshot: stripRceTemplate(form) });
+						},
+						children: "Save as RCE template"
+					}) : null,
+					templatesFromDocsOn === true && rceTemplatesNow.length ? /* @__PURE__ */ jsx("button", {
+						className: "ce-btn-ghost",
+						type: "button",
+						onClick: () => {
+							const menu = templateChoices(rceTemplatesNow).map((row) => `${row.id} | ${row.name} | ${row.type || "RCE"} | ${row.date}`).join("\n");
+							const id = window.prompt(`Start from template. Type the id:\n${menu}`, "");
+							const picked = chosenTemplate(rceTemplatesNow, id);
+							if (picked?.snapshot) patchForm(picked.snapshot);
+						},
+						children: "Start from template"
+					}) : null
 				]
 			})
 		]
 	});
 }
-function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, onRemarksChange, readOnly = false, indent = false }) {
+function ChecklistRow({ num: num3, desc, complete, remarks, files = [], onCompleteChange, onRemarksChange, onFiles, onOpenFile, readOnly = false, indent = false }) {
 	const setMark = (val) => {
 		if (readOnly) return;
 		onCompleteChange(complete === val ? "" : val);
@@ -25535,6 +28553,7 @@ function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, on
 				"aria-label": `Answer for item ${num3}`,
 				children: ["YES", "NO", "N/A"].map((val) => /* @__PURE__ */ jsx("button", {
 					type: "button",
+					"data-answer": val,
 					className: "rce-tri-btn" + (complete === val ? " is-on" : ""),
 					disabled: readOnly,
 					onClick: () => setMark(val),
@@ -25542,7 +28561,14 @@ function ChecklistRow({ num: num3, desc, complete, remarks, onCompleteChange, on
 				}, val))
 			})
 		}),
-		/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", {
+		/* @__PURE__ */ jsx("td", { children: rceTplOn === true ? /* @__PURE__ */ jsx(RceRemarkCell, {
+			remarks,
+			files,
+			readOnly,
+			onRemarks: onRemarksChange,
+			onFiles,
+			onOpen: onOpenFile
+		}) : /* @__PURE__ */ jsx("input", {
 			className: "rce-cell-input",
 			type: "text",
 			value: remarks,
@@ -25597,7 +28623,7 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 				{ label: "Accepted", value: acceptedPct }
 			] })
 		}),
-		/* @__PURE__ */ jsx("div", { className: "mon-table-container", children: /* @__PURE__ */ jsxs("table", {
+		/* @__PURE__ */ jsx(StickyTable, { className: "mon-table-container", enabled: ceTpl1On, children: /* @__PURE__ */ jsxs("table", {
 			className: "ce-table rce-table rce-mon-table",
 			children: [
 				/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
@@ -25639,10 +28665,24 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 								initials: linked ? estimatorInitials(linked.assignedTo || "", users) : "—",
 								boardColors: colors
 							}) }),
-							/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(MonRowMenu, {
-								row: { ceId: rce.id || rce.rceNo || "rce" },
-								onOpen: () => onViewRCE?.(rce),
-								onPreview: () => setPreviewRce(rce)
+							/* @__PURE__ */ jsx("td", { className: "mon-actions", children: /* @__PURE__ */ jsxs("div", {
+								className: "mon-row-actions",
+								onClick: (event) => event.stopPropagation(),
+								children: [
+									/* @__PURE__ */ jsx(MonRowMenu, {
+										row: { ceId: rce.id || rce.rceNo || "rce" },
+										onOpen: () => onViewRCE?.(rce),
+										onPreview: () => setPreviewRce(rce)
+									}),
+									/* @__PURE__ */ jsx("button", {
+										type: "button",
+										className: "mon-icon-btn",
+										title: "Open",
+										"aria-label": "Open",
+										onClick: () => onViewRCE?.(rce),
+										children: /* @__PURE__ */ jsx(ArrowUpRight, { size: 14 })
+									})
+								]
 							}) })
 						] }, rce.id || rce.rceNo);
 					}),
@@ -25675,10 +28715,11 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 		}) : null
 	] });
 }
-function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAccept, onReject, onWithdraw, onRevise, onCancelRequest, onReplyInfo, onSubmitRevision, onDuplicate, actingUser, actingLevel, liveCe, canPreviewGenerate }) {
+function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAccept, onReject, onWithdraw, onRevise, onCancelRequest, onReplyInfo, onSubmitRevision, onDuplicate, actingUser, actingLevel, liveCe, canPreviewGenerate, engineOn = false }) {
 	const [remarks, setRemarks] = useState("");
-	const step = currentApprovalStep(rce?.approval);
-	const canAct = canActOnStep(step, actingLevel);
+	const approvalV2 = rce?.approval?.engine === "v2";
+	const step = approvalV2 ? (rce.approval.steps || [])[openStepIndexes(rce.approval)[0]] || null : currentApprovalStep(rce?.approval);
+	const canAct = approvalV2 ? actorCanDecide(rce.approval, { actor: actingUser, level: actingLevel }) : canActOnStep(step, actingLevel);
 	const accepted = rceIsFinalAccepted(rce);
 	const generateBlocked = !!liveCe;
 	const canFinal = actingLevel === "head" || actingLevel === "admin";
@@ -25775,18 +28816,38 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 							/* @__PURE__ */ jsx("button", {
 								className: "ce-btn-primary",
 								type: "button",
-								onClick: () => onAccept?.(rce, remarks),
+								onClick: () => approvalV2 ? onAccept?.(rce, remarks, "approve") : onAccept?.(rce, remarks),
 								children: step?.isFinal ? "Final accept (create job)" : "Approve step"
 							}),
-							/* @__PURE__ */ jsx("button", {
+							!(engineOn || approvalV2) && /* @__PURE__ */ jsx("button", {
 								className: "ce-btn-ghost",
 								type: "button",
 								onClick: () => {
-									const why = remarks || window.prompt("Reject remarks (required)");
-									if (!why) return;
-									onReject?.(rce, why);
+									const send = (why) => { if (why) onReject?.(rce, why); };
+									if (String(remarks || "").trim()) { send(String(remarks).trim()); return; }
+									void askReason({ title: "Reject", label: "Reject remarks", required: true }).then((asked) => { if (asked.ok) send(asked.text); });
 								},
 								children: "Reject"
+							}),
+							approvalV2 && /* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost",
+								type: "button",
+								onClick: () => {
+									const send = (why) => { if (why) onAccept?.(rce, why, "approve-comment"); };
+									if (String(remarks || "").trim()) { send(String(remarks).trim()); return; }
+									void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => { if (asked.ok) send(asked.text); });
+								},
+								children: "Approve with comment"
+							}),
+							approvalV2 && /* @__PURE__ */ jsx("button", {
+								className: "ce-btn-ghost",
+								type: "button",
+								onClick: () => {
+									const send = (why) => { if (why) onAccept?.(rce, why, "request-edit"); };
+									if (String(remarks || "").trim()) { send(String(remarks).trim()); return; }
+									void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => { if (asked.ok) send(asked.text); });
+								},
+								children: "Request edit"
 							})
 						]
 					}),
@@ -25799,7 +28860,16 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 					rceCanWithdraw(rce) && /* @__PURE__ */ jsx("button", {
 						className: "ce-btn-ghost",
 						type: "button",
-						onClick: () => onWithdraw?.(rce),
+						onClick: () => {
+							if (!release1WithdrawRequestOn) {
+								onWithdraw?.(rce);
+								return;
+							}
+							void askReason({ title: "Withdraw", label: "Withdraw remarks", required: true }).then((asked) => {
+								if (!asked.ok) return;
+								onWithdraw?.(rce, asked.text);
+							});
+						},
 						children: "Withdraw request"
 					}),
 					accepted && rce.status !== "For revision" && !rce.cancelPending && canFinal && /* @__PURE__ */ jsx("button", {
@@ -25812,9 +28882,10 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 						className: "ce-btn-ghost",
 						type: "button",
 						onClick: () => {
-							const why = window.prompt("Cancel / revise remarks");
-							if (!why) return;
-							onCancelRequest?.(rce, why);
+							void askReason({ title: "Cancel or revise", label: "Cancel / revise remarks", required: true }).then((asked) => {
+								if (!asked.ok) return;
+								onCancelRequest?.(rce, asked.text);
+							});
 						},
 						children: "Request cancel / revise (needs Final)"
 					}),
@@ -25891,7 +28962,7 @@ function RCEDetail({ rce, onBack, onGenerateCE, rceList, documentControl, onAcce
 		]
 	});
 }
-function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel, onApprovalDecision, documentControl, users, onReceivedBy, onStampSubmitted, onStartRevision, boardColors }) {
+function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInspection, onNewRCE, onViewRCE, currentUserName, actingLevel, onApprovalDecision, documentControl, users, onReceivedBy, onStampSubmitted, onStartRevision, boardColors, numbersOnline = true, engineOn = false, familiesOn = false, suffixesOn = false }) {
 	return /* @__PURE__ */ jsx(Dashboard, {
 		ceList,
 		rceList,
@@ -25909,7 +28980,37 @@ function EstimateHome({ ceList, rceList, documents, onNewCE, onOpenCE, onNewInsp
 		onReceivedBy,
 		onStampSubmitted,
 		onStartRevision,
-		boardColors
+		boardColors,
+		numbersOnline,
+		engineOn,
+		familiesOn,
+		suffixesOn
+	});
+}
+function SowPlanPanel({ lines, holidays, onChange }) {
+	const [zoom, setZoom] = useState("days");
+	const plan = planSowSchedule(lines || [], holidays || []);
+	const patch = (index, field, value) => {
+		const next = (lines || []).map((row, i) => i === index ? { ...row, [field]: value } : row);
+		onChange(next);
+	};
+	return /* @__PURE__ */ jsxs("div", {
+		className: "ce-card",
+		"aria-label": "SOW schedule",
+		children: [
+			/* @__PURE__ */ jsxs("div", { className: "ce-cat-bar", children: [
+				/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => onChange([...(lines || []), { id: `sow-${(lines || []).length + 1}`, title: "Scope line", start: "", days: 1, after: "" }]), children: "Add line" }),
+				/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", onClick: () => setZoom((z) => z === "days" ? "weeks" : "days"), children: zoom === "days" ? "Days" : "Weeks" })
+			] }),
+			plan.ok ? null : /* @__PURE__ */ jsx("p", { className: "rce-field-error", children: plan.message }),
+			/* @__PURE__ */ jsx("table", { className: "ce-table", children: /* @__PURE__ */ jsxs("tbody", { children: (lines || []).map((line, index) => /* @__PURE__ */ jsxs("tr", { children: [
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "Scope line", value: line.title || "", onChange: (e) => patch(index, "title", e.target.value) }) }),
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", type: "date", "aria-label": "Start", value: line.start || "", onChange: (e) => patch(index, "start", e.target.value) }) }),
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", type: "number", "aria-label": "Days", value: line.days ?? 1, onChange: (e) => patch(index, "days", e.target.value) }) }),
+				/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("input", { className: "ce-input", "aria-label": "After", value: line.after || "", onChange: (e) => patch(index, "after", e.target.value) }) })
+			] }, line.id || index)) }) }),
+			plan.ok ? /* @__PURE__ */ jsx("div", { style: { overflowX: "auto", transform: zoom === "weeks" ? "scaleX(0.6)" : "none", transformOrigin: "left" }, children: /* @__PURE__ */ jsx(GanttChart, { schedule: sowGanttSchedule(plan) }) }) : null
+		]
 	});
 }
 function SOWTab({ sowText, setSowText }) {
@@ -26065,8 +29166,8 @@ function CeRceSheet({ rce, rceList = [], documentControl = {} }) {
 		})
 	});
 }
-function AttachmentsTab({ attachments, rce }) {
-	const list = attachments || [];
+function AttachmentsTab({ attachments, rce, edits = null, onEdits = null }) {
+	const list = ceTpl7On === true ? applyAttachmentEdits(attachments || [], edits) : attachments || [];
 	const evidence = RCE_EVIDENCE_ITEMS.map((ev) => {
 		const complete = rce?.checklist?.[ev.key]?.complete || "";
 		const needed = String(complete).toUpperCase() === "YES";
@@ -26123,7 +29224,7 @@ function AttachmentsTab({ attachments, rce }) {
 					type: "button",
 					className: "ce-btn-primary ce-btn-sm",
 					disabled: list.length === 0,
-					onClick: () => compileAttachmentsToPdf(list, "Compiled Attachments"),
+					onClick: () => compileAttachmentsToPdf(list, "Compiled Attachments", edits),
 					children: "Compile to one PDF"
 				})
 			}),
@@ -26132,22 +29233,75 @@ function AttachmentsTab({ attachments, rce }) {
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-table",
 					children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+						ceTpl7On === true ? /* @__PURE__ */ jsx("th", { children: "No." }) : null,
 						/* @__PURE__ */ jsx("th", { children: "File Name" }),
 						/* @__PURE__ */ jsx("th", { children: "Source / tag" }),
-						/* @__PURE__ */ jsx("th", { children: "Sheet / Category" })
-					] }) }), /* @__PURE__ */ jsx("tbody", { children: list.map((file, idx) => /* @__PURE__ */ jsxs("tr", { children: [
+						/* @__PURE__ */ jsx("th", { children: "Sheet / Category" }),
+						ceTpl7On === true ? /* @__PURE__ */ jsx("th", { children: "Size" }) : null,
+						ceTpl7On === true ? /* @__PURE__ */ jsx("th", { children: "Actions" }) : null
+					] }) }), /* @__PURE__ */ jsx("tbody", { children: list.map((file, idx) => /* @__PURE__ */ jsxs("tr", {
+						draggable: ceTpl7On === true,
+						onDragStart: ceTpl7On === true ? (event) => {
+							event.dataTransfer?.setData("text/plain", String(idx));
+						} : undefined,
+						onDragOver: ceTpl7On === true ? (event) => event.preventDefault() : undefined,
+						onDrop: ceTpl7On === true ? (event) => {
+							event.preventDefault();
+							const from = Number(event.dataTransfer?.getData("text/plain"));
+							const next = reorderAttachments(list, from, idx);
+							onEdits?.({ ...(edits || {}), order: next.map((row) => row.id), names: edits?.names || {}, removed: edits?.removed || [] });
+						} : undefined,
+						children: [
+						ceTpl7On === true ? /* @__PURE__ */ jsx("td", { children: idx + 1 }) : null,
 						/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsxs("a", {
-							href: file.url || "#",
+							href: file.url || file.dataUrl || "#",
 							target: "_blank",
 							rel: "noreferrer",
 							className: "ce-attachment-link",
+							download: file.name,
 							children: [/* @__PURE__ */ jsx(FileText, {
 								size: 14,
 								style: { marginRight: "0.5rem" }
 							}), file.name]
 						}) }),
-						/* @__PURE__ */ jsx("td", { children: file.tag || file.source || "—" }),
-						/* @__PURE__ */ jsx("td", { children: file.sheet || "General" })
+						/* @__PURE__ */ jsx("td", { children: file.tag || file.source || file.sourceLabel || "—" }),
+						/* @__PURE__ */ jsx("td", { children: file.sheet || "General" }),
+						ceTpl7On === true ? /* @__PURE__ */ jsx("td", { children: file.size ? `${file.size}` : "—" }) : null,
+						ceTpl7On === true ? /* @__PURE__ */ jsxs("td", { children: [
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								"aria-label": "Drag reorder",
+								onClick: () => {
+									const next = reorderAttachments(list, idx, Math.min(list.length - 1, idx + 1));
+									onEdits?.({ ...(edits || {}), order: next.map((row) => row.id), names: edits?.names || {}, removed: edits?.removed || [] });
+								},
+								children: "Move"
+							}),
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									const typed = window.prompt("New file name", splitAttachmentName(file.name).base);
+									if (typed == null) return;
+									const named = renameAttachment(file, typed);
+									onEdits?.({ ...(edits || {}), order: (edits?.order || list.map((row) => row.id)), names: { ...(edits?.names || {}), [file.id]: named.name }, removed: edits?.removed || [] });
+								},
+								children: "Rename"
+							}),
+							/* @__PURE__ */ jsx("a", { href: file.url || file.dataUrl || "#", download: file.name, children: "Download" }),
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "ce-btn-ghost ce-btn-sm",
+								onClick: () => {
+									const typed = window.prompt("Type REMOVE to remove this file. Saved versions keep their copy.");
+									const result = removeAttachment(list, file.id, typed);
+									if (!result.ok) return;
+									onEdits?.({ ...(edits || {}), order: result.files.map((row) => row.id), names: edits?.names || {}, removed: [...(edits?.removed || []), file.id] });
+								},
+								children: "Remove"
+							})
+						] }) : null
 					] }, file.id || idx)) })]
 				})
 			})
@@ -26217,12 +29371,12 @@ function navKeyForView(view) {
 	if (view === "rce-form" || view === "rce-detail" || view === "rce-inbox") return "monitoring";
 	return view;
 }
-function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false }) {
+function AppLayout({ currentView, setCurrentView, children, notifications = [], actingUser, actingLevel, actingUserId = "", users = [], onActingUser, onOpenNotice, onMarkRead, onClearAll, splitOpen, onToggleSplit, side, saveState, onRequestLeave, leavePrompt, onStay, onConfirmLeave, testMode = false, canAdmin = false, reportsOn = false, scheduleOn = false, profileOn = false, profileUser = null, onSaveProfile, onHelp }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [bellOpen, setBellOpen] = useState(false);
 	const activeKey = navKeyForView(currentView);
-	const visibleNotices = (notifications || []).filter((n) => noticeVisible(n, actingUser, actingLevel));
-	const unread = unreadNotices(notifications, actingUser, actingLevel).length;
+	const visibleNotices = (notifications || []).filter((n) => noticeVisible(n, actingUser, actingLevel, actingUserId));
+	const unread = unreadNotices(notifications, actingUser, actingLevel, actingUserId).length;
 	const go = (next) => {
 		if (!next || next === currentView) return;
 		if ((currentView === "editor" || currentView === "scope-editor") && onRequestLeave) {
@@ -26232,7 +29386,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		setCurrentView(next);
 	};
 	return /* @__PURE__ */ jsxs("div", {
-		className: "ce-shell-outer",
+		className: "ce-shell-outer" + (ceTpl10On === true ? " ce-tpl10" : "") + ((personalNewTagOn || ceThreadsOn) === true ? " b43-rows" : ""),
 		children: [/* @__PURE__ */ jsxs("aside", {
 			className: `ce-sidebar ${collapsed ? "ce-sidebar-collapsed" : ""}`,
 			children: [
@@ -26248,7 +29402,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 						!collapsed && /* @__PURE__ */ jsx(ClipboardList, { size: 18 }),
 						!collapsed && /* @__PURE__ */ jsx("span", {
 							className: "ce-serif ce-sidebar-brand-text",
-							children: "Cost Estimator"
+							children: "ESTIMATOR SYSTEM"
 						}),
 						/* @__PURE__ */ jsx("button", {
 							type: "button",
@@ -26259,7 +29413,19 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 						})
 					]
 				}),
-				!collapsed && /* @__PURE__ */ jsxs("div", {
+				profileOn ? /* @__PURE__ */ jsx(SalesUserCard, {
+					user: profileUser,
+					collapsed,
+					testMode,
+					users,
+					actingUser,
+					onActingUser,
+					onSave: onSaveProfile,
+					onHelp,
+					onSignOut: () => {
+						void signOutEstimator(() => signOut());
+					}
+				}) : !collapsed && /* @__PURE__ */ jsxs("div", {
 					className: "ce-acting",
 					children: [
 						/* @__PURE__ */ jsx("label", { children: testMode ? "Acting as · TEST MODE" : "Acting as" }),
@@ -26284,6 +29450,14 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							}, u.id || u.name))
 						}),
 						/* @__PURE__ */ jsx("small", { children: actingLevel }),
+						/* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "ce-btn-ghost ce-btn-sm",
+							onClick: () => {
+								void signOutEstimator(() => signOut());
+							},
+							children: "Sign out"
+						}),
 						saveState === "saving" && /* @__PURE__ */ jsx("small", {
 							className: "ce-save-note",
 							children: "Saving to database…"
@@ -26300,7 +29474,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 				}),
 				/* @__PURE__ */ jsx("nav", {
 					className: "ce-sidebar-nav",
-					children: NAV_ITEMS.filter((item) => !item.pinBottom).map((item) => {
+					children: [NAV_ITEMS.filter((item) => !item.pinBottom).map((item) => {
 						const Icon = item.icon;
 						const isActive = activeKey === item.key;
 						return /* @__PURE__ */ jsxs("button", {
@@ -26308,9 +29482,21 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							"data-nav": item.key,
 							className: "ce-navitem" + (isActive ? " ce-navitem-active" : "") + (item.redBorder ? " ce-navitem-monitoring" : ""),
 							onClick: () => go(item.key),
-							children: [/* @__PURE__ */ jsx(Icon, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: item.label })]
+							children: [/* @__PURE__ */ jsx(Icon, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: item.key === "scope" ? libraryTabLabel(libraryMethodologiesOn === true, "nav") : item.label }), item.key === "monitoring" && teamAlertCount > 0 ? /* @__PURE__ */ jsx("span", { className: "ce-bell-dot", title: `${teamAlertCount} new` }) : null]
 						}, item.key);
-					})
+					}), reportsOn ? /* @__PURE__ */ jsxs("button", {
+						type: "button",
+						"data-nav": "reports",
+						className: "ce-navitem" + (activeKey === "reports" ? " ce-navitem-active" : ""),
+						onClick: () => go("reports"),
+						children: [/* @__PURE__ */ jsx(FileText, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: "Reports" })]
+					}, "reports") : null, scheduleOn ? /* @__PURE__ */ jsxs("button", {
+						type: "button",
+						"data-nav": "project-schedule",
+						className: "ce-navitem" + (activeKey === "project-schedule" ? " ce-navitem-active" : ""),
+						onClick: () => go("project-schedule"),
+						children: [/* @__PURE__ */ jsx(FileText, { size: 16 }), !collapsed && /* @__PURE__ */ jsx("span", { children: "Project schedule" })]
+					}, "project-schedule") : null]
 				}),
 				/* @__PURE__ */ jsxs("div", {
 					className: "ce-sidebar-foot",
@@ -26332,12 +29518,12 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 							className: "ce-bell-panel",
 							children: [/* @__PURE__ */ jsxs("div", {
 								className: "ce-bell-head",
-								children: [/* @__PURE__ */ jsx("b", { children: "Inbox" }), /* @__PURE__ */ jsx("button", {
+								children: [/* @__PURE__ */ jsx("b", { children: notificationsBellOn === true ? "Notifications" : "Inbox" }), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
 									disabled: !visibleNotices.length,
-									onClick: () => onClearAll?.(),
-									children: "Clear all"
+									onClick: () => notificationsBellOn === true ? onMarkRead?.() : onClearAll?.(),
+									children: notificationsBellOn === true ? "Mark all read" : "Clear all"
 								})]
 							}), (visibleNotices || []).length === 0 && /* @__PURE__ */ jsx("p", {
 								className: "ce-empty",
@@ -26408,7 +29594,7 @@ function AppLayout({ currentView, setCurrentView, children, notifications = [], 
 		]
 	});
 }
-function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "" }) {
+function App({ initialWorkspace, onPersist, saveState, currentUserName, accountUserId = "", accountRole = "staff", accountName = "", testDeployment = false, mobileView = null }) {
 	const workspace = initialWorkspace || {};
 	const extras = workspace.schemaConfig?.__app || {};
 	const [currentView, setCurrentView] = useState("dashboard");
@@ -26427,6 +29613,103 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const [documents, setDocuments] = useState(() => workspace.documents && typeof workspace.documents === "object" ? workspace.documents : {});
 	const [inspectionReports, setInspectionReports] = useState(() => Array.isArray(workspace.inspectionReports) ? workspace.inspectionReports : Array.isArray(extras.inspectionReports) ? extras.inspectionReports : []);
 	const [adminConfig, setAdminConfig] = useState(() => normalizeAdminConfig(workspace.adminConfig || extras.adminConfig));
+	const [elOffer, setElOffer] = useState(null);
+	const [elSeed, setElSeed] = useState(null);
+	calcConstantsNow = adminConfig.calcConstants;
+	equipmentRatesOn = adminConfig.features?.equipmentRates === true;
+	release1DepartmentsOn = adminConfig.features?.release1Departments === true;
+	release1SalesViewOn = adminConfig.features?.release1SalesView === true;
+	release1SalesActor = release1SalesViewOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1WithdrawRequestOn = adminConfig.features?.release1WithdrawRequest === true;
+	release1MarkupOn = adminConfig.features?.release1Markup === true;
+	release1MarkupSales = release1MarkupOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1ProposalOn = adminConfig.features?.release1Proposal === true;
+	release1ProposalSales = release1ProposalOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1JobOrderOn = adminConfig.features?.release1JobOrder === true;
+	release1JobOrderSales = release1JobOrderOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1MonitorOn = adminConfig.features?.release1Monitor === true;
+	ceTpl1On = adminConfig.features?.ceTpl1 === true;
+	ceTpl2On = adminConfig.features?.ceTpl2 === true;
+	ceTpl3On = adminConfig.features?.ceTpl3 === true;
+	ceTpl4On = adminConfig.features?.ceTpl4 === true;
+	ceTpl5On = adminConfig.features?.ceTpl5 === true;
+	ceTpl6On = adminConfig.features?.ceTpl6 === true;
+	ceTpl7On = adminConfig.features?.ceTpl7 === true;
+	ceTpl8On = adminConfig.features?.ceTpl8 === true;
+	ceTpl9On = adminConfig.features?.ceTpl9 === true;
+	ceTpl10On = adminConfig.features?.ceTpl10 === true;
+	salesProfileOn = adminConfig.features?.salesProfile === true;
+	rceTplOn = adminConfig.features?.rceTpl === true;
+	rceRouteNow = adminConfig.approvalFlows?.rce || [];
+	rceUsersNow = adminConfig.users || [];
+	personalNewTagOn = adminConfig.features?.personalNewTag === true;
+	salesPipelineMonitoringOn = adminConfig.features?.salesPipelineMonitoring === true;
+	ceThreadsOn = adminConfig.features?.ceThreads === true;
+	notificationsBellOn = adminConfig.features?.notificationsBell === true;
+	libraryMethodologiesOn = adminConfig.features?.libraryMethodologies === true;
+	methodologyEditorOn = adminConfig.features?.methodologyEditor === true;
+	templatesFromDocsOn = adminConfig.features?.templatesFromDocs === true;
+	monitoringExportOn = adminConfig.features?.monitoringExport === true;
+	salesDocPreviewOn = adminConfig.features?.salesDocPreview === true;
+	personalActorId = accountUserId || "";
+	personalNewConfig = adminConfig.workingDays || personalNewConfig;
+	saveCeTemplateNow = (row, tpl) => {
+		setScopeTemplates((prev) => [{ id: `tpl-${row.ceId || Date.now()}`, name: row.ceDisplay || row.ceId || "CE template", snapshot: tpl, jobType: "onsite" }, ...(prev || [])]);
+	};
+	saveThreadNow = (ceId, thread) => {
+		setDocuments((prev) => ({ ...prev, [ceId]: { ...(prev[ceId] || {}), thread } }));
+	};
+	notifyThreadNow = (rows, ceId) => {
+		(rows || []).forEach((row) => {
+			if (!row?.toUserId || row.toUserId === "*") return;
+			notice({ type: "Reply", title: "Reply", body: "New thread reply", toUserId: row.toUserId, ceId: ceId || "", view: "monitoring" });
+		});
+	};
+	saveTaskTemplateNow = (task) => {
+		const name = window.prompt("Per task template name", task?.title || task?.name || "Task");
+		if (!name) return;
+		setTaskTemplates((prev) => [{ id: `ptt-${Date.now()}`, name, workType: task?.workType || "onsite", notes: task?.notes || "", items: task?.items || emptyItems() }, ...(prev || [])]);
+	};
+	openAsNewCe = (row) => {
+		pendingCloneCeId = row?.ceId || "";
+		const rce = (rceList || []).find((item) => item && (item.id === row?.rceKey || item.rceNo === row?.rceNo)) || null;
+		setWizardReturnTab("active");
+		setWizardRce(rce);
+		setCurrentView("ce-wizard");
+	};
+	rceTemplatesNow = adminConfig.rceTemplates || [];
+	saveRceTemplateNow = (tpl) => {
+		setAdminConfig((prev) => normalizeAdminConfig({ ...prev, rceTemplates: [tpl, ...(prev.rceTemplates || [])] }));
+	};
+	oifTemplatesNow = adminConfig.oifTemplates || [];
+	saveOifTemplateNow = (tpl) => {
+		setAdminConfig((prev) => normalizeAdminConfig({ ...prev, oifTemplates: [tpl, ...(prev.oifTemplates || [])] }));
+	};
+	teamAlertCount = personalNewTagOn === true ? (rceList || []).filter((row) => showNewForUser({
+		userId: personalActorId,
+		targetedIds: [row.assignedToId, row.salesOwnerId].filter(Boolean),
+		seenBy: row.seenBy || {},
+		createdAt: row.dateReceived || row.rceDate || row.createdAt,
+		now: new Date().toISOString(),
+		config: personalNewConfig
+	})).length : 0;
+	pendingMasterNow = Array.isArray(adminConfig.pendingMasterItems) ? adminConfig.pendingMasterItems : [];
+	submitPendingMaster = (draft) => {
+		setAdminConfig((prev) => {
+			const made = requestMasterItem({ ...(draft || {}), pending: prev.pendingMasterItems || [], requestedBy: accountUserId, role: draft?.role || accountRole || "staff" });
+			return normalizeAdminConfig({ ...prev, pendingMasterItems: made.pending });
+		});
+	};
+	applyPendingMaster = (pending) => {
+		setAdminConfig((prev) => normalizeAdminConfig({ ...prev, pendingMasterItems: pending || [] }));
+	};
+	release1MonitorSales = release1MonitorOn && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+	release1ActorId = accountUserId || "";
+	equipmentCatalogNow = { formula: adminConfig.equipmentFormula, items: adminConfig.equipmentItems };
+	reopenCalcLine = (calc) => {
+		setElSeed(calc);
+		setCurrentView("el-calculator");
+	};
 	applyTemplateFormula(adminConfig.templateFormula);
 	applyMasterlistRules(adminConfig.masterlistRules);
 	const [schemaConfig, setSchemaConfig] = useState(() => workspace.schemaConfig && typeof workspace.schemaConfig === "object" ? workspace.schemaConfig : {});
@@ -26445,6 +29728,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	});
 	const [scopeEditId, setScopeEditId] = useState(null);
 	const [notifications, setNotifications] = useState(() => Array.isArray(extras.notifications) ? extras.notifications : []);
+	const [proposals, setProposals] = useState(() => Array.isArray(extras.proposals) ? extras.proposals : []);
+	const [jobOrders, setJobOrders] = useState(() => Array.isArray(extras.jobOrders) ? extras.jobOrders : []);
+	const [markups, setMarkups] = useState(() => Array.isArray(extras.markups) ? extras.markups : []);
+	const [release1Message, setRelease1Message] = useState("");
 	const [dbWipeRequests, setDbWipeRequests] = useState(() => Array.isArray(extras.dbWipeRequests) ? extras.dbWipeRequests : []);
 	const [dbFocusSheet, setDbFocusSheet] = useState(null);
 	const [wizardRce, setWizardRce] = useState(null);
@@ -26485,12 +29772,17 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					taskTemplates,
 					scopeTemplates,
 					notifications,
-					dbWipeRequests
+					dbWipeRequests,
+					proposals,
+					jobOrders,
+					markups
 				}
 			}
 		};
 		if (skipFirstPersist.current) {
 			skipFirstPersist.current = false;
+			// Step 25: the normalised first state is the baseline, not an edit.
+			persistRef.current?.(payload, { baseline: true });
 			return;
 		}
 		persistRef.current?.(payload);
@@ -26505,6 +29797,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		scopeTemplates,
 		notifications,
 		dbWipeRequests,
+		proposals,
+		jobOrders,
+		markups,
 		persistTick
 	]);
 	const [selectedRCE, setSelectedRCE] = useState(null);
@@ -26514,6 +29809,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	const realLevel = ["admin", "head", "lead", "staff"].includes(String(accountRole || "").toLowerCase()) ? String(accountRole).toLowerCase() : "staff";
 	const isAdminAccount = realLevel === "admin" && !!accountUserId;
 	const lockedName = accountName || currentUserName || "";
+	release1CanReassign = release1MonitorOn && (isAdminAccount || isAdminDepartment(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) || (adminConfig.authorisations?.takeover || []).some((name) => name === release1ActorId || (lockedName && name === lockedName)));
 	useEffect(() => {
 		if (!isAdminAccount) {
 			if (lockedName && editingUser !== lockedName) setEditingUser(lockedName);
@@ -26523,19 +29819,46 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		if (lockedName && editingUser !== lockedName && !names.includes(editingUser)) setEditingUser(lockedName);
 	}, [adminConfig, editingUser, isAdminAccount, lockedName]);
 	const [isEditorLocked, setIsEditorLocked] = useState(false);
+	const [numbersOnline, setNumbersOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+	useEffect(() => {
+		const up = () => setNumbersOnline(true);
+		const down = () => setNumbersOnline(false);
+		window.addEventListener("online", up);
+		window.addEventListener("offline", down);
+		return () => {
+			window.removeEventListener("online", up);
+			window.removeEventListener("offline", down);
+		};
+	}, []);
 	const [editorReturn, setEditorReturn] = useState("monitoring");
 	const [headerEditing, setHeaderEditing] = useState(false);
 	const [pendingLeave, setPendingLeave] = useState("");
+	const requestEditorLeave = (next) => {
+		const viewOnly = currentView === "editor" && (isEditorLocked || ceIsSealed(activeCE?.status, documents?.[activeCE?.id]));
+		if (currentView === "editor" && !leaveNeedsPrompt({ viewOnly, headerEditing, saveState })) {
+			setHeaderEditing(false);
+			setCurrentView(next || editorReturn);
+			return;
+		}
+		setPendingLeave(next);
+	};
 	const editorName = editingUser || lockedName || "Estimator A";
-	const actingLevel = realLevel;
 	const impersonating = isAdminAccount && !!accountUserId && editorName !== lockedName;
+	const actingLevel = actingLevelFor({
+		realLevel,
+		editorName,
+		users: adminConfig.users || [],
+		impersonating
+	});
 	noteSecurityActor(accountUserId, impersonating ? accountUserId : "");
 	useEffect(() => {
 		if (currentView === "admin" && !isAdminAccount) setCurrentView("dashboard");
 	}, [currentView, isAdminAccount]);
 	const notice = (partial) => {
+		const event = partial.type || NOTICE_EVENTS.APPROVAL;
+		if (approvalEngineOn(adminConfig) && !matrixAllows(adminConfig?.notifyMatrix, event)) return;
 		setNotifications((prev) => pushNotice(prev, {
-			type: partial.type || NOTICE_EVENTS.APPROVAL,
+			type: event,
 			title: partial.title || partial.type,
 			body: partial.body || "",
 			to: partial.to || "*",
@@ -26543,8 +29866,39 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			rceId: partial.rceId || "",
 			ceId: partial.ceId || "",
 			view: partial.view || "monitoring",
+			...(partial.toUserId ? { toUserId: String(partial.toUserId) } : {}),
 			...(partial.monitoringTab ? { monitoringTab: partial.monitoringTab } : {})
 		}));
+	};
+	const release1Note = (message) => setRelease1Message(String(message || "That was not saved."));
+	const markupForCe = (ceId) => {
+		const family = (markups || []).filter((row) => row && row.ceId === ceId);
+		if (family.length) return family.reduce((best, row) => (Number(row.revision) || 0) >= (Number(best.revision) || 0) ? row : best);
+		const legacy = (ceList || []).find((row) => row && row.id === ceId)?.markup;
+		return legacy && typeof legacy === "object" ? legacy : null;
+	};
+	const rememberMarkup = (markup) => {
+		const row = { ...markup, kind: "markup", id: markup.markupNo || markup.id || `${markup.ceNo || markup.ceId || "markup"}-MK` };
+		setMarkups((prev) => {
+			const list = Array.isArray(prev) ? prev : [];
+			const index = list.findIndex((item) => item && item.id === row.id);
+			if (index < 0) return [row, ...list];
+			return list.map((item, i) => i === index ? row : item);
+		});
+		if (row.ceId && row.markupNo) {
+			setCeList((prev) => prev.map((ce) => ce && ce.id === row.ceId ? { ...ce, markupNo: row.markupNo } : ce));
+		}
+		return row;
+	};
+	const primaryApproverName = (doc) => personName(doc?.steps?.[Number(doc?.currentIndex) || 0]?.userId, adminConfig.users || []);
+	const sendRelease1Mail = (toUserId, template, docId, kind, force) => {
+		if (!force && !release1MonitorOn) return;
+		if (!toUserId || !template || !docId) return;
+		void fetch("/api/release1-mail", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ toUserId, template, docId: String(docId), kind: String(kind || "") })
+		}).catch(() => {});
 	};
 	const patchRce = (id, fn) => {
 		setRceList((prev) => prev.map((r) => (r.id || r.rceNo) === id ? fn(r) : r));
@@ -26555,40 +29909,83 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		setPersistTick((n) => n + 1);
 	};
 	const handleDocumentChange = (id, doc) => {
-		setDocuments((prev) => {
-			const prior = prev[id] || {};
+		const buildDoc = (prior) => {
 			const prevStatus = String(prior.ceStatus || "");
 			const nextStatus = String(doc?.ceStatus || prevStatus || "");
+			const schedule = adminConfig?.features?.schedule === true ? refreshSchedule({
+				previous: doc?.schedule || prior.schedule,
+				tasks: taskPlan(doc?.tasks),
+				startDate: doc?.schedule?.startDate || doc?.projectInfo?.date || prior.schedule?.startDate || "",
+				holidays: companyCalendar(adminConfig),
+				status: nextStatus
+			}) : doc?.schedule;
 			const priorTimeline = Array.isArray(prior.timeline) ? prior.timeline : [];
 			const nextTimeline = Array.isArray(doc?.timeline) ? doc.timeline : [];
 			let timeline = priorTimeline.length >= nextTimeline.length ? priorTimeline : nextTimeline;
 			const last = timeline[timeline.length - 1];
 			if (nextStatus && nextStatus !== prevStatus && last?.action !== nextStatus) {
 				timeline = appendTimeline(timeline, timelineEntry({
-					who: editorName,
+					...(release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName }),
 					action: nextStatus === "For revision" ? "Revision" : nextStatus,
 					remarks: nextStatus === "For revision" ? doc?.projectInfo?.revisionNote || "" : "",
 					rev: nextStatus === "For revision" ? doc?.projectInfo?.revNo || "" : ""
 				}));
 			}
 			return {
-				...prev,
-				[id]: {
-					...doc,
-					timeline,
-					snapshots: doc?.snapshots || prior.snapshots || [],
-					ceSubmittedStamps: doc?.ceSubmittedStamps || prior.ceSubmittedStamps || []
-				}
+				...doc,
+				...(Object.prototype.hasOwnProperty.call(prior, "approval") ? { approval: prior.approval } : {}),
+				...(adminConfig?.features?.schedule === true ? { schedule } : {}),
+				timeline,
+				snapshots: doc?.snapshots || prior.snapshots || [],
+				ceSubmittedStamps: doc?.ceSubmittedStamps || prior.ceSubmittedStamps || []
 			};
-		});
+		};
+		const current = documents?.[id];
+		if (current && sameDocument(current, buildDoc(current))) return;
+		if (current && release1SalesViewOn && ceIsSealed((ceList || []).find((row) => row.id === id)?.status, current)) {
+			const ceRow = (ceList || []).find((row) => row.id === id) || null;
+			const nextBody = buildDoc(current);
+			if (!Object.prototype.hasOwnProperty.call(current, "markup")) delete nextBody.markup;
+			const nextSummary = {
+				...ceRow || {},
+				lastEdited: ceRow?.lastEdited || "",
+				lastEditedBy: editorName,
+				client: doc?.meta?.client || ceRow?.client,
+				project: doc?.meta?.title || ceRow?.project,
+				status: doc?.ceStatus || ceRow?.status
+			};
+			const gate = release1WriteAllowed({ kind: "ce", oldPayload: { summary: ceRow, document: current }, newPayload: { summary: nextSummary, document: nextBody }, sales: release1SalesActor });
+			if (!gate.ok) {
+				release1Note(gate.message || "Approved estimates cannot be changed.");
+				return;
+			}
+		}
+		setDocuments((prev) => ({
+			...prev,
+			[id]: buildDoc(prev[id] || {})
+		}));
 		setCeList((prev) => prev.map((ce) => ce.id === id ? {
 			...ce,
 			lastEdited: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
 			lastEditedBy: editorName,
 			client: doc?.meta?.client || ce.client,
 			project: doc?.meta?.title || ce.project,
+			...(ceTpl4On && String(doc?.projectInfo?.targetDeadline || "").trim() ? {
+				deadline: doc.projectInfo.targetDeadline,
+				targetDeadline: doc.projectInfo.targetDeadline
+			} : {}),
 			status: doc?.ceStatus || ce.status
 		} : ce));
+		if (adminConfig?.features?.docSuffixes === true && doc && (doc.awardStatus === "Awarded" || doc.awardStatus === "Lost" || doc.awardJo)) {
+			const ce = (ceList || []).find((item) => item.id === id);
+			const rceId = ce?.rceId;
+			if (rceId) patchRce(rceId, (rce) => ({
+				...rce,
+				awardStatus: doc.awardStatus === "Awarded" || doc.awardStatus === "Lost" ? doc.awardStatus : rce.awardStatus,
+				awardJo: doc.awardJo ? doc.awardJo : rce.awardJo,
+				awardCeId: id
+			}));
+		}
 	};
 	const handleStatusChange = (newStatus, extra = {}) => {
 		if (!activeCE) return;
@@ -26624,10 +30021,108 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			ceId: updatedCE.id
 		});
 	};
+	const engineFlag = approvalEngineOn(adminConfig);
+	exportEngineOn = engineFlag;
+	exportUsers = [
+		...(adminConfig?.users || []),
+		...(!impersonating && accountUserId && editorName ? [{ name: editorName, userId: accountUserId }] : [])
+	];
+	const [localReminders, setLocalReminders] = useState([]);
+	const shownNotices = [...localReminders, ...notifications || []];
+	if (notificationsBellOn === true && typeof document !== "undefined") document.title = documentTitle(unreadNotices(shownNotices, editorName, actingLevel, accountUserId).length);
+	useEffect(() => {
+		if (!engineFlag) return;
+		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
+		const now = new Date();
+		const hits = [];
+		const reminderUser = accountUserId || editorName || "";
+		const reminderStore = typeof localStorage === "undefined" ? null : localStorage;
+		const stamps = readReminderStamps(reminderStore, reminderUser);
+		(ceList || []).forEach((ce) => {
+			const status = String(ce.status || "");
+			if (status !== "For approval" && !status.startsWith("Pending ")) return;
+			const slots = dueReminderSlots({ now, lastNotifiedAt: stamps[ce.id] || ce.reminderAt || "" });
+			if (slots.length) hits.push({ id: ce.id, slots });
+		});
+		if (!hits.length) return;
+		// Step 25: reminders are shown in this browser only. They never change the shared notification list on load.
+		setLocalReminders((prev) => {
+			let next = prev;
+			hits.forEach(({ id, slots }) => {
+				slots.forEach((slot) => {
+					next = pushNotice(next, {
+						type: "Reminder",
+						title: "Approval reminder",
+						body: `${id} is still waiting · ${slot.label} PH`,
+						toRole: "lead",
+						ceId: id,
+						view: "editor"
+					});
+				});
+			});
+			return next;
+		});
+		// Step 24: the stamp stays in this browser. A reminder never edits a cost estimate.
+		const nextStamps = { ...stamps };
+		hits.forEach((hit) => {
+			nextStamps[hit.id] = hit.slots[hit.slots.length - 1].at;
+		});
+		writeReminderStamps(reminderStore, reminderUser, nextStamps);
+	}, [engineFlag, ceList, adminConfig?.notifyMatrix]);
+	const approvalFlowInput = (docType) => {
+		const party = adminConfig?.approvalFinal?.[docType] || {};
+		return {
+			mode: adminConfig?.approvalModes?.[docType] || "mixed",
+			steps: adminConfig?.approvalFlows?.[docType] || [],
+			final: party.final?.role ? party.final : null,
+			backup: party.backup?.role ? party.backup : null
+		};
+	};
+	const noticeRoleFor = (approval) => {
+		if (approval?.engine === "v2") {
+			const idx = openStepIndexes(approval)[0];
+			return approval.steps?.[idx]?.role || "lead";
+		}
+		return currentApprovalStep(approval)?.role || "lead";
+	};
+	const startEngineApproval = ({ docType, docNo, rev, owner, existing, revisionPending, status }) => {
+		if (existing && existing.engine !== "v2" && existing.status === "in-progress") return { ok: true, approval: existing };
+		const now = nowIso();
+		const base = {
+			docType,
+			docNo,
+			rev: rev == null ? "" : String(rev),
+			owner: owner || editorName,
+			actor: editorName,
+			userId: accountUserId || "",
+			now,
+			flow: approvalFlowInput(docType)
+		};
+		if (existing?.engine === "v2" && existing.status === "edit-requested") return planEdit(existing, { actor: editorName, userId: accountUserId || "", now });
+		const revising = !!revisionPending || status === "For revision" && existing && existing.status === "accepted";
+		if (revising && existing) return planRevise({ ...base, approval: existing, rev: base.rev });
+		return beginEngineApproval(base);
+	};
 	const handleSubmitRCE = (newRCE, opts = {}) => {
 		const id = newRCE.id || newRCE.rceNo;
 		const existing = rceList.find((r) => (r.id || r.rceNo) === id);
-		const approval = startApproval(adminConfig?.approvalFlows?.rce || [], editorName);
+		let approval = startApproval(adminConfig?.approvalFlows?.rce || [], editorName);
+		if (engineFlag) {
+			const begun = startEngineApproval({
+				docType: "rce",
+				docNo: id,
+				rev: existing ? existing.revNo ?? "" : "0",
+				owner: existing?.preparedBy || newRCE.preparedBy || editorName,
+				existing: existing?.approval,
+				revisionPending: existing ? !!existing.revisionPending || rceIsFinalAccepted(existing) : false,
+				status: existing?.status
+			});
+			if (!begun.ok) {
+				window.alert(begun.message || "Approval could not start.");
+				return;
+			}
+			approval = begun.approval;
+		}
 		const rev = existing ? existing.revNo ?? "" : "0";
 		const revisionPending = existing ? !!existing.revisionPending || rceIsFinalAccepted(existing) : false;
 		let priorTimeline = existing?.timeline || [];
@@ -26649,6 +30144,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			rev,
 			snapshot: plainSnapshot(newRCE)
 		}));
+		const salesSubmitter = release1SalesViewOn && !!accountUserId && isSales(findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+		const keptOwner = existing?.salesOwnerId || (salesSubmitter ? accountUserId : "");
 		const row = {
 			...existing,
 			...newRCE,
@@ -26665,6 +30162,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			cancelPending: false,
 			approval,
 			timeline: tl,
+			...(keptOwner ? { salesOwnerId: keptOwner } : {}),
 			remarksHistory: pushRemarkHistory(existing?.remarksHistory, {
 				who: editorName,
 				from: existing?.otherRemarks || "",
@@ -26679,15 +30177,73 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			body: `${id} submitted by ${editorName}`,
 			rceId: id,
 			view: "rce-detail",
-			toRole: currentApprovalStep(approval)?.role || "lead"
+			toRole: noticeRoleFor(approval)
 		});
 		if (!opts.stay) {
 			setMonitoringTab("rce");
 			setCurrentView("monitoring");
 		}
 	};
-	const handleAcceptRCE = (rce, remarks = "") => {
+	const handleAcceptRCE = (rce, remarks = "", decision = "accept") => {
 		const id = rce.id || rce.rceNo;
+		if (rce.approval?.engine === "v2") {
+			const stampedAt = nowIso();
+			const result = decision === "fix-comment" ? fixComment(rce.approval, {
+				commentId: remarks,
+				actor: editorName,
+				now: stampedAt
+			}) : decideApproval(rce.approval, {
+				actor: editorName,
+				level: actingLevel,
+				decision,
+				remarks,
+				byUserId: accountUserId || "",
+				now: stampedAt
+			});
+			if (!result || !result.ok) {
+				window.alert(result?.reason || result?.message || "Approval could not be recorded.");
+				return;
+			}
+			const nextStatus = result.editRequested ? "For revision" : result.final ? "Accepted" : "For approval";
+			const parties = partiesFromApproval(result.approval);
+			patchRce(id, (r) => {
+				const revNo = result.bumpRev ? result.revNo : r.revNo;
+				return {
+					...r,
+					preparedBy: parties.preparedBy || r.preparedBy,
+					reviewedBy: parties.reviewedBy || r.reviewedBy,
+					approvedBy: result.final ? parties.approvedBy || editorName : r.approvedBy,
+					approval: result.approval,
+					status: nextStatus,
+					isNew: result.final,
+					revNo,
+					revisionPending: result.final ? false : !!r.revisionPending,
+					timeline: appendTimeline(r.timeline, timelineEntry({
+						who: editorName,
+						action: result.editRequested ? "Edit requested" : result.final ? "Final accepted" : decision === "fix-comment" ? "Comment fixed" : "Step approved",
+						remarks: decision === "fix-comment" ? "" : remarks,
+						rev: revNo
+					}))
+				};
+			});
+			if (result.final) notice({
+				type: NOTICE_EVENTS.RCE_ACCEPTED,
+				title: "RCE accepted",
+				body: `${id} is on Cost Estimate monitoring — generate or assign the CE`,
+				rceId: id,
+				view: "monitoring",
+				monitoringTab: "active"
+			});
+			else if (!result.editRequested && result.approval.status === "in-progress") notice({
+				type: NOTICE_EVENTS.APPROVAL,
+				title: "RCE next approver",
+				body: `${id} waiting on ${noticeRoleFor(result.approval)}`,
+				rceId: id,
+				view: "rce-detail",
+				toRole: noticeRoleFor(result.approval)
+			});
+			return;
+		}
 		const result = applyApprovalDecision(rce.approval || startApproval(adminConfig?.approvalFlows?.rce || [], editorName), {
 			actor: editorName,
 			level: actingLevel,
@@ -26744,6 +30300,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 	};
 	const handleRejectRCE = (rce, remarks) => {
+		if (rce?.approval?.engine === "v2") {
+			window.alert("Reject is not available.");
+			return;
+		}
 		const id = rce.id || rce.rceNo;
 		const result = applyApprovalDecision(rce.approval, {
 			actor: editorName,
@@ -26779,9 +30339,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			to: rce.preparedBy || rce.submittedBy
 		});
 	};
-	const handleWithdrawRCE = (rce) => {
+	const handleWithdrawRCE = (rce, remarks) => {
 		if (!rceCanWithdraw(rce)) {
-			window.alert("After the first accept, cancel needs Final.");
+			window.alert(release1WithdrawRequestOn ? "After the final approver accepts, withdraw is closed." : "After the first accept, cancel needs Final.");
+			return;
+		}
+		const logged = release1WithdrawRequestOn ? withdrawLog({ who: accountUserId, remarks }) : { ok: true, entry: { who: editorName, action: "Withdrawn", remarks: "" } };
+		if (!logged.ok) {
+			window.alert(logged.message || "A remark is required.");
 			return;
 		}
 		const id = rce.id || rce.rceNo;
@@ -26793,10 +30358,103 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				status: "withdrawn"
 			},
 			timeline: appendTimeline(r.timeline, timelineEntry({
-				who: editorName,
-				action: "Withdrawn"
+				...logged.entry,
+				...(release1WithdrawRequestOn ? { whoName: editorName } : {})
 			}))
 		}));
+	};
+	const handleSalesCeRequest = (kind, remarks) => {
+		if (!release1WithdrawRequestOn || !release1SalesActor) return;
+		const id = activeCE?.id;
+		if (!id) return;
+		const approver = costingApproverForRequest({
+			approverLists: adminConfig.approverLists,
+			users: adminConfig.users || [],
+			departmentsOn: release1DepartmentsOn === true
+		});
+		const planned = planSalesCeRequest({
+			kind,
+			remark: remarks,
+			byUserId: accountUserId,
+			approver,
+			existing: documents?.[id]?.salesCeRequest
+		});
+		if (!planned.ok) {
+			window.alert(planned.message || "The request was not sent.");
+			return;
+		}
+		setDocuments((prev) => {
+			const doc = prev[id] || {};
+			return {
+				...prev,
+				[id]: {
+					...doc,
+					salesCeRequest: planned.request,
+					timeline: appendTimeline(doc.timeline, timelineEntry({ ...planned.entry, whoName: editorName }))
+				}
+			};
+		});
+		notice({
+			type: planned.notice.type,
+			title: planned.notice.title,
+			body: planned.notice.body,
+			toUserId: planned.notice.toUserId,
+			ceId: id,
+			view: "editor"
+		});
+	};
+	const handleAcceptSalesCeRequest = () => {
+		if (!release1WithdrawRequestOn || release1SalesActor) return;
+		const id = activeCE?.id;
+		if (!id) return;
+		const doc = documents[id] || {};
+		const routed = acceptSalesCeRequest({
+			request: doc.salesCeRequest,
+			actorId: accountUserId,
+			approval: doc.approval,
+			flow: approvalFlowInput("ce"),
+			owner: doc.approval?.owner || activeCE?.assignedTo || ""
+		});
+		if (!routed.ok) {
+			window.alert(routed.message || "You cannot take this request.");
+			return;
+		}
+		const today = todayLocal();
+		setDocuments((prev) => {
+			const current = prev[id] || {};
+			const revision = routed.next === "revision";
+			return {
+				...prev,
+				[id]: {
+					...current,
+					salesCeRequest: routed.request,
+					...(revision ? {
+						ceStatus: "For revision",
+						projectInfo: {
+							...current.projectInfo || {},
+							revisionPending: true,
+							revisionNote: routed.request.remark || ""
+						}
+					} : {}),
+					timeline: appendTimeline(current.timeline, timelineEntry({ ...routed.entry, whoName: editorName }))
+				}
+			};
+		});
+		if (routed.next === "revision") {
+			setCeList((prev) => prev.map((ce) => ce.id === id ? {
+				...ce,
+				status: "For revision",
+				lastEdited: today,
+				lastEditedBy: editorName
+			} : ce));
+			setIsEditorLocked(false);
+		}
+		if (routed.next === "new-ce") {
+			const rceId = activeCE?.rceId || doc.rceId || "";
+			const rce = (rceList || []).find((row) => (row.id || row.rceNo) === rceId) || null;
+			setWizardRce(rce);
+			setCurrentView("ce-wizard");
+		}
 	};
 	const handleReviseRCE = (rce) => {
 		const id = rce.id || rce.rceNo;
@@ -26920,7 +30578,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const openEditorForCE = (ce) => {
 		setEditorReturn(currentView === "dashboard" ? "dashboard" : "monitoring");
-		if (ce?.isNew) {
+		if (personalNewTagOn === true && ce?.id) {
+			const seenBy = markSeen(ce.seenBy || {}, personalActorId, new Date().toISOString());
+			const next = { ...ce, seenBy };
+			setCeList((prev) => prev.map((c) => c.id === ce.id ? next : c));
+			setActiveCE(next);
+		} else if (ce?.isNew) {
 			const cleared = {
 				...ce,
 				isNew: false
@@ -26930,6 +30593,93 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		} else setActiveCE(ce);
 		setIsParked(false);
 		setCurrentView("editor");
+	};
+	const handleSpawnSuffix = async (kind) => {
+		if (adminConfig?.features?.docSuffixes !== true || !activeCE) return;
+		const ids = (ceList || []).map((ce) => ce.id);
+		const parsed = parseCeNumber(activeCE.id);
+		const root = parsed.ok ? parsed.base : activeCE.id;
+		const stem = stemOf(activeCE.id);
+		const doc = documents?.[activeCE.id] || {};
+		const awarded = isAwarded(activeCE.status, doc.awardStatus || activeCE.awardStatus);
+		let reason = "";
+		if (kind === "alt" || kind === "ad") {
+			const list = adminConfig.suffixReasons || [];
+			const hint = list.length ? ` Choices: ${list.join(", ")}` : "";
+			const asked = await askReason({ title: kind === "alt" ? "Alternate" : "Addendum", label: `Reason${hint}`, required: true });
+			if (!asked.ok) return;
+			reason = asked.text;
+		}
+		const plan = planSuffix(kind, {
+			ids,
+			base: root,
+			stem,
+			level: actingLevel,
+			reason,
+			reasons: adminConfig.suffixReasons || [],
+			awarded
+		});
+		if (!plan.ok) {
+			notice({ type: "Release 1", title: "Could not copy", body: plan.error || "Could not copy.", view: "editor" });
+			return;
+		}
+		let id = plan.id;
+		try {
+			const issued = await allocateCeSuffix(root, kind, kind === "alt" ? root : stem, awarded, reason);
+			if (issued) id = issued;
+		} catch (err) {
+			if (!missingSuffixRpc(err)) {
+				notice({ type: "Release 1", title: "Could not copy", body: err?.message || "Could not take that suffix.", view: "editor" });
+				return;
+			}
+		}
+		if ((ceList || []).some((ce) => String(ce.id).toUpperCase() === String(id).toUpperCase())) {
+			notice({ type: "Release 1", title: "Could not copy", body: `${id} already exists.`, view: "editor" });
+			return;
+		}
+		const today = todayLocal();
+		let nextDoc;
+		try {
+			const copy = JSON.parse(JSON.stringify(documents?.[activeCE.id] || {}));
+			const remapped = remapCloneIds(copy);
+			nextDoc = {
+				...remapped.doc,
+				projectInfo: {
+					...copy.projectInfo || {},
+					docNo: id,
+					revNo: "",
+					revDate: ""
+				},
+				ceStatus: "Ongoing",
+				awardStatus: "",
+				awardJo: "",
+				suffixOf: activeCE.id,
+				suffixKind: kind,
+				suffixReason: reason,
+				timeline: [timelineEntry({
+					who: editorName,
+					action: kind === "alt" ? "Alternate" : kind === "ad" ? "Addendum" : "Update copy",
+					remarks: reason || id
+				})]
+			};
+		} catch (err) {
+			notice({ type: "Release 1", title: "Could not copy", body: err?.message || "Could not copy the estimate.", view: "editor" });
+			return;
+		}
+		const newCE = {
+			...activeCE,
+			id,
+			status: "Ongoing",
+			isNew: true,
+			lastEdited: today,
+			lastEditedBy: editorName,
+			sourceCeId: activeCE.id,
+			awardStatus: "",
+			awardJo: ""
+		};
+		setCeList((prev) => [...prev, newCE]);
+		setDocuments((prev) => ({ ...prev, [id]: nextDoc }));
+		openEditorForCE(newCE);
 	};
 	const handleGenerateCE = (rce, returnTab = "rce") => {
 		if (rce?._openLive) {
@@ -26942,11 +30692,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			openEditorForCE(live);
 			return;
 		}
+		if (engineFlag && !ceCreateAllowed(rce, true)) {
+			window.alert("An accepted RCE is required before a cost estimate can be created.");
+			return;
+		}
 		setWizardReturnTab(returnTab || "rce");
 		setWizardRce(rce);
 		setCurrentView("ce-wizard");
 	};
-	const handleCreateFromWizard = (payload) => {
+	const handleCreateFromWizard = async (payload) => {
 		if (payload.reuseCeId) {
 			const existing = ceList.find((ce) => ce.id === payload.reuseCeId);
 			setWizardRce(null);
@@ -26964,8 +30718,30 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			}
 			return;
 		}
-		const id = nextCeNoForCompany(rce?.company || "", ceList, documents, rceList, adminConfig.documentControl);
+		if (engineFlag && !ceCreateAllowed(rce, true)) {
+			window.alert("An accepted RCE is required before a cost estimate can be created.");
+			return;
+		}
+		let id;
+		try {
+			const code = companyCodeFromDesignation(rce?.company || "", adminConfig.documentControl);
+			id = await takeDocNo("ce", code);
+		} catch (err) {
+			window.alert(err?.message || DOC_NUMBER_RETRY);
+			return;
+		}
+		const suffixesOnCreate = adminConfig?.features?.docSuffixes === true;
+		const urgent = suffixesOnCreate && payload.urgent ? urgentPlan(id) : null;
+		if (urgent && !urgent.ok) {
+			window.alert(urgent.error || "Could not mark this estimate urgent.");
+			return;
+		}
 		const today = todayLocal();
+		const salesOwnerId = salesOwnerAccountId({
+			rce,
+			users: adminConfig?.users,
+			departmentsOn: release1DepartmentsOn
+		});
 		const newCE = {
 			id,
 			client: payload.client,
@@ -26979,7 +30755,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			templateKind: payload.templateKind || "standard",
 			sourceCeId: payload.sourceCeId || null,
 			isNew: true,
-			status: "Ongoing"
+			status: "Ongoing",
+			...(salesOwnerId ? { salesOwnerId } : {}),
+			...(engineFlag && rce ? { rceStamp: rceStamp(rce) } : {}),
+			...(urgent?.ok ? { urgentTag: urgent.tag } : {})
 		};
 		setCeList([...ceList, newCE]);
 		if (payload.rceId) setRceList((prev) => prev.map((r) => {
@@ -27007,10 +30786,25 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				}))
 			}));
 			if (payload.stripAttachments) clone.fileAttachments = emptyFileAttachments();
+			const remapped = remapCloneIds(clone);
+			let priceCheckReport = null;
+			if (adminConfig?.features?.priceCheck === true) {
+				const source = documents[payload.sourceCeId];
+				priceCheckReport = {
+					drifts: priceDrifts({
+						clone: remapped.doc,
+						source,
+						masterlist: masterlistRef.current,
+						idMap: remapped.idMap
+					}),
+					constants: constantDrift(source?.calcConstants || source?.pricing?.calcConstants, adminConfig.calcConstants),
+					log: []
+				};
+			}
 			setDocuments((prev) => ({
 				...prev,
 				[id]: {
-					...clone,
+					...remapped.doc,
 					projectInfo: {
 						...clone.projectInfo || {},
 						docNo: id,
@@ -27026,6 +30820,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					},
 					sowText: payload.description || "",
 					ceStatus: "Ongoing",
+					...(urgent?.ok ? { urgentTag: urgent.tag } : {}),
+					...(priceCheckReport && (priceCheckReport.drifts.length || priceCheckReport.constants.length) ? { priceCheck: priceCheckReport } : {}),
 					timeline: [timelineEntry({
 						who: editorName,
 						action: "Cloned",
@@ -27048,8 +30844,17 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			}
 			const unique = [...new Set(workTypes)];
 			const rceDays = num2(rce?.estDurationDays);
+			const scopeOnCreate = adminConfig?.features?.scopeLibraryV2 === true;
 			const tasks = unique.map((wt) => {
-				const t = task(`${workTypeMeta(wt).full}`, [subtask("Scope", emptyItems())], wt);
+				const items = emptyItems();
+				if (scopeOnCreate && payload.templateKind === "prebuilt") {
+					const seed = resourceSeed(wt);
+					items.BOL = (seed.BOL || []).map((row) => bolItem(row));
+					items.BOTE = (seed.BOTE || []).map((row) => boteItem(row));
+					items.PPE = (seed.PPE || []).map((row) => ppeItem(row));
+					items.BOCM = (seed.BOCM || []).map((row) => bocmItem(row));
+				}
+				const t = task(`${workTypeMeta(wt).full}`, [subtask("Scope", items)], wt);
 				if (rceDays) t.duration = rceDays;
 				return t;
 			});
@@ -27126,12 +30931,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						OIF: oifFiles
 					},
 					ceStatus: "Ongoing",
+					...(salesOwnerId ? { salesOwnerId } : {}),
+					...(urgent?.ok ? { urgentTag: urgent.tag } : {}),
 					commercial: {
 						contingencyPct: defaultContingencyPct(adminConfig?.documentControl),
 						discountPct: 0,
 						validityDays: 30
 					},
-					projectInfo: {
+					projectInfo: applyRouteSignatories(ceTpl2On ? {
 						docNo: id,
 						revNo: "",
 						revDate: "",
@@ -27143,7 +30950,19 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						electrical: !!rce?.electrical,
 						mechanical: !!rce?.mechanical,
 						days: rce?.estDurationDays || ""
-					},
+					} : {
+						docNo: id,
+						revNo: "",
+						revDate: "",
+						description: payload.project || "",
+						client: payload.client || rce?.customer || rce?.client || "",
+						location: payload.location || rce?.address || "",
+						date: today,
+						preparedBy: editorName,
+						electrical: !!rce?.electrical,
+						mechanical: !!rce?.mechanical,
+						days: rce?.estDurationDays || ""
+					}, ceTpl2On ? adminConfig?.approvalFlows?.ce : [], adminConfig?.users),
 					timeline: [timelineEntry({
 						who: editorName,
 						action: "Generated",
@@ -27197,8 +31016,34 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			stayOnBoard: true
 		});
 	};
-	const handleSaveInspection = (form, opts = {}) => {
-		const id = form.id || nextDocNo("OIF", inspectionReports);
+	const handleSaveInspection = async (form, opts = {}) => {
+		let id = form.id;
+		if (!id) {
+			try {
+				id = await takeDocNo("oif", "");
+			} catch (err) {
+				window.alert(err?.message || DOC_NUMBER_RETRY);
+				return;
+			}
+		}
+		const number = String(form.oifNo || id).trim();
+		const clash = numberIdentityClash((inspectionReports || []).map((row) => ({ ...row, kind: "inspection" })), { kind: "inspection", id, payload: { oifNo: number } });
+		if (clash) {
+			window.alert(clash.message);
+			return;
+		}
+		if (number.toLowerCase() !== String(id).toLowerCase()) {
+			try {
+				const claimed = await claimUserDocNo("inspection", id, number);
+				if (!claimed.ok) {
+					window.alert(claimed.skipped ? DOC_NUMBER_RETRY : (claimed.message || "That number is already used."));
+					return;
+				}
+			} catch {
+				window.alert(DOC_NUMBER_RETRY);
+				return;
+			}
+		}
 		const today = todayLocal();
 		setInspectionReports((prev) => {
 			const idx = prev.findIndex((r) => r.id === id);
@@ -27281,8 +31126,15 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			oifNo: form.oifNo || id
 		}));
 		if (opts.andNew) {
+			let oifNo = "";
+			try {
+				oifNo = await takeDocNo("oif", "");
+			} catch (err) {
+				window.alert(err?.message || DOC_NUMBER_RETRY);
+				return;
+			}
 			setActiveOif({
-				oifNo: nextDocNo("OIF", [...inspectionReports, { id, oifNo: form.oifNo || id }]),
+				oifNo,
 				customerName: form.customerName || "",
 				customerAddress: form.customerAddress || "",
 				customerRep: form.customerRep || "",
@@ -27293,7 +31145,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		}
 		setCurrentView(inspectionReturn || "dashboard");
 	};
-	const handleSendInspectionToCe = (form) => {
+	const handleSendInspectionToCe = async (form) => {
 		const ml = masterlistRef.current || {};
 		const bolList = ml.manpower || ml.BOL || [];
 		const matList = ml.consumables || ml.BOCM || [];
@@ -27326,6 +31178,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			});
 		});
 		const existing = form.ceId ? (ceList || []).find((ce) => ce.id === form.ceId) : null;
+		if (engineFlag && existing && ceBlocksInspectionLines(existing)) {
+			window.alert("This cost estimate is locked. Inspection lines were not sent.");
+			return;
+		}
 		const DRAFT_STATUSES = ["Draft", "Ongoing", "On Park", "Waiting for information", "Sourcing", ""];
 		const editable = existing && DRAFT_STATUSES.includes(String(existing.status || ""));
 		if (editable && documents[existing.id]) {
@@ -27347,7 +31203,13 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			});
 			return existing.id;
 		}
-		const id = nextDocNo("CE", ceNumberSources(ceList, documents));
+		let id;
+		try {
+			id = await takeDocNo("ce", "");
+		} catch (err) {
+			window.alert(err?.message || DOC_NUMBER_RETRY);
+			return;
+		}
 		const today = todayLocal();
 		const items = emptyItems();
 		items.BOL = bolLines;
@@ -27408,6 +31270,72 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			...r,
 			...patch
 		} : r));
+	};
+	const handleStoreSignature = async (dataUrl) => {
+		if (!engineFlag) return { ok: false, stored: false };
+		const saved = await storeSignatureImage(accountUserId, dataUrl, editorName);
+		if (!saved.stored) return saved;
+		return saved;
+	};
+	const handleSubmitNoting = (form) => {
+		if (!engineFlag) return { ok: false };
+		const id = form?.id || form?.oifNo;
+		if (!id) {
+			window.alert("Save the inspection before sending it for noting.");
+			return { ok: false };
+		}
+		const now = nowIso();
+		const begun = form?.approval?.engine === "v2" && form.approval.status === "edit-requested" ? planEdit(form.approval, {
+			actor: editorName,
+			userId: accountUserId || "",
+			now
+		}) : beginEngineApproval({
+			docType: "oif",
+			docNo: id,
+			rev: "0",
+			owner: form.onsiteInspector || editorName,
+			actor: editorName,
+			userId: accountUserId || "",
+			now,
+			flow: approvalFlowInput("oif"),
+			changeKind: "submit"
+		});
+		if (!begun?.ok) {
+			window.alert(begun?.message || "Noting could not start.");
+			return begun || { ok: false };
+		}
+		const next = { ...form, id, status: "For approval", approval: begun.approval };
+		setInspectionReports((prev) => prev.map((row) => row.id === id || row.oifNo === id ? { ...row, ...next } : row));
+		setActiveOif(next);
+		notice({
+			type: NOTICE_EVENTS.APPROVAL,
+			title: "Inspection needs noting",
+			body: `${id} prepared by ${editorName}`,
+			toRole: noticeRoleFor(begun.approval),
+			view: "inspection-form"
+		});
+		return { ok: true, approval: begun.approval };
+	};
+	const handleDecideNoting = (form, decision, remarks) => {
+		if (!engineFlag) return { ok: false };
+		const result = decideApproval(form?.approval, {
+			actor: editorName,
+			level: actingLevel,
+			decision,
+			remarks,
+			byUserId: accountUserId || "",
+			now: nowIso()
+		});
+		if (!result || !result.ok) {
+			window.alert(result?.reason || result?.message || "Noting could not be recorded.");
+			return result || { ok: false };
+		}
+		const nextStatus = result.editRequested || result.approval?.status === "edit-requested" ? "For revision" : result.final ? "Noted" : "For approval";
+		const id = form?.id || form?.oifNo;
+		const next = { ...form, status: nextStatus, approval: result.approval };
+		setInspectionReports((prev) => prev.map((row) => row.id === id || row.oifNo === id ? { ...row, ...next } : row));
+		setActiveOif((cur) => cur ? { ...cur, ...next } : next);
+		return { ...result, nextStatus };
 	};
 	const handleAssist = () => {
 		if (!activeCE) return;
@@ -27473,70 +31401,60 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 	};
 	const handleElInsert = (payload) => {
-		const target = activeCE;
-		if (!target) {
-			window.alert("Open a cost estimate first, then insert from EL.");
+		const targets = ongoingTargets(ceList, documents);
+		if (!targets.length) {
+			window.alert("No Draft or Ongoing estimate can take this line.");
 			return;
 		}
-		setDocuments((prev) => {
-			const doc = prev[target.id];
-			if (!doc || !Array.isArray(doc.tasks) || !doc.tasks.length) {
-				window.alert("Open the CE and add a subtask first.");
-				return prev;
-			}
-			const tasks = doc.tasks.map((t, ti) => {
-				if (ti !== 0) return t;
-				const subs = (t.subtasks || []).map((s, si) => {
-					if (si !== 0) return s;
-					const items = s.items || emptyItems();
-					if ((items.BOCM || []).find((it) => String(it.notes || "").includes("from EL:") && num2(it.qty) > 0)) window.alert("Existing EL qty on this subtask was left unchanged. Added a note row instead.");
-					return {
-						...s,
-						items: {
-							...items,
-							BOCM: [...items.BOCM || [], bocmItem({
-								description: payload.notes,
-								qty: payload.qty,
-								unit: payload.unit || "kg",
-								unitCost: 0,
-								notes: payload.notes,
-								needsQuote: true
-							})]
-						}
-					};
-				});
-				return {
-					...t,
-					subtasks: subs
-				};
-			});
-			return {
-				...prev,
-				[target.id]: {
-					...doc,
-					tasks
-				}
-			};
-		});
-		openEditorForCE(target);
-		window.alert(`Inserted ${payload.qty} ${payload.unit} as a BOCM line with note.`);
+		setElOffer({ payload, targets });
+	};
+	const confirmElInsert = (choice) => {
+		const built = planCalcInsert(documents, choice, () => uid3("el"));
+		if (!built.ok) {
+			window.alert(built.reason);
+			return;
+		}
+		setDocuments(built.documents);
+		setElOffer(null);
+		const ce = ceList.find((row) => row.id === choice.ceId);
+		if (ce) openEditorForCE(ce);
+		window.alert(built.message);
 	};
 	const handleCeSubmitApproval = (ceId, remarks) => {
-		const flow = startApproval(adminConfig?.approvalFlows?.ce || [], editorName);
-		setCeList((prev) => prev.map((ce) => ce.id === ceId ? {
-			...ce,
+		const ce = ceList.find((c) => c.id === ceId);
+		const doc = documents[ceId] || {};
+		const existing = doc.approval || ce?.approval || null;
+		let flow = startApproval(adminConfig?.approvalFlows?.ce || [], editorName);
+		if (engineFlag) {
+			const begun = startEngineApproval({
+				docType: "ce",
+				docNo: ceId,
+				rev: doc.projectInfo?.revNo || "",
+				owner: doc.projectInfo?.preparedBy || ce?.preparedBy || editorName,
+				existing,
+				revisionPending: !!doc.projectInfo?.revisionPending,
+				status: ce?.status || doc.ceStatus
+			});
+			if (!begun.ok) {
+				window.alert(begun.message || "Approval could not start.");
+				return;
+			}
+			flow = begun.approval;
+		}
+		setCeList((prev) => prev.map((row) => row.id === ceId ? {
+			...row,
 			status: "For approval",
 			approval: flow
-		} : ce));
+		} : row));
 		setDocuments((prev) => {
-			const doc = prev[ceId] || {};
+			const current = prev[ceId] || {};
 			return {
 				...prev,
 				[ceId]: {
-					...doc,
+					...current,
 					ceStatus: "For approval",
 					approval: flow,
-					timeline: appendTimeline(doc.timeline, timelineEntry({
+					timeline: appendTimeline(current.timeline, timelineEntry({
 						who: editorName,
 						action: "Submitted for approval",
 						remarks
@@ -27549,14 +31467,176 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			title: "CE needs approval",
 			body: `${ceId} submitted`,
 			ceId,
-			toRole: currentApprovalStep(flow)?.role || "lead",
+			toRole: noticeRoleFor(flow),
 			view: "editor"
 		});
+	};
+	const handleCeWithdraw = (ceId, remarks) => {
+		if (adminConfig?.features?.ceTpl3 !== true) return false;
+		const ce = (ceList || []).find((row) => row.id === ceId) || {};
+		const doc = documents[ceId] || {};
+		const planned = planCeWithdraw({
+			...ce,
+			...doc,
+			status: ce.status || doc.ceStatus,
+			approval: doc.approval || ce.approval,
+			projectInfo: doc.projectInfo
+		}, { who: editorName, remarks });
+		if (!planned.ok) {
+			window.alert(planned.message || "Withdraw is closed.");
+			return false;
+		}
+		setCeList((prev) => prev.map((row) => row.id === ceId ? { ...row, status: "Draft", approval: planned.approval } : row));
+		setDocuments((prev) => {
+			const current = prev[ceId] || {};
+			return {
+				...prev,
+				[ceId]: {
+					...current,
+					ceStatus: "Draft",
+					approval: planned.approval,
+					projectInfo: planned.projectInfo,
+					timeline: appendTimeline(current.timeline, timelineEntry(planned.entry))
+				}
+			};
+		});
+		if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: "Draft" } : cur);
+		withdrawRecipients({
+			...ce,
+			approval: doc.approval || ce.approval
+		}, adminConfig?.users || []).forEach((toUserId) => {
+			notice({
+				type: NOTICE_EVENTS.APPROVAL,
+				title: "CE withdrawn",
+				body: `${ceId}: ${remarks}`,
+				ceId,
+				view: "editor",
+				to: toUserId,
+				toUserId
+			});
+		});
+		return true;
+	};
+	const approvalWho = () => release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName };
+	const salesOwnerForCe = (ceId, doc) => {
+		const ce = (ceList || []).find((row) => row.id === ceId);
+		const rceKey = ce?.rceId || doc?.rceId || doc?.rceNo || "";
+		const rce = (rceList || []).find((row) => (row.id || row.rceNo) === rceKey);
+		return salesOwnerAccountId({
+			ce,
+			doc,
+			rce,
+			users: adminConfig?.users,
+			departmentsOn: release1DepartmentsOn
+		});
+	};
+	const notifySalesCeApproved = (ceId, doc, rev, ownerId) => {
+		if (!release1SalesViewOn) return;
+		const built = ceApprovedNotice({ ceId, salesOwnerId: ownerId, rev });
+		if (!built) return;
+		notice({
+			type: NOTICE_EVENTS.CE_APPROVED,
+			title: built.title,
+			body: built.body,
+			ceId: built.ceId,
+			toUserId: built.toUserId,
+			view: "editor"
+		});
+		sendRelease1Mail(built.toUserId, "ce-approved", String(built.ceId || ceId), "ce", true);
 	};
 	const handleCeApprovalDecision = (ceId, decision, remarks) => {
 		const ce = ceList.find((c) => c.id === ceId);
 		const doc = documents[ceId] || {};
 		const approval = doc.approval || ce?.approval;
+		if (approval?.engine === "v2") {
+			const stampedAt = nowIso();
+			const result = decision === "fix-comment" ? fixComment(approval, {
+				commentId: remarks,
+				actor: editorName,
+				now: stampedAt
+			}) : decideApproval(approval, {
+				actor: editorName,
+				level: actingLevel,
+				decision,
+				remarks,
+				byUserId: accountUserId || "",
+				now: stampedAt
+			});
+			if (!result || !result.ok) {
+				window.alert(result?.reason || result?.message || "Approval could not be recorded.");
+				return result || { ok: false, reason: "Approval could not be recorded." };
+			}
+			const stampText = phStamp(new Date(), editorName);
+			const projectInfo = { ...doc.projectInfo || {} };
+			if (decision === "approve" || decision === "approve-comment" || decision === "accept") {
+				const role = result.step?.role || "head";
+				if (role === "staff") {
+					projectInfo.preparedBy = editorName;
+					projectInfo.preparedStamp = stampText;
+					projectInfo.preparedTitle = projectInfo.preparedTitle || "Estimator";
+				} else if (role === "lead") {
+					projectInfo.reviewedBy = editorName;
+					projectInfo.reviewedStamp = stampText;
+					projectInfo.reviewedTitle = projectInfo.reviewedTitle || "Reviewer";
+					projectInfo.checkedBy = projectInfo.checkedBy || editorName;
+					projectInfo.checkedStamp = projectInfo.checkedStamp || stampText;
+				} else {
+					projectInfo.approvedBy = editorName;
+					projectInfo.approvedStamp = stampText;
+					projectInfo.approvedTitle = projectInfo.approvedTitle || "Approver";
+				}
+			}
+			if (result.final && result.bumpRev) {
+				projectInfo.revNo = result.revNo;
+				projectInfo.revDate = todayLocal();
+				projectInfo.revisionPending = false;
+			}
+			const closing = approval.closing || null;
+			const editRequested = result.editRequested || result.approval?.status === "edit-requested";
+			let nextStatus = editRequested ? "For revision" : result.final ? "Done" : "For approval";
+			if (closing?.target) {
+				if (editRequested) nextStatus = closing.from || "Ongoing";
+				else if (result.final) nextStatus = closing.target;
+				else nextStatus = pendingClosingStatus(closing.target);
+			}
+			const frozen = result.final && !closing?.target ? freezeCeSnapshot({
+				...doc,
+				projectInfo
+			}, {
+				kind: "approved",
+				who: editorName,
+				at: stampedAt,
+				rev: projectInfo.revNo || doc.projectInfo?.revNo || "0",
+				status: "Done"
+			}) : doc.snapshots;
+			const ownerId = salesOwnerForCe(ceId, { ...doc, projectInfo });
+			setCeList((prev) => prev.map((c) => c.id === ceId ? {
+				...c,
+				status: nextStatus,
+				approval: result.approval,
+				...(ownerId && !c.salesOwnerId ? { salesOwnerId: ownerId } : {})
+			} : c));
+			setDocuments((prev) => ({
+				...prev,
+				[ceId]: {
+					...doc,
+					projectInfo,
+					ceStatus: nextStatus,
+					approval: result.approval,
+					snapshots: frozen,
+					...(ownerId && !doc.salesOwnerId ? { salesOwnerId: ownerId } : {}),
+					timeline: appendTimeline(doc.timeline, timelineEntry({
+						...approvalWho(),
+						action: result.editRequested ? "Edit requested" : result.final ? "Approved" : decision === "fix-comment" ? "Comment fixed" : "Step approved",
+						remarks: decision === "fix-comment" ? "" : remarks,
+						rev: projectInfo.revNo || ""
+					}))
+				}
+			}));
+			if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: nextStatus } : cur);
+			if (result.final && nextStatus === "Done") notifySalesCeApproved(ceId, doc, projectInfo.revNo || "", ownerId || doc.salesOwnerId);
+			return { ...result, nextStatus };
+		}
 		const step = currentApprovalStep(approval);
 		const result = applyApprovalDecision(approval, {
 			actor: editorName,
@@ -27570,10 +31650,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 		});
 		if (!result.ok) {
 			window.alert(result.reason);
-			return;
+			return result;
 		}
 		const stampedAt = nowIso();
-		const stampText = `${editorName}  ${String(stampedAt).replace("T", " ").slice(0, 16)}`;
+		const stampText = phStamp(new Date(), editorName);
 		const projectInfo = { ...doc.projectInfo || {} };
 		if (decision !== "reject") {
 			const role = step?.role || "head";
@@ -27609,10 +31689,12 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			rev: projectInfo.revNo || doc.projectInfo?.revNo || "0",
 			status: "Done"
 		}) : doc.snapshots;
+		const ownerId = salesOwnerForCe(ceId, { ...doc, projectInfo });
 		setCeList((prev) => prev.map((c) => c.id === ceId ? {
 			...c,
 			status: nextStatus,
-			approval: result.approval
+			approval: result.approval,
+			...(ownerId && !c.salesOwnerId ? { salesOwnerId: ownerId } : {})
 		} : c));
 		setDocuments((prev) => ({
 			...prev,
@@ -27622,8 +31704,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 				ceStatus: nextStatus,
 				approval: result.approval,
 				snapshots: frozen,
+				...(ownerId && !doc.salesOwnerId ? { salesOwnerId: ownerId } : {}),
 				timeline: appendTimeline(doc.timeline, timelineEntry({
-					who: editorName,
+					...approvalWho(),
 					action: result.rejected ? "Sent back" : result.final ? "Approved" : "Step approved",
 					remarks,
 					rev: projectInfo.revNo || ""
@@ -27634,6 +31717,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			...cur,
 			status: nextStatus
 		} : cur);
+		if (result.final && nextStatus === "Done") notifySalesCeApproved(ceId, doc, projectInfo.revNo || "", ownerId || doc.salesOwnerId);
 		if (result.rejected) notice({
 			type: NOTICE_EVENTS.CE_REJECTED,
 			title: "CE rejected",
@@ -27642,14 +31726,649 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			to: ce?.assignedTo,
 			view: "editor"
 		});
+		return result;
 	};
-	const handleTakeOver = () => {
-		handleAssist();
+	const handleEngineUpdate = (ceId) => {
+		if (!engineFlag) return { ok: false };
+		const doc = documents[ceId] || {};
+		const planned = planUpdate({
+			rev: doc.projectInfo?.revNo || "0",
+			updateCount: doc.approval?.updateNo || 0,
+			docNo: ceId,
+			docType: "ce"
+		});
+		setCeList((prev) => prev.map((ce) => ce.id === ceId ? {
+			...ce,
+			status: "Internal",
+			approval: planned.approval
+		} : ce));
+		setDocuments((prev) => {
+			const current = prev[ceId] || {};
+			return {
+				...prev,
+				[ceId]: {
+					...current,
+					ceStatus: "Internal",
+					approval: planned.approval,
+					timeline: appendTimeline(current.timeline, timelineEntry({
+						who: editorName,
+						action: "Internal update",
+						remarks: planned.label,
+						rev: current.projectInfo?.revNo || ""
+					}))
+				}
+			};
+		});
+		if (activeCE?.id === ceId) setActiveCE((cur) => cur ? { ...cur, status: "Internal" } : cur);
+		return planned;
 	};
-	const editorPayload = activeCE && documents[activeCE.id] ? {
-		...activeCE,
-		...documents[activeCE.id]
-	} : activeCE;
+	const handleRequestClosing = (target, reason) => {
+		if (!engineFlag || !activeCE) return { ok: false };
+		const planned = planClosing({ fromStatus: activeCE.status, target, reason });
+		if (!planned.ok) {
+			window.alert(planned.message || "Closing could not start.");
+			return { ok: false };
+		}
+		const doc = documents[activeCE.id] || {};
+		const begun = beginEngineApproval({
+			docType: "ce",
+			docNo: activeCE.id,
+			rev: doc.projectInfo?.revNo || "",
+			owner: doc.projectInfo?.preparedBy || activeCE.assignedTo || editorName,
+			actor: editorName,
+			userId: accountUserId || "",
+			now: nowIso(),
+			flow: approvalFlowInput("ce"),
+			changeKind: "closing"
+		});
+		if (!begun.ok) {
+			window.alert(begun.message || "Approval could not start.");
+			return { ok: false };
+		}
+		const approval = {
+			...begun.approval,
+			closing: { target: planned.target, from: planned.fromStatus, reason: planned.reason }
+		};
+		const pendingStatus = planned.pendingStatus;
+		setCeList((prev) => prev.map((ce) => ce.id === activeCE.id ? {
+			...ce,
+			status: pendingStatus,
+			approval
+		} : ce));
+		setActiveCE((cur) => cur ? { ...cur, status: pendingStatus, approval } : cur);
+		setDocuments((prev) => {
+			const current = prev[activeCE.id] || {};
+			return {
+				...prev,
+				[activeCE.id]: {
+					...current,
+					ceStatus: pendingStatus,
+					approval,
+					timeline: appendTimeline(current.timeline, timelineEntry({
+						who: editorName,
+						action: "Closing requested",
+						remarks: `${planned.target}: ${planned.reason}`
+					}))
+				}
+			};
+		});
+		notice({
+			type: "Closing requested",
+			title: "Closing requested",
+			body: `${activeCE.id} → ${pendingStatus}. ${planned.reason}`,
+			ceId: activeCE.id,
+			toRole: noticeRoleFor(approval),
+			view: "editor"
+		});
+		return { ok: true, approval, pendingStatus };
+	};
+	const handleTakeOver = (reason) => {
+		if (!activeCE) return;
+		if (!engineFlag || !String(reason || "").trim()) {
+			handleAssist();
+			return;
+		}
+		const planned = planTakeover({
+			owner: activeCE.assignedTo || "",
+			actor: editorName,
+			reason,
+			now: nowIso()
+		});
+		if (!planned.ok) {
+			window.alert(planned.message || "A reason is required.");
+			return;
+		}
+		const takeover = planned.takeover;
+		setCeList((prev) => prev.map((ce) => ce.id === activeCE.id ? { ...ce, takeover } : ce));
+		setActiveCE((cur) => cur ? { ...cur, takeover } : cur);
+		setDocuments((prev) => {
+			const doc = prev[activeCE.id];
+			if (!doc) return prev;
+			return {
+				...prev,
+				[activeCE.id]: {
+					...doc,
+					timeline: appendTimeline(doc.timeline, timelineEntry({
+						who: editorName,
+						action: planned.timeline.action,
+						remarks: planned.timeline.remarks
+					}))
+				}
+			};
+		});
+		notice({
+			type: "Take-over requested",
+			title: "Take-over requested",
+			body: `${editorName} asked to take over ${activeCE.id}: ${takeover.reason}`,
+			ceId: activeCE.id,
+			to: takeover.owner || activeCE.assignedTo
+		});
+	};
+	const handleDecideTakeover = (decision) => {
+		if (!engineFlag || !activeCE?.takeover) return;
+		const result = decideTakeover({
+			takeover: activeCE.takeover,
+			actor: editorName,
+			authorisedNames: adminConfig?.authorisations?.takeover || [],
+			decision,
+			now: nowIso()
+		});
+		if (!result.ok) {
+			window.alert(result.message || "Take-over could not be recorded.");
+			return;
+		}
+		const approved = decision === "approve";
+		setActiveCE((cur) => cur ? {
+			...cur,
+			takeover: result.takeover,
+			...(approved ? { assignedTo: result.assignedTo, assisting: "" } : {})
+		} : cur);
+		setCeList((prev) => prev.map((ce) => ce.id === activeCE.id ? {
+			...ce,
+			takeover: result.takeover,
+			...(approved ? { assignedTo: result.assignedTo, assisting: "" } : {})
+		} : ce));
+		if (approved) {
+			setIsEditorLocked(false);
+			setEditingUser(result.assignedTo);
+		}
+		setDocuments((prev) => {
+			const doc = prev[activeCE.id];
+			if (!doc) return prev;
+			return {
+				...prev,
+				[activeCE.id]: {
+					...doc,
+					timeline: appendTimeline(doc.timeline, timelineEntry({
+						who: editorName,
+						action: result.timeline.action,
+						remarks: result.timeline.remarks
+					}))
+				}
+			};
+		});
+		notice({
+			type: approved ? "Take-over approved" : "Take-over declined",
+			title: result.timeline.action,
+			body: `${activeCE.id}: ${result.timeline.remarks}`,
+			ceId: activeCE.id,
+			to: approved ? result.assignedTo : activeCE.takeover.by
+		});
+	};
+	const handleNotify = (ceId) => {
+		if (!engineFlag) return;
+		if (!matrixAllows(adminConfig?.notifyMatrix, "Reminder")) return;
+		const ce = (ceList || []).find((row) => row.id === ceId) || activeCE;
+		if (!ce?.id) return;
+		const now = nowIso();
+		notice({
+			type: "Reminder",
+			title: "Approval reminder",
+			body: `${ce.id} is still waiting`,
+			ceId: ce.id,
+			toRole: "lead",
+			view: "editor"
+		});
+		setCeList((prev) => prev.map((row) => row.id === ce.id ? { ...row, reminderAt: now } : row));
+		if (activeCE?.id === ce.id) setActiveCE((cur) => cur ? { ...cur, reminderAt: now } : cur);
+	};
+	const editorPayload = activeCE && documents[activeCE.id] ? (() => {
+		const doc = documents[activeCE.id];
+		const merged = { ...activeCE, ...doc };
+		if (!Object.prototype.hasOwnProperty.call(doc, "markup")) delete merged.markup;
+		return merged;
+	})() : activeCE;
+	const handleMarkup = (action, payload) => {
+		if (!release1MarkupOn || !activeCE?.id) return;
+		const ceId = activeCE.id;
+		const current = markupForCe(ceId);
+		let result = { ok: false, message: "Markup was not saved." };
+		if (action === "create") {
+			if (current) return;
+			const doc = documents[ceId] || {};
+			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || ceId;
+			result = createMarkup({ ceId, ceNo, revision: 0, byUserId: release1ActorId, directCost: payload?.directCost, preset: "100", ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) });
+		} else if (action === "revise") {
+			const doc = documents[ceId] || {};
+			const ceNo = doc.projectInfo?.docNo || doc.docNo || doc.ceNumber || current?.ceNo || ceId;
+			const revision = nextMarkupRevision(markups, ceId);
+			result = createMarkup({ ceId, ceNo, revision, byUserId: release1ActorId, directCost: current?.directCost || payload?.directCost, parts: current?.parts, preset: current?.preset || payload?.preset || "100", ...salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" }) });
+		} else if (action === "parts") result = setMarkupParts(current, payload?.parts);
+		else if (action === "preset") result = applyMarkupPreset(current, payload?.preset);
+		else if (action === "submit") result = submitMarkup(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, parts: payload?.parts });
+		else if (action === "approve" || action === "return") result = decideMarkup(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
+		if (!result?.ok || !result.markup) {
+			release1Note(result?.message || "Markup was not saved.");
+			return;
+		}
+		setRelease1Message("");
+		const markup = rememberMarkup({ ...result.markup, ceId });
+		if (result.toUserId) {
+			notice({
+				type: "Needs your approval",
+				title: "Markup approval",
+				body: `${ceId} markup is waiting`,
+				ceId,
+				toUserId: result.toUserId,
+				view: "editor"
+			});
+			sendRelease1Mail(result.toUserId, "needs-approval", markup.id || ceId, "markup");
+		}
+		if (release1MonitorOn && markup.status === "Approved") {
+			notice({
+				type: "Document approved",
+				title: "Markup approved",
+				body: `${ceId} markup was approved`,
+				ceId,
+				toUserId: markup.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(markup.ownerId, "approved", markup.id || ceId, "markup");
+		}
+		if (release1MonitorOn && action === "return") {
+			notice({
+				type: "Returned",
+				title: "Markup returned",
+				body: `${ceId} markup was returned`,
+				ceId,
+				toUserId: markup.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(markup.ownerId, "returned", markup.id || ceId, "markup");
+		}
+	};
+	const handleProposal = async (action, payload) => {
+		if (!release1ProposalOn || !activeCE?.id) return;
+		const ceId = activeCE.id;
+		const current = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled" && row.deleted !== true) || null;
+		const others = proposals || [];
+		const markup = markupForCe(ceId);
+		const guardPr = async (controlNo, prNo) => {
+			const guarded = claimProposalNumber({
+				registry: (proposals || []).map((row) => ({ controlNo: row.controlNo, prNo: row.prNo, ownerId: row.ownerId })),
+				controlNo,
+				prNo,
+				actorId: release1ActorId,
+				admin: actingLevel === "admin"
+			});
+			if (!guarded.ok) return guarded;
+			if (!String(prNo || "").trim()) return { ok: true };
+			return claimProposalPr(controlNo, String(prNo).trim(), ceId);
+		};
+		let result = { ok: false, message: "Proposal was not saved." };
+		if (action === "delete-draft") {
+			const removed = deleteDraftProposal(current, { byUserId: release1ActorId });
+			if (!removed.ok || !removed.proposal) {
+				release1Note(removed.message || "That draft was not deleted.");
+				return;
+			}
+			if (String(current.prNo || "").trim()) {
+				const released = claimProposalNumber({
+					registry: (proposals || []).map((row) => ({ controlNo: row.controlNo, prNo: row.prNo, ownerId: row.ownerId })),
+					controlNo: current.controlNo,
+					prNo: "",
+					actorId: release1ActorId,
+					admin: actingLevel === "admin"
+				});
+				if (!released.ok) {
+					release1Note(released.message || "That PR number was not released.");
+					return;
+				}
+				const remote = await releaseProposalPr(current.controlNo);
+				if (!remote.ok && !remote.skipped) {
+					release1Note(remote.message || "That PR number was not released.");
+					return;
+				}
+			}
+			setRelease1Message("");
+			setProposals((prev) => (prev || []).map((row) => row.controlNo === removed.proposal.controlNo ? removed.proposal : row));
+			notice({
+				type: "Draft proposal deleted",
+				title: "Draft proposal deleted",
+				body: `${current.controlNo} deleted by ${personName(release1ActorId, adminConfig.users || []) || "Unnamed"}`,
+				ceId,
+				view: "editor"
+			});
+			return;
+		}
+		if (action === "create") {
+			if (current || markup?.status !== "Approved") return;
+			let controlNo = "";
+			try {
+				controlNo = await allocateProposalControl() || "";
+			} catch (err) {
+				release1Note(err?.message || "Could not take a proposal number.");
+				return;
+			}
+			if (!controlNo) {
+				release1Note("Proposal numbers are not on this database yet.");
+				return;
+			}
+			result = createProposal({
+				controlNo,
+				byUserId: release1ActorId,
+				ceId,
+				parts: markup.parts,
+				directCost: markup.directCost,
+				clauses: adminConfig.proposalClauses,
+				header: "Proposal",
+				prDate: todayLocal(),
+				...(salesGateFields({ actorUserId: release1ActorId, ownerUserId: activeCE?.salesOwnerId || "", isSalesManager: isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn), isAdmin: actingLevel === "admin" })),
+				...payload || {},
+				markupNo: markup.markupNo || "",
+				ceNo: markup.ceNo || payload?.ceNo || ""
+			});
+		} else if (action === "patch") {
+			if (payload?.prNo != null && current) {
+				const claimed = await guardPr(current.controlNo, payload.prNo);
+				if (!claimed.ok) {
+					release1Note(claimed.message || "That PR number is already used.");
+					return;
+				}
+			}
+			result = patchProposal(current, payload, others);
+		} else if (action === "submit") {
+			const withPr = payload?.prNo != null ? patchProposal(current, { prNo: payload.prNo }, others) : { ok: true, proposal: current };
+			if (!withPr.ok || !withPr.proposal) {
+				release1Note(withPr.message || "Proposal was not saved.");
+				return;
+			}
+			const claimed = await guardPr(withPr.proposal.controlNo, withPr.proposal.prNo);
+			if (!claimed.ok) {
+				release1Note(claimed.message || "That PR number is already used.");
+				return;
+			}
+			result = submitProposal(withPr.proposal, { byUserId: release1ActorId, approverLists: adminConfig.approverLists, others });
+		} else if (action === "approve" || action === "return") result = decideProposal(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
+		else if (action === "sent") result = markProposalSent(current, { byUserId: release1ActorId });
+		else if (action === "lost") result = markProposalLost(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "expired") result = markProposalExpired(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "revise") result = reviseProposal(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "no-revision") result = noRevisionNeeded(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		else if (action === "cancel") result = cancelProposal(current, { byUserId: release1ActorId, remarks: payload?.remarks });
+		if (!result?.ok || !result.proposal) {
+			release1Note(result?.message || "Proposal was not saved.");
+			return;
+		}
+		setRelease1Message("");
+		const proposal = result.proposal;
+		setProposals((prev) => {
+			const list = Array.isArray(prev) ? prev : [];
+			const index = list.findIndex((row) => row.controlNo === proposal.controlNo);
+			if (index < 0) return [proposal, ...list];
+			return list.map((row, i) => i === index ? proposal : row);
+		});
+		if (result.toUserId) {
+			notice({
+				type: "Needs your approval",
+				title: "Proposal approval",
+				body: `${ceId} proposal is waiting`,
+				ceId,
+				toUserId: result.toUserId,
+				view: "editor"
+			});
+			sendRelease1Mail(result.toUserId, "needs-approval", proposal.controlNo || ceId, "proposal");
+		}
+		if (release1MonitorOn && proposal.status === "Approved") {
+			notice({
+				type: "Document approved",
+				title: "Proposal approved",
+				body: `${proposal.controlNo} was approved`,
+				ceId,
+				toUserId: proposal.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(proposal.ownerId, "approved", proposal.controlNo, "proposal");
+		}
+		if (release1MonitorOn && action === "return") {
+			notice({
+				type: "Returned",
+				title: "Proposal returned",
+				body: `${proposal.controlNo} was returned`,
+				ceId,
+				toUserId: proposal.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(proposal.ownerId, "returned", proposal.controlNo, "proposal");
+		}
+	};
+	const handleJobOrder = async (action, payload) => {
+		if (!release1JobOrderOn || !activeCE?.id) return;
+		const ceId = activeCE.id;
+		const current = (jobOrders || []).find((row) => (row.ceIds || []).includes(ceId) && row.status !== "Cancelled") || null;
+		const proposal = (proposals || []).find((row) => row.ceId === ceId && row.status !== "Cancelled" && row.deleted !== true) || null;
+		const salesManager = isSalesManager(findAccount(adminConfig.users || [], { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn);
+		let result = { ok: false, message: "Job order was not saved." };
+		if (action === "create" || action === "create-submit") {
+			if (current) return;
+			let seq = 0;
+			try {
+				seq = await allocateJobOrderSeq(payload?.year || phYear()) || 0;
+			} catch (err) {
+				release1Note(err?.message || "Could not take a job order number.");
+				return;
+			}
+			if (!seq) {
+				release1Note("Job order numbers are not on this database yet.");
+				return;
+			}
+			result = createJobOrder({
+				byUserId: release1ActorId,
+				seq,
+				dateIssued: todayLocal(),
+				year: payload?.year || phYear(),
+				controlNo: proposal?.controlNo || "",
+				prNo: proposal?.prNo || "",
+				client: activeCE.client || "",
+				project: activeCE.project || "",
+				ceIds: [ceId],
+				...payload || {}
+			});
+			if (result.ok && result.jobOrder) {
+				let claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				if (!claimed.ok && /already used/i.test(claimed.message || "")) {
+					try {
+						seq = await allocateJobOrderSeq(payload?.year || phYear()) || 0;
+					} catch (err) {
+						release1Note(err?.message || "JO number already used");
+						return;
+					}
+					if (!seq) {
+						release1Note(claimed.message || "JO number already used");
+						return;
+					}
+					result = createJobOrder({
+						byUserId: release1ActorId,
+						seq,
+						dateIssued: todayLocal(),
+						year: payload?.year || phYear(),
+						controlNo: proposal?.controlNo || "",
+						prNo: proposal?.prNo || "",
+						client: activeCE.client || "",
+						project: activeCE.project || "",
+						ceIds: [ceId],
+						...payload || {}
+					});
+					if (!result.ok || !result.jobOrder) {
+						release1Note(result?.message || "JO number already used");
+						return;
+					}
+					claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				}
+				if (!claimed.ok) {
+					release1Note(claimed.message || "JO number already used");
+					return;
+				}
+			}
+		} else if (action === "patch") result = patchJobOrder(current, payload, { byUserId: release1ActorId });
+		else if (action === "submit") result = submitJobOrder(current, { byUserId: release1ActorId, approverLists: adminConfig.approverLists });
+		if (action === "create-submit" && result?.ok && result.jobOrder && result.jobOrder.status === "Draft") {
+			const submitted = submitJobOrder(result.jobOrder, { byUserId: release1ActorId, approverLists: adminConfig.approverLists });
+			if (submitted.ok) result = submitted;
+			else release1Note(submitted.message || "The draft was saved. It was not submitted.");
+		}
+		if (action === "approve" || action === "return") result = decideJobOrder(current, { actorId: release1ActorId, decision: action, remarks: payload?.remarks, approverName: primaryApproverName(current) });
+		else if (action === "revise") {
+			result = reviseJobOrder(current, { byUserId: release1ActorId, registry: (jobOrders || []).map((row) => row.joNo) });
+			if (result.ok && result.jobOrder) {
+				const claimed = await claimJobOrderNo(result.jobOrder.joNo, result.jobOrder.controlNo, (result.jobOrder.ceIds || []).join(","));
+				if (!claimed.ok) {
+					release1Note(claimed.message || "JO number already used");
+					return;
+				}
+			}
+		} else if (action === "cancel") result = cancelJobOrder(current, { byUserId: release1ActorId, remarks: payload?.remarks, admin: actingLevel === "admin", salesManager });
+		if (!result?.ok || !result.jobOrder) {
+			release1Note(result?.message || "Job order was not saved.");
+			return;
+		}
+		let jobOrder = result.jobOrder;
+		if (result.effect?.award) {
+			const proposalRow = (proposals || []).find((row) => row.controlNo === result.effect.proposalControl) || proposal;
+			const awarded = applyAward({
+				ces: ceList,
+				documents,
+				proposal: proposalRow,
+				effect: result.effect,
+				byUserId: release1ActorId,
+				jobOrders: [jobOrder, ...(jobOrders || []).filter((row) => row && row.id !== jobOrder.id && row.joNo !== jobOrder.joNo)]
+			});
+			if (!awarded.ok) {
+				release1Note(awarded.message || "Award was not saved.");
+				return;
+			}
+			setCeList(awarded.ces);
+			setDocuments(awarded.documents);
+			const active = (awarded.ces || []).find((row) => row.id === activeCE.id);
+			if (active) setActiveCE(active);
+			if (awarded.proposal) {
+				setProposals((prev) => (prev || []).map((row) => row.controlNo === awarded.proposal.controlNo ? awarded.proposal : row));
+			}
+			jobOrder = { ...jobOrder, award: awarded.award };
+		}
+		if (result.effect?.clear) {
+			const award = current?.award;
+			if (!award) {
+				release1Note("The previous estimate status is missing.");
+				return;
+			}
+			const proposalRow = (proposals || []).find((row) => row.controlNo === award.proposalControl || row.controlNo === result.effect.proposalControl);
+			const restored = applyCancel({
+				ces: ceList,
+				documents,
+				proposal: proposalRow,
+				award,
+				byUserId: release1ActorId,
+				remarks: payload?.remarks,
+				jobOrders: [jobOrder, ...(jobOrders || []).filter((row) => row && row.id !== jobOrder.id && row.joNo !== jobOrder.joNo)]
+			});
+			if (!restored.ok) {
+				release1Note(restored.message || "Cancel was not saved.");
+				return;
+			}
+			setCeList(restored.ces);
+			setDocuments(restored.documents);
+			const active = (restored.ces || []).find((row) => row.id === activeCE.id);
+			if (active) setActiveCE(active);
+			if (restored.proposal) {
+				setProposals((prev) => (prev || []).map((row) => row.controlNo === restored.proposal.controlNo ? restored.proposal : row));
+			}
+		}
+		setRelease1Message("");
+		setJobOrders((prev) => {
+			const list = Array.isArray(prev) ? prev : [];
+			const index = list.findIndex((row) => row.id === jobOrder.id || row.joNo === current?.joNo || row.id === current?.id);
+			if (index < 0) return [jobOrder, ...list];
+			return list.map((row, i) => i === index ? jobOrder : row);
+		});
+		if (result.toUserId) {
+			notice({
+				type: "Needs your approval",
+				title: "Job order approval",
+				body: `${jobOrder.joNo} is waiting`,
+				ceId,
+				toUserId: result.toUserId,
+				view: "editor"
+			});
+			sendRelease1Mail(result.toUserId, "needs-approval", jobOrder.joNo, "jobOrder");
+		}
+		if (release1MonitorOn && jobOrder.status === "Approved") {
+			notice({
+				type: "Document approved",
+				title: "Job order approved",
+				body: `${jobOrder.joNo} was approved`,
+				ceId,
+				toUserId: jobOrder.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(jobOrder.ownerId, "approved", jobOrder.joNo, "jobOrder");
+		}
+		if (release1MonitorOn && action === "return") {
+			notice({
+				type: "Returned",
+				title: "Job order returned",
+				body: `${jobOrder.joNo} was returned`,
+				ceId,
+				toUserId: jobOrder.ownerId,
+				view: "editor"
+			});
+			sendRelease1Mail(jobOrder.ownerId, "returned", jobOrder.joNo, "jobOrder");
+		}
+	};
+	const handleMonitor = (action, row, toUserId) => {
+		if (!release1MonitorOn || !row) return;
+		const now = new Date().toISOString();
+		let doc = null;
+		if (row.kind === "proposal") doc = (proposals || []).find((item) => item.controlNo === row.id || item.id === row.id);
+		else if (row.kind === "jobOrder") doc = (jobOrders || []).find((item) => item.joNo === row.id || item.id === row.id);
+		if (!doc) return;
+		const result = action === "reassign" ? reassignDoc({
+			doc,
+			actorId: release1ActorId,
+			toUserId,
+			authorized: release1CanReassign,
+			now
+		}) : takeOverApproved({
+			doc,
+			actorId: release1ActorId,
+			sales: release1MonitorSales,
+			now
+		});
+		if (!result.ok || !result.doc) {
+			release1Note(result.message || "That was not saved.");
+			return;
+		}
+		setRelease1Message("");
+		if (row.kind === "proposal") setProposals((prev) => (prev || []).map((item) => item.controlNo === result.doc.controlNo ? result.doc : item));
+		else setJobOrders((prev) => (prev || []).map((item) => item.id === result.doc.id || item.joNo === result.doc.joNo ? result.doc : item));
+		notice({
+			type: "Transferred",
+			title: action === "reassign" ? "Reassigned" : "Taken over",
+			body: `${row.kind} ${row.id}`,
+			toUserId: result.doc.ownerId,
+			view: "reports"
+		});
+	};
 	const openArchived = (ceId) => {
 		const archived = ceList.find((ce) => ce.id === ceId);
 		if (archived) setActiveCE(archived);
@@ -27665,7 +32384,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 	};
 	const handleReviseArchivedCE = (ceId, remark) => {
 		const note = String(remark || "").trim();
-		if (!note) return;
+		if (!note || release1SalesActor) return;
 		const source = (ceList || []).find((ce) => ce.id === ceId);
 		const srcDoc = documents?.[ceId];
 		if (!source || !srcDoc || !(source.status === "Done" || ceFullySigned(srcDoc))) return;
@@ -27692,7 +32411,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					projectInfo: info,
 					ceStatus: "For revision",
 					timeline: appendTimeline(doc.timeline, timelineEntry({
-						who: editorName,
+						...(release1SalesViewOn && accountUserId ? { who: accountUserId, whoName: editorName } : { who: editorName }),
 						action: "Revision",
 						remarks: note,
 						rev: srcDoc.projectInfo?.revNo || ""
@@ -27706,16 +32425,126 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 			isNew: true
 		});
 	};
+	if (mobileView?.kind && adminConfig.features?.mobileViewer === true) {
+		return /* @__PURE__ */ jsx(MobileDocScreen, {
+			kind: mobileView.kind,
+			id: mobileView.id,
+			ceList,
+			rceList,
+			documents,
+			inspections: inspectionReports,
+			actor: editorName,
+			level: actingLevel,
+			onApprove: (summary, result) => {
+				const id = summary?.id;
+				if (!id || !result?.ok) return;
+				if (summary.kind === "ce") {
+					const nextStatus = result.final ? "Done" : "For approval";
+					const ownerId = salesOwnerForCe(id, documents[id] || {});
+					if (result.final && nextStatus === "Done") notifySalesCeApproved(id, documents[id] || {}, "", ownerId);
+					setDocuments((prev) => {
+						const doc = prev[id] || {};
+						return {
+							...prev,
+							[id]: {
+								...doc,
+								approval: result.approval,
+								ceStatus: nextStatus
+							}
+						};
+					});
+					setCeList((prev) => prev.map((ce) => ce.id === id ? {
+						...ce,
+						status: nextStatus,
+						approval: result.approval
+					} : ce));
+				} else if (summary.kind === "rce") {
+					const nextStatus = result.final ? "Accepted" : "For approval";
+					setRceList((prev) => prev.map((row) => (row.id || row.rceNo) === id ? {
+						...row,
+						approval: result.approval,
+						status: nextStatus
+					} : row));
+				} else if (summary.kind === "oif") {
+					const nextStatus = result.final ? "Noted" : "For approval";
+					setInspectionReports((prev) => prev.map((row) => row.id === id || row.oifNo === id ? {
+						...row,
+						approval: result.approval,
+						status: nextStatus
+					} : row));
+				}
+			}
+		});
+	}
+	const release1Now = new Date().toISOString();
+	const release1Users = adminConfig.users || [];
+	const release1MonitorView = release1MonitorOn ? {
+		sales: salesWorklist({ proposals, jobOrders, markups, users: release1Users, now: release1Now }),
+		pending: pendingApprovals([
+			...(proposals || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "proposal" })),
+			...(jobOrders || []).filter((row) => row && (row.status === "Submitted" || row.status === "For approval")).map((row) => ({ ...row, kind: "jobOrder" })),
+			...(markups || []).filter((row) => row && row.status === "For approval").map((row) => ({ ...row, kind: "markup", id: row.markupNo || row.ceId || row.id }))
+		], release1Now, release1Users),
+		dashboard: monitorDashboard({
+			proposals,
+			users: release1Users,
+			ces: (ceList || []).map((row) => ({
+				awardStatus: row.awardStatus || "",
+				status: row.status || "",
+				salesRepId: row.salesOwnerId || "",
+				salesOwnerId: row.salesOwnerId || "",
+				received: row.rceReceived || row.dateReceived || "",
+				done: (row.status === "Done" || row.status === "Awarded") ? (row.done || String(row.lastEdited || "").slice(0, 10)) : ""
+			})),
+			now: release1Now
+		}),
+		accounts: release1Users.map((user) => ({ id: accountId(user), label: personName(accountId(user), release1Users) })).filter((row) => row.id),
+		canTakeOver: release1MonitorSales,
+		canReassign: release1CanReassign,
+		actorId: release1ActorId,
+		onTakeOver: (row) => handleMonitor("takeover", row),
+		onReassign: (row, toUserId) => handleMonitor("reassign", row, toUserId),
+		now: release1Now,
+		isManager: isSalesManager(findAccount(release1Users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn),
+		pipeline: salesPipelineRows({
+			rces: rceList || [],
+			ces: (ceList || []).map((row) => {
+				const doc = documents?.[row.id] || {};
+				const rce = (rceList || []).find((item) => item && (item.id === row.rceId || item.rceNo === row.rceNo));
+				return {
+					id: row.id,
+					ceNo: row.ceNo || row.id,
+					rceNo: row.rceNo || "",
+					rceId: row.rceId || "",
+					status: row.status || "",
+					awardStatus: row.awardStatus || doc.awardStatus || "",
+					project: row.project || row.projectDesc || doc.projectInfo?.project || "",
+					amount: doc.amount || row.amount || "",
+					salesOwnerId: salesOwnerAccountId({ ce: row, doc, rce, users: release1Users, departmentsOn: release1DepartmentsOn })
+				};
+			}),
+			markups: markups || [],
+			proposals: proposals || [],
+			jobOrders: jobOrders || [],
+			ownerId: release1MonitorSales && !isSalesManager(findAccount(release1Users, { userId: release1ActorId, flagOn: release1DepartmentsOn }), release1DepartmentsOn) ? release1ActorId : ""
+		}),
+		pipelineV2: salesPipelineMonitoringOn === true,
+		threadsOn: ceThreadsOn === true,
+		previewOn: salesDocPreviewOn === true,
+		onPreviewDoc: (_row, doc) => notice({ type: "Preview", title: doc?.kind || "Document", body: `${doc?.id || ""} · ${doc?.status || ""}`.trim(), view: "reports" })
+	} : null;
 	return /* @__PURE__ */ jsx("div", {
 		className: "ce-app",
+		style: adminConfig.features?.branding === true ? brandingVars(adminConfig.branding) : undefined,
 		children: /* @__PURE__ */ jsx(DeleteConfirmProvider, { children: /* @__PURE__ */ jsx(MasterlistProvider, {
 			initialState: masterlistRef.current,
 			onChange: handleMasterlistChange,
 			children: /* @__PURE__ */ jsxs(AppLayout, {
 				currentView,
 				setCurrentView,
-				notifications,
+				notifications: shownNotices,
 				actingUser: editorName,
+				actingUserId: accountUserId,
 				actingLevel,
 				users: isAdminAccount ? [
 					...lockedName && !(adminConfig.users || []).some((u) => u.name === lockedName) ? [{
@@ -27726,22 +32555,39 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					...(adminConfig.users || []).filter((u) => u.status !== "inactive")
 				] : [],
 				onActingUser: (name) => {
-					if (isAdminAccount) setEditingUser(name);
+					if (isAdminAccount && testDeployment) setEditingUser(name);
 				},
-				testMode: isAdminAccount,
+				testMode: Boolean(testDeployment) && isAdminAccount,
 				canAdmin: isAdminAccount,
-				onMarkRead: () => setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel)),
-				onClearAll: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
+				reportsOn: adminConfig.features?.reports === true || release1MonitorOn,
+				scheduleOn: adminConfig.features?.schedule === true,
+				profileOn: salesProfileOn,
+				profileUser: findAccount(adminConfig.users || [], { userId: accountUserId, flagOn: release1DepartmentsOn }) || { id: accountUserId, name: editorName, level: actingLevel },
+				onSaveProfile: (nextUser) => {
+					setAdminConfig((prev) => normalizeAdminConfig({
+						...prev,
+						users: (prev.users || []).map((user) => accountId(user) === accountUserId ? { ...user, ...nextUser } : user)
+					}));
+				},
+				onHelp: () => setCurrentView("manual"),
+				onMarkRead: () => {
+					setLocalReminders((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));
+					setNotifications((prev) => markNoticesRead(prev, editorName, actingLevel, accountUserId));
+				},
+				onClearAll: () => {
+					setLocalReminders((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel, accountUserId)));
+					setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel, accountUserId)));
+				},
 				splitOpen: dockOpen,
 				onToggleSplit: () => setDockOpen((v) => !v),
 				saveState,
 				leavePrompt: pendingLeave ? {
 					next: pendingLeave,
 					editing: headerEditing,
-					locked: isEditorLocked,
+					locked: isEditorLocked || !ceEditorOpen(activeCE?.status),
 					owner: activeCE?.assignedTo || editorName
 				} : null,
-				onRequestLeave: (next) => setPendingLeave(next),
+				onRequestLeave: (next) => requestEditorLeave(next),
 				onStay: () => setPendingLeave(""),
 				onConfirmLeave: () => {
 					const next = pendingLeave || editorReturn;
@@ -27787,14 +32633,14 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 								children: [/* @__PURE__ */ jsx("b", { children: "Inbox" }), /* @__PURE__ */ jsx("button", {
 									type: "button",
 									className: "ce-btn-ghost ce-btn-sm",
-									disabled: !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)),
-									onClick: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel))),
+									disabled: !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel, accountUserId)),
+									onClick: () => setNotifications((prev) => (prev || []).filter((n) => !noticeVisible(n, editorName, actingLevel, accountUserId))),
 									children: "Clear all"
 								})]
-							}), !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel)) && /* @__PURE__ */ jsx("p", {
+							}), !(notifications || []).some((n) => noticeVisible(n, editorName, actingLevel, accountUserId)) && /* @__PURE__ */ jsx("p", {
 								className: "ce-empty",
 								children: "No notices yet."
-							}), (notifications || []).filter((n) => noticeVisible(n, editorName, actingLevel)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
+							}), shownNotices.filter((n) => noticeVisible(n, editorName, actingLevel, accountUserId)).slice(0, 30).map((n) => /* @__PURE__ */ jsxs("button", {
 								type: "button",
 								className: "ce-bell-item",
 								onClick: () => {
@@ -27860,6 +32706,27 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					setCurrentView(n.view || "monitoring");
 				},
 				children: [
+					currentView === "reports" && (adminConfig.features?.reports === true || release1MonitorOn) && /* @__PURE__ */ jsx(Phase6Reports, {
+						ceList,
+						documents,
+						reportOn: adminConfig.features?.reports === true,
+						monitor: release1MonitorView
+					}),
+					currentView === "project-schedule" && adminConfig.features?.schedule === true && /* @__PURE__ */ jsx(Phase10Schedule, {
+						plans: (ceList || []).map((ce) => {
+							const doc = documents[ce.id] || {};
+							return {
+								id: ce.id,
+								title: ce.project || doc.meta?.title || ce.id,
+								schedule: doc.schedule || refreshSchedule({
+									tasks: taskPlan(doc.tasks),
+									startDate: doc.projectInfo?.date || "",
+									holidays: companyCalendar(adminConfig),
+									status: ce.status || doc.ceStatus || ""
+								})
+							};
+						})
+					}),
 					currentView === "dashboard" && /* @__PURE__ */ jsx(EstimateHome, {
 						ceList,
 						rceList,
@@ -27867,6 +32734,9 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						documentControl: adminConfig.documentControl,
 						users: adminConfig.users || [],
 						boardColors: adminConfig.boardColors,
+						numbersOnline,
+						familiesOn: adminConfig.features?.monitoringFamilies === true,
+						suffixesOn: adminConfig.features?.docSuffixes === true,
 						currentUserName: editorName,
 						actingLevel,
 						onReceivedBy: (row, name) => {
@@ -27901,25 +32771,45 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						onStartRevision: handleReviseArchivedCE,
 						onNewCE: () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_RETRY);
+								return;
+							}
 							setWizardRce(null);
 							setCurrentView("ce-wizard");
 						},
-						onNewInspection: () => {
-							setActiveOif({ oifNo: nextDocNo("OIF", inspectionReports) });
+						onNewInspection: async () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_RETRY);
+								return;
+							}
+							let oifNo = "";
+							try {
+								oifNo = await takeDocNo("oif", "");
+							} catch (err) {
+								window.alert(err?.message || DOC_NUMBER_RETRY);
+								return;
+							}
+							setActiveOif({ oifNo });
 							setInspectionReturn("dashboard");
 							setCurrentView("inspection-form");
 						},
 						onNewRCE: () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_RETRY);
+								return;
+							}
 							setSelectedRCE(null);
 							setRceSeed(null);
 							setCurrentView("rce-form");
 						},
 						onOpenCE: openEditorForCE,
 						onViewRCE: handleViewRCE,
-						onApprovalDecision: handleCeApprovalDecision
+						onApprovalDecision: handleCeApprovalDecision,
+						engineOn: engineFlag
 					}),
 					currentView === "ce-wizard" && /* @__PURE__ */ jsx(NewCostEstimateWizard, {
-						rceList: rceList.filter((r) => rceIsFinalAccepted(r) || actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin"),
+						rceList: rceList.filter((r) => rceIsFinalAccepted(r) || (!engineFlag && (actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin"))),
 						ceList,
 						initialRce: wizardRce,
 						currentUserName: editorName,
@@ -27927,12 +32817,18 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						officialPacks: taskTemplates,
 						documents,
 						inspectionReports,
+						suffixesOn: adminConfig.features?.docSuffixes === true,
+						initialSourceCeId: pendingCloneCeId,
 						onCancel: () => {
+							pendingCloneCeId = "";
 							setCurrentView(wizardRce ? "monitoring" : "dashboard");
 							if (wizardRce) setMonitoringTab(wizardReturnTab || "rce");
 							setWizardRce(null);
 						},
-						onCreate: handleCreateFromWizard
+						onCreate: (payload) => {
+							pendingCloneCeId = "";
+							return handleCreateFromWizard(payload);
+						}
 					}),
 					currentView === "editor" && /* @__PURE__ */ jsx(CostEstimateTool, {
 						ceData: editorPayload,
@@ -27944,6 +32840,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						goToSearch: () => setCurrentView("dashboard"),
 						editingUser: editorName,
 						isEditorLocked,
+						readOnly: ceIsSealed(activeCE?.status, documents?.[activeCE?.id]) || (release1WithdrawRequestOn && release1SalesActor),
 						onUserActivity: () => setEditingUser(editorName),
 						onLock: () => setIsEditorLocked(true),
 						onTakeOver: handleTakeOver,
@@ -27952,6 +32849,11 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						users: (adminConfig.users || []).filter((u) => u.status !== "inactive"),
 						actingLevel,
 						onSubmitApproval: handleCeSubmitApproval,
+						onCeWithdraw: handleCeWithdraw,
+						onOpenLinkedRce: (rce) => {
+							const found = (rceList || []).find((row) => (row.id || row.rceNo) === (rce?.id || rce?.rceNo)) || rce;
+							if (found) handleViewRCE(found);
+						},
 						onApprovalDecision: handleCeApprovalDecision,
 						onDocumentChange: handleDocumentChange,
 						documentControl: adminConfig.documentControl,
@@ -27959,8 +32861,55 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						taskTemplates,
 						onTaskTemplatesChange: setTaskTemplates,
 						adminConfig,
-						onBack: () => setPendingLeave(editorReturn),
-						onEditingChange: setHeaderEditing
+						onBack: () => requestEditorLeave(editorReturn),
+						onEditingChange: setHeaderEditing,
+						onEngineUpdate: handleEngineUpdate,
+						onRequestClosing: handleRequestClosing,
+						onDecideTakeover: handleDecideTakeover,
+						onNotify: handleNotify,
+						onSpawnSuffix: handleSpawnSuffix,
+						onSaveScope: (doc) => {
+							const name = window.prompt("Scope name");
+							if (!name || !String(name).trim()) return;
+							const official = window.confirm("Tag this scope Official?");
+							const saved = saveAsScope({
+								name: String(name).trim(),
+								owner: editorName,
+								official,
+								jobType: doc?.tasks?.[0]?.workType || "onsite",
+								snapshot: doc || {}
+							});
+							setScopeTemplates((prev) => [{
+								id: uid3("scope-tpl"),
+								...saved,
+								createdBy: editorName,
+								updatedBy: editorName,
+								updatedAt: todayLocal(),
+								total: 0
+							}, ...prev || []]);
+							window.alert("Saved to Scope Library.");
+						},
+						onAddCheckerWord: (word) => {
+							const text = String(word || "").trim();
+							if (!text) return;
+							setAdminConfig((prev) => {
+								const cfg = normalizeAdminConfig(prev);
+								const words = [...(cfg.checker?.words || [])];
+								if (!words.some((item) => item.toLowerCase() === text.toLowerCase())) words.push(text);
+								return normalizeAdminConfig({ ...cfg, checker: { ...cfg.checker, words } });
+							});
+						},
+						combinedLabel: adminConfig.features?.docSuffixes === true ? combinedLabelFor(activeCE?.id, ceList, documents) : "",
+						onSalesCeRequest: handleSalesCeRequest,
+						onAcceptSalesCeRequest: handleAcceptSalesCeRequest,
+						onMarkup: handleMarkup,
+						markup: activeCE ? markupForCe(activeCE.id) : null,
+						proposal: (proposals || []).find((row) => row.ceId === activeCE?.id && row.status !== "Cancelled" && row.deleted !== true) || null,
+						onProposal: handleProposal,
+						jobOrder: (jobOrders || []).find((row) => (row.ceIds || []).includes(activeCE?.id) && row.status !== "Cancelled") || null,
+						onJobOrder: handleJobOrder,
+						ceOptions: (ceList || []).filter((row) => row && row.id).map((row) => ({ id: row.id, label: [row.id, row.project].filter(Boolean).join(" ") })),
+						release1Message
 					}, activeCE?.id || "new"),
 					currentView === "scope-editor" && (() => {
 						const tpl = (scopeTemplates || []).find((t) => t.id === scopeEditId);
@@ -28003,7 +32952,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 										fileAttachments: {},
 										approval: void 0
 									},
-									total: projectTotal(doc?.tasks || []),
+									total: projectTotal(doc?.tasks || [], doc?.pricing, doc?.mobSheets),
 									updatedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)
 								}));
 							},
@@ -28119,6 +33068,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onStartRevision: handleReviseArchivedCE,
 						onViewRCE: handleViewRCE,
 						onNewRCE: () => {
+							if (!numbersOnline) {
+								window.alert(DOC_NUMBER_RETRY);
+								return;
+							}
 							setSelectedRCE(null);
 							setRceSeed(null);
 							setCurrentView("rce-form");
@@ -28135,7 +33088,10 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						onUpdateInspection: handleUpdateInspection,
 						schemaConfig,
 						onSchemaConfigChange: setSchemaConfig,
-						actingLevel
+						actingLevel,
+						engineOn: engineFlag,
+						familiesOn: adminConfig.features?.monitoringFamilies === true,
+						suffixesOn: adminConfig.features?.docSuffixes === true
 					}),
 					currentView === "inspection-form" && /* @__PURE__ */ jsx(InspectionFormView, {
 						initial: activeOif,
@@ -28149,9 +33105,29 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						},
 						onSendToCe: handleSendInspectionToCe,
 						onBack: () => setCurrentView(inspectionReturn || "dashboard"),
-						onSave: handleSaveInspection
+						onSave: handleSaveInspection,
+						engineOn: engineFlag,
+						rceList,
+						ceList,
+						onSubmitNoting: handleSubmitNoting,
+						onDecideNoting: handleDecideNoting,
+						onStoreSignature: handleStoreSignature
 					}),
-					currentView === "el-calculator" && /* @__PURE__ */ jsx(ElCalculatorView, { onInsert: handleElInsert }),
+					currentView === "el-calculator" && /* @__PURE__ */ jsx(ElCalculatorView, {
+						onInsert: handleElInsert,
+						constants: adminConfig.calcConstants,
+						seed: elSeed,
+						routeFuel: adminConfig?.features?.routeFuel === true,
+						vehicles: adminConfig.vehicles,
+						fuelPrices: adminConfig.fuelPrices,
+						tolls: adminConfig.tolls
+					}),
+					elOffer && /* @__PURE__ */ jsx(AddToCeDialog, {
+						offer: elOffer,
+						masterlist: masterlistRef.current,
+						onCancel: () => setElOffer(null),
+						onConfirm: confirmElInsert
+					}),
 					currentView === "manual" && /* @__PURE__ */ jsx(SystemManual, {
 						config: adminConfig,
 						levels: USER_LEVELS,
@@ -28165,13 +33141,34 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						jobStatuses: JOB_STATUSES,
 						taskTemplates
 					}),
-					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsx(AdminHub, {
-						config: adminConfig,
-						onChange: (next) => {
-							if (!isAdminAccount) return;
-							setAdminConfig(normalizeAdminConfig(next));
-						}
-					}),
+					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsxs(Fragment, { children: [
+						ceTpl6On === true ? /* @__PURE__ */ jsx(PendingMasterPanel, {}) : null,
+						/* @__PURE__ */ jsx(AccessQueue, {
+							microsoftLinkFlow: adminConfig?.features?.microsoftLinkFlow === true,
+							departmentsOn: adminConfig?.features?.release1Departments === true,
+							onAccountDepartment: (userKey, department) => {
+								if (!isAdminAccount) return;
+								setAdminConfig((prev) => normalizeAdminConfig({
+									...prev,
+									users: (prev.users || []).map((user) => accountId(user) === userKey ? { ...user, accountDepartment: department } : user)
+								}));
+							},
+							onMicrosoftLinkFlow: (checked) => {
+								if (!isAdminAccount) return;
+								setAdminConfig((prev) => normalizeAdminConfig({
+									...prev,
+									features: { ...prev.features || {}, microsoftLinkFlow: checked === true }
+								}));
+							}
+						}),
+						/* @__PURE__ */ jsx(AdminHub, {
+							config: adminConfig,
+							onChange: (next) => {
+								if (!isAdminAccount) return;
+								setAdminConfig(normalizeAdminConfig(next));
+							}
+						})
+					] }),
 					currentView === "scope" && /* @__PURE__ */ jsx(LibraryView, {
 						onCloneTemplate: (templateId) => console.log("Cloning template:", templateId),
 						onOpenArchivedCE: openArchived,
@@ -28183,9 +33180,22 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						scopeTemplates,
 						onScopeTemplatesChange: setScopeTemplates,
 						currentUserName: editorName,
+						documentControl: adminConfig.documentControl,
+						scopeV2: adminConfig.features?.scopeLibraryV2 === true,
 						onEditScopeTemplate: (tpl) => {
+							if (adminConfig.features?.scopeLibraryV2 === true) {
+								setScopeTemplates((prev) => (prev || []).map((item) => item.id === tpl.id ? bumpScopeUsage(item) : item));
+							}
 							setScopeEditId(tpl.id);
 							setCurrentView("scope-editor");
+						},
+						methodologies: adminConfig.methodologies || [],
+						onMethodologiesChange: (list) => {
+							setAdminConfig((prev) => normalizeAdminConfig({ ...prev, methodologies: list || [] }));
+						},
+						actorLevel: actingLevel,
+						onInsertMethodology: (text) => {
+							notice({ type: "Library", title: "Methodology", body: String(text || "").slice(0, 180) || "Empty methodology.", view: "scope" });
 						}
 					}),
 					currentView === "rce-form" && /* @__PURE__ */ jsx(SalesRCEForm, {
@@ -28219,6 +33229,7 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 						actingLevel,
 						liveCe: liveCeForRce(ceList, selectedRCE?.id || selectedRCE?.rceNo),
 						canPreviewGenerate: actingLevel === "lead" || actingLevel === "head" || actingLevel === "admin",
+						engineOn: engineFlag,
 						onBack: () => {
 							setMonitoringTab("rce");
 							setCurrentView("monitoring");
@@ -28232,3 +33243,5 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 }
 //#endregion
 export default App;
+
+export const ceOutputApi = { renderCostEstimatePdf, buildMonitoringExportData, exportRceToPDF, exportOifToPDF, exportJobOrderPackPdf };

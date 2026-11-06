@@ -16,6 +16,8 @@ export type AuthModeResult = {
   mode: AuthMode;
   deployed: boolean;
   setupError: string | null;
+  /** Microsoft button. Never true on the Grok broker path. */
+  microsoft: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -28,18 +30,20 @@ const val = (env: Env, key: string): string | undefined => {
 export function resolveAuthMode(env: Env): AuthModeResult {
   const deployed = Boolean(val(env, "VERCEL") || val(env, "BETTER_AUTH_URL"));
   if (val(env, "VITE_AUTH_ENABLED") === "false") {
-    return { mode: "none", deployed, setupError: null };
+    return { mode: "none", deployed, setupError: null, microsoft: false };
   }
   const grok = Boolean(val(env, "GROK_AUTH_CLIENT_ID") && val(env, "GROK_AUTH_CLIENT_SECRET"));
   const google = Boolean(val(env, "GOOGLE_CLIENT_ID") && val(env, "GOOGLE_CLIENT_SECRET"));
+  const microsoftCreds = Boolean(val(env, "MICROSOFT_CLIENT_ID") && val(env, "MICROSOFT_CLIENT_SECRET"));
   const mode: AuthMode = grok ? "grok" : google ? "google" : deployed ? "none" : "grok";
+  const microsoft = mode !== "grok" && microsoftCreds;
 
   const problems: string[] = [];
   if (deployed && !val(env, "BETTER_AUTH_SECRET")) problems.push("BETTER_AUTH_SECRET");
   if (deployed && !val(env, "DATABASE_URL")) problems.push("DATABASE_URL");
-  if (deployed && mode === "none") problems.push("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET");
+  if (deployed && mode === "none" && !microsoft) problems.push("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET");
   const setupError = problems.length
     ? `Sign-in is not set up on this server yet. Missing server setting: ${problems.join(", ")}. Ask the site owner to add it in the hosting settings and redeploy.`
     : null;
-  return { mode, deployed, setupError };
+  return { mode, deployed, setupError, microsoft };
 }

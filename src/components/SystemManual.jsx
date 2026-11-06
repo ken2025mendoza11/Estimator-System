@@ -181,7 +181,7 @@ function SheetMap({ dc, sample, notes, signers }) {
 					<div><b>Material · quantity · no. of days</b></div>
 				</div>
 				<div className="man-sheet-lines" data-n="4">
-					<span>Item</span><span>Description</span><span>Total cost</span>
+					<span>Item No.</span><span>Description</span><span>Total cost</span>
 					<span>A</span><span>Onsite works</span><span>from the breakdown</span>
 					<span>B</span><span>Shop works</span><span>from the breakdown</span>
 					<span>C</span><span>Trading</span><span>from the breakdown</span>
@@ -545,7 +545,7 @@ function buildArticles(ctx) {
 						</tbody>
 					</table>
 				</div>
-				<p>Use <b>Acting as</b> on the sidebar to see the system the way that person sees it. It does not log you out.</p>
+				<p>The sidebar title is ESTIMATOR SYSTEM. Use <b>Acting as</b> only in a test build. It does not log you out.</p>
 			</>
 		)
 	});
@@ -648,35 +648,35 @@ function buildArticles(ctx) {
 				<FormatSheet
 					code="BOL"
 					name="Bill of labor"
-					columns={["Item", "Role", "Day type", "Shift", "Qty", "Days", "Rate/day", "OT hrs", "Per diem", "Allowance", "Subtotal"]}
+					columns={["Item No.", "Designation", "Day type", "Shift", "Qty", "Days", "Rate/day", "OT hrs", "Per diem", "Allowance", "Subtotal"]}
 					sample={["1", "Welder", "Regular", "Day", "2", "5", "rate", "2", "per diem", "allowance", "→"]}
 					math="Subtotal = qty × days × rate, plus overtime (qty × days × OT hours × hourly × the overtime multiplier), plus qty × days × (per diem + allowance). Day type Regular, Sun/Special, or Holiday changes the rate. Shift Day or Night adds the night percent on a night row."
 				/>
 				<FormatSheet
 					code="BOTE"
 					name="Tools and equipment"
-					columns={["Item", "Description", "Qty", "Days", "Rate/day", "kW", "Hrs/day", "₱/kWh", "Subtotal"]}
+					columns={["Item No.", "Description", "Qty", "Days", "Unit Price", "kW", "Hrs/day", "₱/kWh", "Subtotal"]}
 					sample={["1", "Welding machine", "1", "5", "rate", "kW", "hrs", "₱/kWh", "→"]}
 					math="Use = qty × days × rate. On Shop and Trading, electricity is added: qty × days × hours/day × kW × ₱/kWh. Onsite tools stay unpowered — those three columns do not add money."
 				/>
 				<FormatSheet
 					code="BOCM"
 					name="Materials and consumables"
-					columns={["Item", "Description", "Qty", "Unit", "Unit cost", "Total"]}
+					columns={["Item No.", "Description", "Qty", "Unit", "Unit Price", "Total"]}
 					sample={["1", "Electrode", "10", "kg", "cost", "→"]}
 					math="Total = qty × unit cost. The unit is the one stored on the database row (kg, pc, lot)."
 				/>
 				<FormatSheet
 					code="PPE"
 					name="Safety gear"
-					columns={["Item", "Description", "Qty", "Unit cost", "Total"]}
+					columns={["Item No.", "Description", "Qty", "Unit Price", "Total"]}
 					sample={["1", "Helmet", "4", "cost", "→"]}
 					math="Total = qty × unit cost. Qty is how many people, or how many pieces."
 				/>
 				<FormatSheet
 					code="MISC"
 					name="The rest, in parts"
-					columns={["Part", "Description", "Qty", "Unit", "Days", "Unit cost", "Total"]}
+					columns={["Part", "Description", "Qty", "Unit", "Days", "Unit Price", "Total"]}
 					sample={["A", "House rental", "1", "lot", "1", "cost", "→"]}
 					math="Total = qty × days × unit cost. Days counts as 1 when you leave it blank. Parts: A accommodation, B transportation, C requirements, D admin cost, I insurances, E third party. On the summary they print as E.1 through E.6."
 				/>

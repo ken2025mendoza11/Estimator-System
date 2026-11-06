@@ -11,7 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as ApiRelease1EscalateRouteImport } from './routes/api/release1-escalate'
+import { Route as ApiRelease1MailRouteImport } from './routes/api/release1-mail'
+import { Route as ApiRouteFuelRouteImport } from './routes/api/route-fuel'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ViewKindIdRouteImport } from './routes/view.$kind.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -23,40 +27,98 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiRelease1EscalateRoute = ApiRelease1EscalateRouteImport.update({
+  id: '/api/release1-escalate',
+  path: '/api/release1-escalate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRelease1MailRoute = ApiRelease1MailRouteImport.update({
+  id: '/api/release1-mail',
+  path: '/api/release1-mail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRouteFuelRoute = ApiRouteFuelRouteImport.update({
+  id: '/api/route-fuel',
+  path: '/api/route-fuel',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ViewKindIdRoute = ViewKindIdRouteImport.update({
+  id: '/view/$kind/$id',
+  path: '/view/$kind/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/api/release1-escalate': typeof ApiRelease1EscalateRoute
+  '/api/release1-mail': typeof ApiRelease1MailRoute
+  '/api/route-fuel': typeof ApiRouteFuelRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/view/$kind/$id': typeof ViewKindIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/api/release1-escalate': typeof ApiRelease1EscalateRoute
+  '/api/release1-mail': typeof ApiRelease1MailRoute
+  '/api/route-fuel': typeof ApiRouteFuelRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/view/$kind/$id': typeof ViewKindIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/api/release1-escalate': typeof ApiRelease1EscalateRoute
+  '/api/release1-mail': typeof ApiRelease1MailRoute
+  '/api/route-fuel': typeof ApiRouteFuelRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/view/$kind/$id': typeof ViewKindIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/api/release1-escalate'
+    | '/api/release1-mail'
+    | '/api/route-fuel'
+    | '/api/auth/$'
+    | '/view/$kind/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/api/auth/$'
-  id: '__root__' | '/' | '/login' | '/api/auth/$'
+  to:
+    | '/'
+    | '/login'
+    | '/api/release1-escalate'
+    | '/api/release1-mail'
+    | '/api/route-fuel'
+    | '/api/auth/$'
+    | '/view/$kind/$id'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/api/release1-escalate'
+    | '/api/release1-mail'
+    | '/api/route-fuel'
+    | '/api/auth/$'
+    | '/view/$kind/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  ApiRelease1EscalateRoute: typeof ApiRelease1EscalateRoute
+  ApiRelease1MailRoute: typeof ApiRelease1MailRoute
+  ApiRouteFuelRoute: typeof ApiRouteFuelRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ViewKindIdRoute: typeof ViewKindIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -75,11 +137,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/release1-escalate': {
+      id: '/api/release1-escalate'
+      path: '/api/release1-escalate'
+      fullPath: '/api/release1-escalate'
+      preLoaderRoute: typeof ApiRelease1EscalateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/release1-mail': {
+      id: '/api/release1-mail'
+      path: '/api/release1-mail'
+      fullPath: '/api/release1-mail'
+      preLoaderRoute: typeof ApiRelease1MailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/route-fuel': {
+      id: '/api/route-fuel'
+      path: '/api/route-fuel'
+      fullPath: '/api/route-fuel'
+      preLoaderRoute: typeof ApiRouteFuelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/view/$kind/$id': {
+      id: '/view/$kind/$id'
+      path: '/view/$kind/$id'
+      fullPath: '/view/$kind/$id'
+      preLoaderRoute: typeof ViewKindIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -88,7 +178,11 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  ApiRelease1EscalateRoute: ApiRelease1EscalateRoute,
+  ApiRelease1MailRoute: ApiRelease1MailRoute,
+  ApiRouteFuelRoute: ApiRouteFuelRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ViewKindIdRoute: ViewKindIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

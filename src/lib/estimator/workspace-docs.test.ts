@@ -3,8 +3,11 @@ import test from "node:test";
 import { emptyMasterlist, type WorkspacePayload } from "./defaults.ts";
 import {
   assembleWorkspace,
+  changedDocKeys,
   docKey,
+  mergeServerWithDirty,
   planSave,
+  revisionsForDirtyPush,
   splitWorkspace,
   stableHash,
   stripVolatileFileFields,
@@ -154,3 +157,111 @@ test("held admin settings are not part of the save", () => {
   assert.equal(planned.writes.some((doc) => doc.kind === "admin"), false);
   assert.equal(planned.writes.some((doc) => doc.kind === "ce"), true);
 });
+
+test("hydration does not tombstone a server document missing from the local copy", () => {
+  const server = sample();
+  server.ceList.push({
+    id: "CE-2026-009",
+    client: "Server",
+    status: "Draft",
+    project: "Kept",
+    lastEdited: "2026-02-01",
+  });
+  const local = sample();
+  local.ceList[0] = { ...local.ceList[0], client: "Local edit" };
+  const merged = mergeServerWithDirty(server, local, [docKey("ce", "CE-2026-001")]);
+  assert.equal(merged.ceList.find((ce) => ce.id === "CE-2026-001")?.client, "Local edit");
+  assert.equal(merged.ceList.some((ce) => ce.id === "CE-2026-009"), true);
+  assert.equal(merged.rceList.length, server.rceList.length);
+  const docs = splitWorkspace(merged);
+  const { revisions } = assembleWorkspace(
+    splitWorkspace(server).map((doc) => ({ ...doc, version: 4 })),
+    server,
+  );
+  const quiet = planSave(docs, revisions, new Set(), new Set(), false);
+  assert.equal(quiet.tombstones.length, 0);
+  assert.equal(quiet.writes.length, 1);
+  assert.equal(quiet.writes[0].id, "CE-2026-001");
+  assert.equal(quiet.writes[0].expectedVersion, 4);
+});
+
+test("a local list does not replace server rows that were not edited", () => {
+  const server = sample();
+  const local = sample();
+  local.rceList = [];
+  local.ceList = [];
+  const merged = mergeServerWithDirty(server, local, [docKey("ce", "CE-2026-001"), docKey("rce", "RCE-2026-001")]);
+  assert.equal(merged.ceList.length, 1);
+  assert.equal(merged.rceList.length, 1);
+  const untouched = mergeServerWithDirty(server, local, []);
+  assert.equal(untouched, server);
+});
+
+test("changed document keys ignore a timestamp-only save", () => {
+  const first = sample();
+  const second = sample();
+  const app = (second.schemaConfig as { __app: { savedAt: string } }).__app;
+  app.savedAt = "2026-05-01T00:00:00.000Z";
+  assert.deepEqual(changedDocKeys(first, second), []);
+  second.ceList[0] = { ...second.ceList[0], client: "Edited" };
+  assert.deepEqual(changedDocKeys(first, second), [docKey("ce", "CE-2026-001")]);
+});
+
+test("a dirty document keeps the version the edit started from", () => {
+  const server = {
+    [docKey("ce", "CE-2026-001")]: { version: 5, hash: "server", synced: true },
+    [docKey("rce", "RCE-2026-001")]: { version: 3, hash: "rce", synced: true },
+  };
+  const backup = {
+    [docKey("ce", "CE-2026-001")]: { version: 2, hash: "local-base", synced: true },
+  };
+  const pinned = revisionsForDirtyPush(server, backup, [docKey("ce", "CE-2026-001")]);
+  assert.equal(pinned[docKey("ce", "CE-2026-001")].version, 2);
+  assert.equal(pinned[docKey("rce", "RCE-2026-001")].version, 3);
+  assert.equal(revisionsForDirtyPush(server, backup, [])[docKey("ce", "CE-2026-001")].version, 5);
+  assert.equal(server[docKey("ce", "CE-2026-001")].version, 5);
+});
+
+
+test("Step 25: a stored ord that differs from the list position does not cause a save on load", () => {
+  const docs = splitWorkspace(sample());
+  const rows = docs.map((doc) => ({
+    kind: doc.kind,
+    id: doc.id,
+    payload: doc.payload,
+    ord: doc.kind === "ce" || doc.kind === "inspection" ? doc.ord + 100 : doc.ord,
+    version: 1,
+  }));
+  const { workspace, revisions } = assembleWorkspace(rows, sample());
+  const plan = planSave(splitWorkspace(workspace), revisions, new Set(), new Set());
+  assert.equal(plan.writes.length, 0);
+});
+
+test("a proposal is its own document and comes back on the workspace", () => {
+  const payload = sample();
+  const app = (payload.schemaConfig as { __app: { proposals?: unknown[] } }).__app;
+  app.proposals = [{ id: "0012", controlNo: "0012", ceId: "CE-2026-001", prNo: "PR 26-360801", status: "Draft" }];
+  const docs = splitWorkspace(payload);
+  const proposal = docs.find((doc) => doc.kind === "proposal");
+  assert.equal(proposal?.id, "0012");
+  const schema = docs.find((doc) => doc.kind === "schema");
+  assert.equal(JSON.stringify(schema?.payload).includes("PR 26-360801"), false);
+  const { workspace } = assembleWorkspace(docs.map((doc) => ({ ...doc, version: 1 })), sample());
+  const stored = (workspace.schemaConfig as { __app: { proposals?: Array<{ prNo: string }> } }).__app.proposals;
+  assert.equal(stored?.[0].prNo, "PR 26-360801");
+});
+
+test("a markup is its own document and comes back on the workspace", () => {
+  const payload = sample();
+  const app = (payload.schemaConfig as { __app: { markups?: unknown[] } }).__app;
+  app.markups = [{ id: "CE-2026-001-MK", ceId: "CE-2026-001", status: "Approved", directCost: 1000, selling: 2000 }];
+  const docs = splitWorkspace(payload);
+  const markup = docs.find((doc) => doc.kind === "markup");
+  assert.equal(markup?.id, "CE-2026-001-MK");
+  const schema = docs.find((doc) => doc.kind === "schema");
+  assert.equal(JSON.stringify(schema?.payload).includes("CE-2026-001-MK"), false);
+  const { workspace } = assembleWorkspace(docs.map((doc) => ({ ...doc, version: 1 })), sample());
+  const stored = (workspace.schemaConfig as { __app: { markups?: Array<{ ceId: string }> } }).__app.markups;
+  assert.equal(stored?.[0].ceId, "CE-2026-001");
+});
+

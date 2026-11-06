@@ -1,0 +1,125 @@
+{
+  "id": "CE-TEST-LEGACY",
+  "client": "Test Client",
+  "status": "Draft",
+  "project": "Legacy seed project",
+  "lastEdited": "2026-10-01",
+  "lastEditedBy": "Test Staff",
+  "location": "Manila",
+  "rceId": "RCE-TEST-001",
+  "meta": {
+    "client": "Test Client",
+    "location": "Manila",
+    "date": "2026-10-01",
+    "title": "Legacy seed cost estimate",
+    "subtitle": ""
+  },
+  "tasks": [
+    {
+      "id": "task-legacy-1",
+      "title": "Site work",
+      "expanded": true,
+      "notes": "",
+      "files": [],
+      "duration": 1,
+      "predecessor": null,
+      "workType": "onsite",
+      "subtasks": [
+        {
+          "id": "sub-legacy-1",
+          "title": "Rigging",
+          "expanded": true,
+          "type": "Sequential",
+          "predecessor": null,
+          "notes": "",
+          "files": [],
+          "items": {
+            "BOL": [
+              {
+                "id": "bol-legacy-holiday",
+                "role": "Rigger",
+                "qty": 2,
+                "days": 1,
+                "rate": 700,
+                "otHrs": 2,
+                "dayType": "Holiday",
+                "shift": "Day",
+                "perDiem": 350,
+                "allowance": 0
+              }
+            ],
+            "BOTE": [],
+            "BOCM": [],
+            "PPE": [],
+            "MISC": [
+              {
+                "id": "misc-legacy-unsectioned",
+                "description": "Permit",
+                "qty": 1,
+                "days": 1,
+                "unit": "lot",
+                "unitCost": 1200,
+                "section": ""
+              }
+            ]
+          },
+          "children": [
+            {
+              "id": "sub-legacy-nested",
+              "title": "Nested consumable",
+              "expanded": true,
+              "type": "Sequential",
+              "predecessor": null,
+              "notes": "",
+              "files": [],
+              "items": {
+                "BOL": [],
+                "BOTE": [],
+                "BOCM": [
+                  {
+                    "id": "bocm-legacy-gasket",
+                    "description": "Gasket",
+                    "qty": 3,
+                    "unitCost": 0.335
+                  }
+                ],
+                "PPE": [],
+                "MISC": []
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "commercial": {
+    "contingencyPct": 5,
+    "discountPct": 2,
+    "validityDays": 30
+  },
+  "summaryOverrides": {
+    "C": 20000
+  },
+  "projectInfo": {
+    "revNo": "0",
+    "docNo": "CE-TEST-LEGACY",
+    "quantity": 1
+  },
+  "ceStatus": "Draft",
+  "assumptions": "",
+  "awardStatus": "",
+  "fileAttachments": {},
+  "summaryTaskFilters": {
+    "showBreakdown": false,
+    "selectedTaskIds": []
+  },
+  "summaryHighlights": {},
+  "summaryIncludes": [],
+  "thirdPartyShow": {
+    "mode": "off",
+    "keys": []
+  },
+  "sheetNotes": {},
+  "rateExceptions": []
+}

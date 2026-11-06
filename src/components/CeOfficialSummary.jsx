@@ -153,16 +153,18 @@ export function SheetNotesEditor({ title = 'Notes', notes, onChange, bare = fals
  *   titleKey?: any,
  *   onProject?: any,
  *   users?: any,
+ *   pendingTags?: any,
  * }} [_props]
  */
-function SignSlot({ label, name, title, stamp, nameKey, titleKey, onProject, users } = {}) {
+function SignSlot({ label, name, title, stamp, nameKey, titleKey, onProject, users, pendingTags } = {}) {
   if (!label) return <div className="ce-sign-slot" />;
   const shown = honorificName(name, users);
   const parts = splitStamp(stamp);
-  const scriptName = parts.who || (stamp ? stripHonorific(name) : "");
+  const pending = pendingTags && !String(stamp || "").trim();
+  const scriptName = pending ? "" : (parts.who || (stamp ? stripHonorific(name) : ""));
   return (
     <div className="ce-sign-slot">
-      <div className="ce-sign-role">{label}</div>
+      <div className="ce-sign-role">{label}{pending ? <span className="ce-sign-pending">Pending</span> : null}</div>
       <div className="ce-sign-signoff">
         <span className="ce-sign-script">{scriptName}</span>
         {parts.date ? (
@@ -226,6 +228,7 @@ export default function CeOfficialSummary({
   notes,
   onNotes,
   users = [],
+  pendingTags = false,
 }) {
   const [pick, setPick] = useState('');
   const [thirdOpen, setThirdOpen] = useState(false);
@@ -530,13 +533,13 @@ export default function CeOfficialSummary({
       </div>
       <SheetNotesEditor title="Notes" notes={notes} onChange={onNotes} bare numbered />
       <div className="ce-sign-grid">
-        <SignSlot label="Prepared By:" name={project.preparedBy} title={project.preparedTitle} stamp={project.preparedStamp} nameKey="preparedBy" titleKey="preparedTitle" onProject={onProject} users={users} />
-        <SignSlot label="Checked By:" name={project.checkedBy} title={project.checkedTitle} stamp={project.checkedStamp} nameKey="checkedBy" titleKey="checkedTitle" onProject={onProject} users={users} />
-        <SignSlot label="Noted By:" name={project.notedBy} title={project.notedTitle} stamp={project.notedStamp} nameKey="notedBy" titleKey="notedTitle" onProject={onProject} users={users} />
-        <SignSlot label="Approved By:" name={project.approvedBy} title={project.approvedTitle} stamp={project.approvedStamp} nameKey="approvedBy" titleKey="approvedTitle" onProject={onProject} users={users} />
-        <SignSlot label="Reviewed By:" name={project.reviewedBy} title={project.reviewedTitle} stamp={project.reviewedStamp} nameKey="reviewedBy" titleKey="reviewedTitle" onProject={onProject} users={users} />
-        <SignSlot label="Checked By:" name={project.checkedBy2} title={project.checkedTitle2} stamp={project.checkedStamp2} nameKey="checkedBy2" titleKey="checkedTitle2" onProject={onProject} users={users} />
-        <SignSlot label="Concurred by:" name={project.concurredBy} title={project.concurredTitle} stamp={project.concurredStamp} nameKey="concurredBy" titleKey="concurredTitle" onProject={onProject} users={users} />
+        <SignSlot label="Prepared By:" name={project.preparedBy} title={project.preparedTitle} stamp={project.preparedStamp} nameKey="preparedBy" titleKey="preparedTitle" onProject={onProject} users={users} pendingTags={pendingTags} />
+        <SignSlot label="Checked By:" name={project.checkedBy} title={project.checkedTitle} stamp={project.checkedStamp} nameKey="checkedBy" titleKey="checkedTitle" onProject={onProject} users={users} pendingTags={pendingTags} />
+        <SignSlot label="Noted By:" name={project.notedBy} title={project.notedTitle} stamp={project.notedStamp} nameKey="notedBy" titleKey="notedTitle" onProject={onProject} users={users} pendingTags={pendingTags} />
+        <SignSlot label="Approved By:" name={project.approvedBy} title={project.approvedTitle} stamp={project.approvedStamp} nameKey="approvedBy" titleKey="approvedTitle" onProject={onProject} users={users} pendingTags={pendingTags} />
+        <SignSlot label="Reviewed By:" name={project.reviewedBy} title={project.reviewedTitle} stamp={project.reviewedStamp} nameKey="reviewedBy" titleKey="reviewedTitle" onProject={onProject} users={users} pendingTags={pendingTags} />
+        <SignSlot label="Checked By:" name={project.checkedBy2} title={project.checkedTitle2} stamp={project.checkedStamp2} nameKey="checkedBy2" titleKey="checkedTitle2" onProject={onProject} users={users} pendingTags={pendingTags} />
+        <SignSlot label="Concurred by:" name={project.concurredBy} title={project.concurredTitle} stamp={project.concurredStamp} nameKey="concurredBy" titleKey="concurredTitle" onProject={onProject} users={users} pendingTags={pendingTags} />
         <SignSlot />
       </div>
     </div>

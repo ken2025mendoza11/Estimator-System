@@ -126,6 +126,20 @@ export async function uploadDataUrl(
   return path;
 }
 
+export async function uploadNamedBlob(kind: string, docId: string, name: string, blob: Blob): Promise<string> {
+  const safeKind = String(kind || "file").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 40) || "file";
+  const safeDoc = String(docId || "draft").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "draft";
+  const safeName = String(name || "file").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "file";
+  const path = `${safeKind}/${safeDoc}/${crypto.randomUUID()}-${safeName}`;
+  await ensureSupabaseAccess();
+  const { error } = await supabase.storage.from(FILE_BUCKET).upload(path, blob, {
+    contentType: blob.type || "application/octet-stream",
+    upsert: false,
+  });
+  if (error) throw error;
+  return path;
+}
+
 export async function downloadDataUrl(path: string): Promise<string> {
   await ensureSupabaseAccess();
   const { data, error } = await supabase.storage.from(FILE_BUCKET).download(path);

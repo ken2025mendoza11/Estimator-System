@@ -1,10 +1,12 @@
 /**
  * Local email/password sign-in (this app's Better Auth DB — not the broker).
  *
- * Off by default. To enable: set `emailAndPasswordEnabled` to `true` below,
- * then build sign-up / sign-in forms with `authClient.signUp.email` /
- * `authClient.signIn.email` from `@/lib/auth/client` (see the auth skill).
+ * On only when `isTestDeployment` is true. Production, and any host that is
+ * missing the test env vars, leaves this false. `/api/auth/sign-in/email`
+ * then returns 404 (see `emailSignInGate`).
  *
- * Do NOT edit `server.ts` for this — that file is frozen pre-wired config.
+ * Do NOT edit `server.ts` for this — that file reads this flag.
  */
-export const emailAndPasswordEnabled = false;
+import { isTestDeployment } from "./test-login";
+
+export const emailAndPasswordEnabled = isTestDeployment(process.env);

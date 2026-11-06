@@ -37,6 +37,10 @@ Copy `.env.example` to `.env`.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Server only | Google OAuth client (Google Cloud Console → APIs & Services → Credentials → OAuth client ID → Web application). Authorized redirect URI: `https://estimator-system.vercel.app/api/auth/callback/google`. Used when the Grok auth vars (`GROK_AUTH_CLIENT_ID` / `GROK_AUTH_CLIENT_SECRET`) are not set. |
 | `AUTH_MIGRATE_ON_BUILD` | Server only | Optional. `1` makes `npm run build` apply `migrations/` to `DATABASE_URL`. Unset: builds never touch a database. |
 | `ESTIMATOR_ALLOWED_EMAILS` | Server only | Comma-separated emails and/or `@domain` entries allowed to get a database token (case-insensitive). Anyone else sees "Your account is not allowed". Empty allows every signed-in account and logs a server warning. |
+| `ESTIMATOR_TEST_LOGIN` | Server only | Exactly `1` on a non-production test deployment. Otherwise the fake-user picker stays hidden. |
+| `ESTIMATOR_TEST_SUPABASE_URL` | Server only | Must equal `VITE_SUPABASE_URL` or the test tools stay off. |
+| `ESTIMATOR_TEST_PASSWORD` | Server only | Shared password for the four fake test users. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server only | Seed script only. Never prefix with `VITE_`. |
 
 Do not prefix `SUPABASE_JWT_SECRET` with `VITE_`. Do not put the service-role key in `.env` or in client code. If the two `VITE_` values are missing, the screen says so instead of going blank.
 
@@ -68,5 +72,26 @@ Deploy the code before changing the database. The current database keeps working
 5. Sign in again. Saving, files, and roles now use the locked database. To make Ken an admin, edit the commented email line at the bottom of `apply-v2.sql` and run that line by itself.
 
 The undo block in that file is commented. Leave it commented unless the signed-in rules have to be reversed. It restores anonymous grants and the policies saved in `policy_backup_20261016`. It does not drop tables or delete rows.
+
+## Test deployment
+
+Do not open any Preview URL until it points at the test projects.
+
+The fake-user picker (staff, lead, head, admin) and email/password sign-in exist only when all of these are true:
+
+- `ESTIMATOR_TEST_LOGIN` is exactly `1`
+- `VERCEL_ENV` is not `production`
+- `ESTIMATOR_TEST_SUPABASE_URL` is set and equals `VITE_SUPABASE_URL`
+
+Passwords come from `ESTIMATOR_TEST_PASSWORD`. Without those variables, `/login` matches production and `POST /api/auth/sign-in/email` returns 404.
+
+Seed the test project (it refuses to run if the URL does not match, and it does not delete rows):
+
+```bash
+npm run seed:test
+```
+
+That writes users into `DATABASE_URL`, roles and sample documents into the test Supabase project, and refreshes `src/lib/estimator/__fixtures__/legacy-ce.json`.
+
 
 <!-- Deployed to Vercel project estimator-system on 2026-10-17. -->

@@ -11,6 +11,8 @@ export const DOC_KINDS = [
   "schema",
   "notifications",
   "wipes",
+  "proposal",
+  "markup",
 ] as const;
 
 export type DocKind = (typeof DOC_KINDS)[number];
@@ -30,6 +32,8 @@ const APP_KEYS = [
   "scopeTemplates",
   "notifications",
   "dbWipeRequests",
+  "proposals",
+  "markups",
 ] as const;
 
 export type LocalDoc = {
@@ -69,12 +73,12 @@ export type PlannedTombstone = {
 };
 
 export class WorkspaceSaveError extends Error {
-  conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" }>;
+  conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" | "exists" }>;
   revisions: RevisionMap;
 
   constructor(
     message: string,
-    conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" }>,
+    conflicts: Array<{ kind: string; id: string; reason: "version" | "deleted" | "exists" }>,
     revisions: RevisionMap,
   ) {
     super(message);
@@ -254,6 +258,16 @@ export function splitWorkspace(payload: WorkspacePayload): LocalDoc[] {
   const wipes = Array.isArray(app.dbWipeRequests) ? (app.dbWipeRequests as Json) : [];
   pushDoc(docs, "notifications", SINGLETONS.notifications, notifications, 0);
   pushDoc(docs, "wipes", SINGLETONS.wipes, wipes, 0);
+  readList(payload, "proposals").forEach((item, index) => {
+    const record = asRecord(item);
+    const id = requireId("proposal", String(record.id || record.controlNo || ""));
+    pushDoc(docs, "proposal", id, item as Json, index);
+  });
+  readList(payload, "markups").forEach((item, index) => {
+    const record = asRecord(item);
+    const id = requireId("markup", String(record.id || record.ceId || ""));
+    pushDoc(docs, "markup", id, item as Json, index);
+  });
   return docs;
 }
 
@@ -298,6 +312,8 @@ export function assembleWorkspace(
   const schema = take("schema")[0];
   const notes = take("notifications")[0];
   const wipes = take("wipes")[0];
+  const proposalRows = take("proposal");
+  const markupRows = take("markup");
   for (const row of rows) {
     if (!row.deleted) continue;
     if (!DOC_KINDS.includes(row.kind as DocKind)) continue;
@@ -325,6 +341,8 @@ export function assembleWorkspace(
   const adminConfig = (admin?.payload as Json) ?? {};
   const notifications = Array.isArray(notes?.payload) ? notes.payload : [];
   const dbWipeRequests = Array.isArray(wipes?.payload) ? wipes.payload : [];
+  const proposals = proposalRows.map((row) => row.payload);
+  const markups = markupRows.map((row) => row.payload);
   const schemaRecord = asRecord(schema?.payload);
   const app = asRecord(schemaRecord.__app);
   delete app.adminConfig;
@@ -333,6 +351,8 @@ export function assembleWorkspace(
   delete app.scopeTemplates;
   delete app.notifications;
   delete app.dbWipeRequests;
+  delete app.proposals;
+  delete app.markups;
   const schemaConfig = {
     ...schemaRecord,
     __app: {
@@ -343,6 +363,8 @@ export function assembleWorkspace(
       scopeTemplates,
       notifications,
       dbWipeRequests,
+      proposals,
+      markups,
     },
   } as WorkspacePayload["schemaConfig"];
 
@@ -357,7 +379,34 @@ export function assembleWorkspace(
     taskTemplates,
     scopeTemplates,
   } as WorkspacePayload;
+  alignRevisionOrd(workspace, live, revisions);
   return { workspace, revisions };
+}
+
+/**
+ * Step 25: the stored `ord` (seed or an older client) can differ from the list
+ * position the client sends. Only the ord moved, so the document is not
+ * changed: take the client's hash for it. Otherwise the first save after load
+ * rewrote every such document, including sealed estimates the user cannot sign.
+ */
+export function alignRevisionOrd(workspace: WorkspacePayload, rows: StoredDoc[], revisions: RevisionMap): void {
+  let local: LocalDoc[];
+  try {
+    local = splitWorkspace(workspace);
+  } catch {
+    return;
+  }
+  const byKey = new Map(rows.map((row) => [docKey(row.kind, row.id), row]));
+  for (const doc of local) {
+    const key = docKey(doc.kind, doc.id);
+    const prev = revisions[key];
+    const row = byKey.get(key);
+    if (!prev || !row || prev.deleted || prev.hash === doc.hash) continue;
+    if (row.ord === doc.ord) continue;
+    if (docHash(doc.kind, row.payload, doc.ord) === doc.hash) {
+      revisions[key] = { ...prev, hash: doc.hash };
+    }
+  }
 }
 
 export function planSave(
@@ -365,6 +414,7 @@ export function planSave(
   base: RevisionMap,
   forceKeys: Set<string>,
   holdKinds: Set<string>,
+  allowTombstones = true,
 ): { writes: PlannedWrite[]; tombstones: PlannedTombstone[] } {
   const writes: PlannedWrite[] = [];
   const seen = new Set<string>();
@@ -388,6 +438,7 @@ export function planSave(
     });
   }
   const tombstones: PlannedTombstone[] = [];
+  if (!allowTombstones) return { writes, tombstones };
   for (const [key, prev] of Object.entries(base)) {
     if (seen.has(key) || !prev.version) continue;
     const splitAt = key.indexOf(":");
@@ -404,3 +455,162 @@ export function planSave(
   }
   return { writes, tombstones };
 }
+
+function listRows(payload: WorkspacePayload, key: string): Json[] {
+  const top = (payload as Record<string, unknown>)[key];
+  if (Array.isArray(top)) return [...(top as Json[])];
+  const nested = asRecord(asRecord(payload.schemaConfig).__app)[key];
+  return Array.isArray(nested) ? [...(nested as Json[])] : [];
+}
+
+function putList(payload: WorkspacePayload, key: string, rows: Json[]) {
+  (payload as Record<string, unknown>)[key] = rows;
+  const schema = asRecord(payload.schemaConfig);
+  const app = asRecord(schema.__app);
+  app[key] = rows;
+  schema.__app = app;
+  payload.schemaConfig = schema as WorkspacePayload["schemaConfig"];
+}
+
+function replaceRow(rows: Json[], id: string, payload: Json) {
+  const index = rows.findIndex((row) => {
+    const record = asRecord(row);
+    return String(record.id || record.rceNo || record.oifNo || "") === id;
+  });
+  if (index >= 0) rows[index] = payload;
+  else rows.push(payload);
+}
+
+/**
+ * Server lists stay. Only documents the user changed locally are copied over.
+ * A local backup never drops a server document.
+ */
+export function mergeServerWithDirty(
+  server: WorkspacePayload,
+  local: WorkspacePayload | null,
+  dirtyKeys: string[],
+): WorkspacePayload {
+  if (!local || !dirtyKeys.length) return server;
+  const dirty = new Set(dirtyKeys);
+  let localDocs: LocalDoc[];
+  try {
+    localDocs = splitWorkspace(local);
+  } catch {
+    return server;
+  }
+  const next = cloneJson(server);
+  const ces = [...(next.ceList || [])];
+  const rces = [...(next.rceList || [])] as Json[];
+  const documents = { ...(next.documents || {}) };
+  const inspections = listRows(next, "inspectionReports");
+  const tasks = listRows(next, "taskTemplates");
+  const scopes = listRows(next, "scopeTemplates");
+  for (const doc of localDocs) {
+    if (!dirty.has(docKey(doc.kind, doc.id))) continue;
+    if (doc.kind === "ce") {
+      const body = asRecord(doc.payload);
+      if (body.summary && typeof body.summary === "object") {
+        const summary = body.summary as { id?: string };
+        const index = ces.findIndex((ce) => ce?.id === doc.id);
+        if (index >= 0) ces[index] = summary as WorkspacePayload["ceList"][number];
+        else ces.push(summary as WorkspacePayload["ceList"][number]);
+      }
+      if (body.document && typeof body.document === "object") {
+        documents[doc.id] = body.document as Json;
+      }
+    } else if (doc.kind === "rce") {
+      replaceRow(rces, doc.id, doc.payload);
+    } else if (doc.kind === "inspection") {
+      replaceRow(inspections, doc.id, doc.payload);
+    } else if (doc.kind === "task") {
+      replaceRow(tasks, doc.id, doc.payload);
+    } else if (doc.kind === "scope") {
+      replaceRow(scopes, doc.id, doc.payload);
+    } else if (doc.kind === "masterlist") {
+      next.masterlist = doc.payload as WorkspacePayload["masterlist"];
+    } else if (doc.kind === "admin") {
+      (next as { adminConfig?: Json }).adminConfig = doc.payload;
+      const schema = asRecord(next.schemaConfig);
+      const app = asRecord(schema.__app);
+      app.adminConfig = doc.payload;
+      schema.__app = app;
+      next.schemaConfig = schema as WorkspacePayload["schemaConfig"];
+    } else if (doc.kind === "notifications") {
+      const schema = asRecord(next.schemaConfig);
+      const app = asRecord(schema.__app);
+      app.notifications = doc.payload;
+      schema.__app = app;
+      next.schemaConfig = schema as WorkspacePayload["schemaConfig"];
+    } else if (doc.kind === "wipes") {
+      const schema = asRecord(next.schemaConfig);
+      const app = asRecord(schema.__app);
+      app.dbWipeRequests = doc.payload;
+      schema.__app = app;
+      next.schemaConfig = schema as WorkspacePayload["schemaConfig"];
+    } else if (doc.kind === "proposal") {
+      const rows = listRows(next, "proposals");
+      replaceRow(rows, doc.id, doc.payload);
+      putList(next, "proposals", rows);
+    } else if (doc.kind === "markup") {
+      const rows = listRows(next, "markups");
+      replaceRow(rows, doc.id, doc.payload);
+      putList(next, "markups", rows);
+    }
+  }
+  next.ceList = ces;
+  next.rceList = rces as WorkspacePayload["rceList"];
+  next.documents = documents;
+  putList(next, "inspectionReports", inspections);
+  putList(next, "taskTemplates", tasks);
+  putList(next, "scopeTemplates", scopes);
+  return next;
+}
+
+/** Keys whose payload hash changed. Used so a save pushes only the dirty documents. */
+export function changedDocKeys(prev: WorkspacePayload, next: WorkspacePayload): string[] {
+  let before: LocalDoc[] = [];
+  let after: LocalDoc[] = [];
+  try {
+    before = splitWorkspace(prev);
+  } catch {
+    return [];
+  }
+  try {
+    after = splitWorkspace(next);
+  } catch {
+    return [];
+  }
+  const prevHash = new Map(before.map((doc) => [docKey(doc.kind, doc.id), doc.hash]));
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const doc of after) {
+    const key = docKey(doc.kind, doc.id);
+    seen.add(key);
+    if (prevHash.get(key) !== doc.hash) keys.push(key);
+  }
+  for (const doc of before) {
+    const key = docKey(doc.kind, doc.id);
+    if (!seen.has(key)) keys.push(key);
+  }
+  return keys;
+}
+
+/**
+ * A dirty document is saved against the version it was edited from, not the
+ * version just read from the server. That keeps a second browser from being
+ * overwritten without a conflict.
+ */
+export function revisionsForDirtyPush(
+  server: RevisionMap,
+  backup: RevisionMap | null | undefined,
+  dirtyKeys: string[],
+): RevisionMap {
+  if (!backup || !dirtyKeys.length) return server;
+  const next: RevisionMap = { ...server };
+  for (const key of dirtyKeys) {
+    const prev = backup[key];
+    if (prev && Number.isFinite(prev.version)) next[key] = prev;
+  }
+  return next;
+}
+

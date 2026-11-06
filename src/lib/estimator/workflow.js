@@ -1,6 +1,8 @@
 // @ts-nocheck
 /** Shared RCE/CE workflow: timeline, approval, notices, job status. */
 
+import { rceWithdrawAllowed } from "./ceRequest.js";
+
 export const PEOPLE_SETTABLE = [
   'On Park',
   'Waiting for information',
@@ -28,6 +30,7 @@ export const NOTICE_EVENTS = {
   ASSIST: 'Assist opened',
   APPROVAL: 'Needs your approval',
   NO_QUOTE: 'No quote',
+  CE_APPROVED: 'CE approved',
 };
 
 export function nowIso() {
@@ -38,8 +41,8 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Calendar date in Asia/Taipei (YYYY-MM-DD). No DST; UTC+8 all year. */
-export function todayLocal(timeZone = "Asia/Taipei") {
+/** Calendar date in Asia/Manila (YYYY-MM-DD). No DST; UTC+8 all year. */
+export function todayLocal(timeZone = "Asia/Manila") {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -48,8 +51,8 @@ export function todayLocal(timeZone = "Asia/Taipei") {
   }).format(new Date());
 }
 
-/** Add calendar days to the Taipei local date. Does not change stored date format. */
-export function addDaysLocal(days, timeZone = "Asia/Taipei") {
+/** Add calendar days to the Manila local date. Does not change stored date format. */
+export function addDaysLocal(days, timeZone = "Asia/Manila") {
   const [y, m, d] = todayLocal(timeZone).split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + Number(days || 0)));
   const yy = dt.getUTCFullYear();
@@ -68,11 +71,13 @@ export function timelineEntry({
   remarks = '',
   snapshot = null,
   rev = '',
+  whoName = '',
 }) {
   return {
     id: uid('tl'),
     at: nowIso(),
     who: who || '',
+    ...(whoName ? { whoName } : {}),
     action,
     remarks: remarks || '',
     snapshot,
@@ -96,8 +101,10 @@ export function pushNotice(list, notice) {
   ].slice(0, 80);
 }
 
-export function noticeVisible(notice, user, level) {
+export function noticeVisible(notice, user, level, userId = '') {
   if (!notice) return false;
+  const toId = notice.toUserId == null ? '' : String(notice.toUserId).trim();
+  if (toId) return toId === String(userId || '').trim();
   const to = notice.to == null || String(notice.to).trim() === '' ? '*' : String(notice.to);
   const role = String(notice.toRole || '').trim().toLowerCase();
   if (to !== '*') return to === user;
@@ -114,13 +121,13 @@ function noticeRoleMatches(level, role) {
   return lvl === role;
 }
 
-export function unreadNotices(list, user, level) {
-  return (list || []).filter((n) => !n.read && noticeVisible(n, user, level));
+export function unreadNotices(list, user, level, userId = '') {
+  return (list || []).filter((n) => !n.read && noticeVisible(n, user, level, userId));
 }
 
-export function markNoticesRead(list, user, level) {
+export function markNoticesRead(list, user, level, userId = '') {
   return (list || []).map((n) =>
-    noticeVisible(n, user, level) ? { ...n, read: true } : n
+    noticeVisible(n, user, level, userId) ? { ...n, read: true } : n
   );
 }
 
@@ -405,7 +412,8 @@ export function rceIsFinalAccepted(rce) {
   return st === 'accepted' || st === 'approved';
 }
 
-export function rceCanWithdraw(rce) {
+export function rceCanWithdraw(rce, flagOn) {
+  if (flagOn === true) return rceWithdrawAllowed(rce, true);
   if (!rce) return false;
   const ap = rce.approval;
   if (!ap || ap.status !== 'in-progress') {
@@ -433,3 +441,73 @@ export function checksumTotal(n) {
   const v = Number(n) || 0;
   return Math.round(v * 100) / 100;
 }
+
+export {
+  actorCanDecide,
+  approvalEngineOn,
+  beginEngineApproval,
+  commentOpen,
+  decideApproval,
+  fixComment,
+  nextEngineRevision,
+  normalizeApprovalMode,
+  openStepIndexes,
+  planEdit,
+  planRevise,
+  planUpdate,
+  validateFlowSteps,
+} from "./approvalEngine.js";
+
+export {
+  canDecideTakeover,
+  ceCreateAllowed,
+  decideTakeover,
+  dueReminderSlots,
+  pendingClosingStatus,
+  planClosing,
+  planTakeover,
+  rceChanged,
+  rceStamp,
+  reminderSlotsUntil,
+} from "./reminders.js";
+
+export { matrixAllows, normalizeNotifyMatrix } from "./notifyMatrix.js";
+
+export {
+  ceBlocksInspectionLines,
+  inspectionNotingSteps,
+  isOwnSignaturePath,
+  needsDraftWatermark,
+  shouldLoadExportSignatures,
+  signatureObjectPath,
+  signaturePeople,
+  signatureUserKey,
+} from "./signatures.js";
+
+export {
+  canMintAlternate,
+  combinedTotal,
+  familyKey,
+  nextAddendum,
+  nextAlternate,
+  nextUpdateCopy,
+  parseCeNumber,
+  planSuffix,
+  urgentPlan,
+  URGENT_TAG,
+} from "./docSuffixes.js";
+
+export { addWorkingDays, isWorkingDay, workingDaysBetween } from "./phCalendar.js";
+export { foldFamilyRows } from "./monitoringFamilies.js";
+export { constantDrift, priceDrifts, resyncPlan } from "./priceCheck.js";
+export { bumpScopeUsage, resourceSeed, saveAsScope } from "./scopeLibrary.js";
+export { brandingVars } from "./branding.js";
+
+export { boteLineSnapshot, equipmentRateCard, perDayRate } from "./equipmentRates.js";
+export { evaluateFormula } from "./rateFormula.js";
+export { buildReport, winRate } from "./reports.js";
+export { mobileApprove, mobileSummary } from "./mobileView.js";
+export { blocksFinalApproval, canSubmit, runChecker } from "./checker.js";
+export { ceIsUnlocked, lineFromQuote, missingPhase8Table } from "./phase8.js";
+export { fuelCost, routeSnapshot, truckBanWarning } from "./routeFuel.js";
+export { confirmSowSplit, orderExportSections, refreshSchedule } from "./phase10.js";
