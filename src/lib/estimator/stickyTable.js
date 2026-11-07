@@ -63,12 +63,12 @@ export function syncStickyScroll(scroller, proxy) {
 	};
 }
 
-/** @param {HTMLTableElement} table */
-export function pinFrozenColumns(table) {
+/** @param {HTMLTableElement} table @param {boolean} [firstOnly] pin only the first column (Item No.) */
+export function pinFrozenColumns(table, firstOnly = false) {
 	if (!table?.tHead?.rows?.[0]) return;
 	table.classList.add("ce-sticky-on");
 	const head = [...table.tHead.rows[0].cells];
-	const indexes = freezePlan(head.map((cell) => cell.textContent || ""));
+	const indexes = firstOnly ? [0] : freezePlan(head.map((cell) => cell.textContent || ""));
 	const widths = indexes.map((i) => head[i]?.getBoundingClientRect().width || 0);
 	const offsets = freezeOffsets(widths);
 	const leftOf = new Map(indexes.map((i, n) => [i, offsets[n]]));

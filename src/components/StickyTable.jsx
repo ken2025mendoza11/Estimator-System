@@ -4,9 +4,10 @@ import { pinFrozenColumns, syncStickyScroll } from "../lib/estimator/stickyTable
 /**
  * Shared monitoring table: sticky header, frozen No. + Project, and a
  * horizontal scrollbar pinned to the bottom of the viewport.
- * @param {{ className?: string, enabled?: boolean, children?: import("react").ReactNode }} props
+ * `freeze="first"` pins only the first column (Item No.); default pins No. + Project.
+ * @param {{ className?: string, enabled?: boolean, freeze?: "first" | "default", children?: import("react").ReactNode }} props
  */
-export function StickyTable({ className = "", enabled = false, children }) {
+export function StickyTable({ className = "", enabled = false, freeze = "default", children }) {
 	const scroller = useRef(/** @type {HTMLDivElement | null} */ (null));
 	const proxy = useRef(/** @type {HTMLDivElement | null} */ (null));
 	useEffect(() => {
@@ -17,7 +18,7 @@ export function StickyTable({ className = "", enabled = false, children }) {
 		const stop = syncStickyScroll(root, bar);
 		const pin = () => {
 			const table = root.querySelector("table");
-			if (table) pinFrozenColumns(table);
+			if (table) pinFrozenColumns(table, freeze === "first");
 		};
 		pin();
 		const obs = typeof ResizeObserver === "function" ? new ResizeObserver(pin) : null;
@@ -26,7 +27,7 @@ export function StickyTable({ className = "", enabled = false, children }) {
 			stop();
 			obs?.disconnect();
 		};
-	}, [enabled]);
+	}, [enabled, freeze]);
 	if (!enabled) return <div className={className}>{children}</div>;
 	return (
 		<div className={`${className} ce-sticky-wrap`.trim()}>
