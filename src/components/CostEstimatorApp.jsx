@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { Activity, AlertCircle, ArrowUpRight, Award, Bell, BookOpen, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsDownUp, ChevronsUpDown, ClipboardList, Clock, Copy, Database, Download, Eye, EyeOff, FileText, Filter, Flag, FolderPlus, GripVertical, HardHat, Layers, LayoutDashboard, Library, MessageCircle, Package, Paperclip, Pencil, Pin, Plus, RefreshCw, Search, Settings, Shield, Tag, Trash2, Undo2, Upload, UploadCloud, Users, Wrench, X } from "lucide-react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -5436,8 +5437,16 @@ function CalcConstantsPanel({ cfg, patch }) {
 		error ? /* @__PURE__ */ jsx("div", { className: "rce-field-error", children: error }) : null
 	] });
 }
-function AdminHub({ config, onChange }) {
-	const [tab, setTab] = useState("users");
+var ADMIN_GROUPS = [
+	{ id: "people", label: "People & access", blurb: "Pending registrations, account access, and user levels.", items: [["users", "User access"]] },
+	{ id: "workflow", label: "Workflow", blurb: "Who approves what, and in which order.", items: [["flow", "Approval flow"]] },
+	{ id: "catalog", label: "Catalog & data", blurb: "Masterlist order, template formula, and calculator settings.", items: [["list", "Masterlist"], ["formula", "Template formula"], ["calc", "Calculator"]] },
+	{ id: "documents", label: "Documents & export", blurb: "Document control, letterhead, and export.", items: [["docs", "Document control"]] },
+	{ id: "appearance", label: "Appearance", blurb: "Board colors for status and priority.", items: [["colors", "Board colors"]] },
+	{ id: "release", label: "Release", blurb: "Release settings: Phase 5–10 and Release 1.", items: [["phase5", "Phase 5"], ["phase6", "Phase 6"], ["phase7", "Phase 7"], ["phase8", "Phase 8"], ["phase9", "Phase 9"], ["phase10", "Phase 10"], ["release1", "Release 1"]] }
+];
+function AdminHub({ config, onChange, accessQueue = null }) {
+	const [tab, setTab] = useState("home");
 	const cfg = normalizeAdminConfig(config);
 	function patch(partial) {
 		onChange(normalizeAdminConfig({
@@ -5445,8 +5454,26 @@ function AdminHub({ config, onChange }) {
 			...partial
 		}));
 	}
+	const group = ADMIN_GROUPS.find((item) => item.items.some(([key]) => key === tab)) || null;
+	const panel = (key) => {
+		if (key === "users") return /* @__PURE__ */ jsxs(Fragment, { children: [accessQueue, /* @__PURE__ */ jsx(UserAccessPanel, { cfg, patch })] });
+		if (key === "flow") return /* @__PURE__ */ jsx(ApprovalFlowPanel, { cfg, patch });
+		if (key === "list") return /* @__PURE__ */ jsx(MasterlistRulesPanel, { cfg, patch });
+		if (key === "docs") return /* @__PURE__ */ jsx(DocumentControlPanel, { cfg, patch });
+		if (key === "formula") return /* @__PURE__ */ jsx(TemplateFormulaPanel, { cfg, patch });
+		if (key === "calc") return /* @__PURE__ */ jsx(CalcConstantsPanel, { cfg, patch });
+		if (key === "colors") return /* @__PURE__ */ jsx(BoardColorsPanel, { cfg, patch });
+		if (key === "phase5") return /* @__PURE__ */ jsx(Phase5Admin, { cfg, patch });
+		if (key === "phase6") return /* @__PURE__ */ jsx(Phase6Admin, { cfg, patch });
+		if (key === "phase7") return /* @__PURE__ */ jsx(Phase7Admin, { cfg, patch });
+		if (key === "phase8") return /* @__PURE__ */ jsx(Phase8Admin, { cfg, patch });
+		if (key === "phase9") return /* @__PURE__ */ jsx(Phase9Admin, { cfg, patch });
+		if (key === "phase10") return /* @__PURE__ */ jsx(Phase10Admin, { cfg, patch });
+		if (key === "release1") return /* @__PURE__ */ jsx(Release1Admin, { cfg, patch });
+		return null;
+	};
 	return /* @__PURE__ */ jsxs("div", {
-		className: "admin-wrap",
+		className: "admin-wrap adm6",
 		"data-admin-hub": "true",
 		children: [
 			/* @__PURE__ */ jsx("div", {
@@ -5459,89 +5486,70 @@ function AdminHub({ config, onChange }) {
 					children: "Registration, roles, approval routes, masterlist order, and export letterhead. Login will lock this to Administrators — settings save now."
 				})] })
 			}),
-			/* @__PURE__ */ jsx("div", {
-				className: "wiz-rce-mode",
-				role: "tablist",
-				"aria-label": "Admin sections",
+			/* @__PURE__ */ jsxs("div", {
+				className: "adm6-layout",
 				children: [
-					["users", "User access"],
-					["flow", "Approval flow"],
-					["list", "Masterlist"],
-					["docs", "Document control"],
-					["formula", "Template formula"],
-					["calc", "Calculator"],
-					["colors", "Board colors"],
-					["phase5", "Phase 5"],
-					["phase6", "Phase 6"],
-					["phase7", "Phase 7"],
-					["phase8", "Phase 8"],
-					["phase9", "Phase 9"],
-					["phase10", "Phase 10"],
-					["release1", "Release 1"]
-				].map(([k, label]) => /* @__PURE__ */ jsx("button", {
-					type: "button",
-					role: "tab",
-					"aria-selected": tab === k,
-					className: `ce-pill ${tab === k ? "ce-pill-active" : ""}`,
-					onClick: () => setTab(k),
-					children: label
-				}, k))
-			}),
-			tab === "users" && /* @__PURE__ */ jsx(UserAccessPanel, {
-				cfg,
-				patch
-			}),
-			tab === "flow" && /* @__PURE__ */ jsx(ApprovalFlowPanel, {
-				cfg,
-				patch
-			}),
-			tab === "list" && /* @__PURE__ */ jsx(MasterlistRulesPanel, {
-				cfg,
-				patch
-			}),
-			tab === "docs" && /* @__PURE__ */ jsx(DocumentControlPanel, {
-				cfg,
-				patch
-			}),
-			tab === "formula" && /* @__PURE__ */ jsx(TemplateFormulaPanel, {
-				cfg,
-				patch
-			}),
-			tab === "calc" && /* @__PURE__ */ jsx(CalcConstantsPanel, {
-				cfg,
-				patch
-			}),
-			tab === "colors" && /* @__PURE__ */ jsx(BoardColorsPanel, {
-				cfg,
-				patch
-			}),
-			tab === "phase5" && /* @__PURE__ */ jsx(Phase5Admin, {
-				cfg,
-				patch
-			}),
-			tab === "phase6" && /* @__PURE__ */ jsx(Phase6Admin, {
-				cfg,
-				patch
-			}),
-			tab === "phase7" && /* @__PURE__ */ jsx(Phase7Admin, {
-				cfg,
-				patch
-			}),
-			tab === "phase8" && /* @__PURE__ */ jsx(Phase8Admin, {
-				cfg,
-				patch
-			}),
-			tab === "phase9" && /* @__PURE__ */ jsx(Phase9Admin, {
-				cfg,
-				patch
-			}),
-			tab === "phase10" && /* @__PURE__ */ jsx(Phase10Admin, {
-				cfg,
-				patch
-			}),
-			tab === "release1" && /* @__PURE__ */ jsx(Release1Admin, {
-				cfg,
-				patch
+					/* @__PURE__ */ jsxs("nav", {
+						className: "adm6-nav",
+						role: "tablist",
+						"aria-label": "Admin sections",
+						children: [
+							/* @__PURE__ */ jsx("button", {
+								type: "button",
+								role: "tab",
+								"aria-selected": tab === "home",
+								className: `adm6-nav-btn ${tab === "home" ? "is-on" : ""}`,
+								onClick: () => setTab("home"),
+								children: "Overview"
+							}),
+							...ADMIN_GROUPS.map((item) => /* @__PURE__ */ jsx("button", {
+								type: "button",
+								role: "tab",
+								"aria-selected": group?.id === item.id,
+								className: `adm6-nav-btn ${group?.id === item.id ? "is-on" : ""}`,
+								onClick: () => setTab(item.items[0][0]),
+								children: item.label
+							}, item.id))
+						]
+					}),
+					/* @__PURE__ */ jsx("div", {
+						className: "adm6-main",
+						children: tab === "home" ? /* @__PURE__ */ jsx("div", {
+							className: "adm6-overview",
+							children: ADMIN_GROUPS.map((item) => /* @__PURE__ */ jsxs("section", {
+								className: "ce-card adm6-group-card",
+								children: [
+									/* @__PURE__ */ jsx("h3", { className: "ce-serif", children: item.label }),
+									/* @__PURE__ */ jsx("p", { className: "wiz-hint", children: item.blurb }),
+									/* @__PURE__ */ jsx("div", {
+										className: "adm6-group-links",
+										children: item.items.map(([key, label]) => /* @__PURE__ */ jsx("button", {
+											type: "button",
+											className: "ce-btn-ghost ce-btn-sm",
+											onClick: () => setTab(key),
+											children: label
+										}, key))
+									})
+								]
+							}, item.id))
+						}) : /* @__PURE__ */ jsxs(Fragment, { children: [
+							group && group.items.length > 1 ? /* @__PURE__ */ jsx("div", {
+								className: "wiz-rce-mode adm6-subtabs",
+								role: "tablist",
+								"aria-label": `${group.label} settings`,
+								children: group.items.map(([key, label]) => /* @__PURE__ */ jsx("button", {
+									type: "button",
+									role: "tab",
+									"aria-selected": tab === key,
+									className: `ce-pill ${tab === key ? "ce-pill-active" : ""}`,
+									onClick: () => setTab(key),
+									children: label
+								}, key))
+							}) : null,
+							panel(tab)
+						] })
+					})
+				]
 			})
 		]
 	});
@@ -5560,6 +5568,7 @@ function UserAccessPanel({ cfg, patch }) {
 		email: ""
 	});
 	const [newTitle, setNewTitle] = useState("");
+	const [queueOpen, setQueueOpen] = useState(false);
 	function acceptPending(row) {
 		const user = {
 			id: uid("u"),
@@ -5600,58 +5609,67 @@ function UserAccessPanel({ cfg, patch }) {
 					className: "wiz-hint",
 					children: "Accept a request, then set designation (job title) and user level (what they can open). When login is live, sign-ups land here automatically."
 				}),
-				/* @__PURE__ */ jsxs("div", {
-					className: "wiz-grid",
-					children: [/* @__PURE__ */ jsxs("label", {
-						className: "wiz-field",
-						children: [/* @__PURE__ */ jsx("span", {
-							className: "ce-field-label",
-							children: "Name"
-						}), /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
-							value: pendingDraft.name,
-							onChange: (e) => setPendingDraft({
-								...pendingDraft,
-								name: e.target.value
-							})
-						})]
-					}), /* @__PURE__ */ jsxs("label", {
-						className: "wiz-field",
-						children: [/* @__PURE__ */ jsx("span", {
-							className: "ce-field-label",
-							children: "Email"
-						}), /* @__PURE__ */ jsx("input", {
-							className: "ce-input",
-							value: pendingDraft.email,
-							onChange: (e) => setPendingDraft({
-								...pendingDraft,
-								email: e.target.value
-							})
-						})]
-					})]
-				}),
 				/* @__PURE__ */ jsxs("button", {
 					type: "button",
-					className: "ce-btn-ghost ce-btn-sm",
-					style: { marginTop: "0.6rem" },
-					onClick: () => {
-						if (!pendingDraft.name.trim()) return;
-						patch({ pending: [...cfg.pending, {
-							id: uid("pend"),
-							name: pendingDraft.name.trim(),
-							email: pendingDraft.email.trim(),
-							requestedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
-							designation: cfg.designations[0] || "Cost Estimator",
-							level: "staff",
-							department: "Costing"
-						}] });
-						setPendingDraft({
-							name: "",
-							email: ""
-						});
-					},
+					className: "ce-btn-ghost ce-btn-sm adm6-outline-btn",
+					onClick: () => setQueueOpen(true),
 					children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Queue registration"]
 				}),
+				queueOpen ? /* @__PURE__ */ jsxs("div", {
+					className: "adm6-drawer-backdrop",
+					onClick: () => setQueueOpen(false),
+					children: [/* @__PURE__ */ jsxs("aside", {
+						className: "adm6-drawer",
+						role: "dialog",
+						"aria-label": "Queue registration",
+						onClick: (event) => event.stopPropagation(),
+						children: [
+							/* @__PURE__ */ jsxs("div", { className: "adm6-side-head", children: [
+								/* @__PURE__ */ jsx("strong", { children: "Queue registration" }),
+								/* @__PURE__ */ jsx("button", { type: "button", className: "ce-btn-ghost ce-btn-sm", "aria-label": "Close", onClick: () => setQueueOpen(false), children: "×" })
+							] }),
+							/* @__PURE__ */ jsxs("label", {
+								className: "wiz-field",
+								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "Name" }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									value: pendingDraft.name,
+									onChange: (e) => setPendingDraft({ ...pendingDraft, name: e.target.value })
+								})]
+							}),
+							/* @__PURE__ */ jsxs("label", {
+								className: "wiz-field",
+								children: [/* @__PURE__ */ jsx("span", { className: "ce-field-label", children: "Email" }), /* @__PURE__ */ jsx("input", {
+									className: "ce-input",
+									value: pendingDraft.email,
+									onChange: (e) => setPendingDraft({ ...pendingDraft, email: e.target.value })
+								})]
+							}),
+							/* @__PURE__ */ jsxs("button", {
+								type: "button",
+								className: "ce-btn-primary ce-btn-sm",
+								style: { marginTop: "0.6rem" },
+								onClick: () => {
+									if (!pendingDraft.name.trim()) return;
+									patch({ pending: [...cfg.pending, {
+										id: uid("pend"),
+										name: pendingDraft.name.trim(),
+										email: pendingDraft.email.trim(),
+										requestedAt: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+										designation: cfg.designations[0] || "Cost Estimator",
+										level: "staff",
+										department: "Costing"
+									}] });
+									setPendingDraft({
+										name: "",
+										email: ""
+									});
+									setQueueOpen(false);
+								},
+								children: [/* @__PURE__ */ jsx(Plus, { size: 13 }), " Queue registration"]
+							})
+						]
+					})]
+				}) : null,
 				/* @__PURE__ */ jsx("div", {
 					className: "ce-gridwrap",
 					style: { marginTop: "0.8rem" },
@@ -5956,7 +5974,7 @@ function UserAccessPanel({ cfg, patch }) {
 					children: "Intended access after login. Admin stays open for setup until then."
 				}),
 				/* @__PURE__ */ jsx("div", {
-					className: "admin-levels",
+					className: "admin-levels adm6-levels",
 					children: USER_LEVELS.map((l) => /* @__PURE__ */ jsxs("div", {
 						className: "admin-level-card",
 						children: [/* @__PURE__ */ jsx("strong", { children: l.label }), /* @__PURE__ */ jsx("span", { children: l.blurb })]
@@ -5969,7 +5987,7 @@ function UserAccessPanel({ cfg, patch }) {
 						className: "ce-table admin-matrix",
 						children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("th", { children: "Area" }), USER_LEVELS.map((l) => /* @__PURE__ */ jsx("th", { children: l.label }, l.id))] }) }), /* @__PURE__ */ jsx("tbody", { children: ACCESS_MATRIX.map((row) => /* @__PURE__ */ jsxs("tr", { children: [/* @__PURE__ */ jsx("td", { children: row.area }), USER_LEVELS.map((l) => /* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx("span", {
 							className: row[l.id] ? "admin-yes" : "admin-no",
-							children: row[l.id] ? "Yes" : "—"
+							children: row[l.id] ? "✓" : "—"
 						}) }, l.id))] }, row.area)) })]
 					})
 				})
@@ -21187,7 +21205,7 @@ var DEFAULT_OIF_MON_COLUMNS = [
 	},
 	{
 		key: "date",
-		label: "Date Inspected",
+		label: "Inspected",
 		type: "text",
 		visible: true,
 		isCustom: false
@@ -21229,7 +21247,7 @@ function mergeOifMonSchema(stored) {
 			...base || {},
 			...c,
 			key: c.key,
-			label: c.label || base?.label || c.key,
+			label: c.key === "date" && c.label === "Date Inspected" ? "Inspected" : c.label || base?.label || c.key,
 			type: c.type || base?.type || "text",
 			visible: c.visible !== false,
 			isCustom: base ? false : true
@@ -21382,12 +21400,14 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 			/* @__PURE__ */ jsx(StickyTable, {
 				className: "ce-gridwrap dash-user-gridwrap oif-mon-grid",
 				enabled: ceTpl1On,
+				freeze: "first",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: "ce-table db-resizable-table oif-mon-table",
 					children: [
 						/* @__PURE__ */ jsx("colgroup", { children: displayCols.map((c) => /* @__PURE__ */ jsx("col", { style: { width: `${widths[c.key] || (c.synthetic ? 90 : 140)}px` } }, c.key)) }),
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsx("tr", { children: displayCols.map((c) => /* @__PURE__ */ jsx(ResizableTh, {
 							colKey: c.key,
+							className: c.synthetic === "actions" ? "mon-actions" : c.key === "itemNo" ? "mon-item-head" : void 0,
 							width: widths[c.key] || (c.synthetic ? 90 : 140),
 							onResize: updateWidth,
 							children: /* @__PURE__ */ jsx("div", {
@@ -21404,7 +21424,7 @@ function InspectionMonitoringView({ reports = [], onOpenInspection, onUpdateInsp
 								onClick: () => setPreviewReport(r),
 								style: { cursor: "pointer" },
 								children: displayCols.map((c) => /* @__PURE__ */ jsx("td", {
-									className: c.synthetic === "actions" ? "mon-actions" : "mon-clip",
+									className: c.synthetic === "actions" ? "mon-actions" : c.key === "itemNo" ? "mon-item mon-clip" : "mon-clip",
 									title: c.synthetic || c.isCustom ? undefined : String(oifMonCellValue(r, c.key, idx) || ""),
 									children: c.synthetic === "actions" ? /* @__PURE__ */ jsxs("div", {
 										className: "mon-row-actions",
@@ -23173,10 +23193,19 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 	const [assigning, setAssigning] = useState(false);
 	const [assignee, setAssignee] = useState("");
 	const rootRef = useRef(null);
+	const popRef = useRef(null);
+	const [flipTop, setFlipTop] = useState(null);
+	useLayoutEffect(() => {
+		if (!open || !popRef.current || !pos) return;
+		const h = popRef.current.offsetHeight || 0;
+		const room = (window.innerHeight || 0) / uiZoom() - 8;
+		const next = pos.top + h > room ? Math.max(8, (pos.btnTop || pos.top) - h - 4) : null;
+		if (next !== flipTop) setFlipTop(next);
+	}, [open, pos, flipTop, assigning]);
 	useEffect(() => {
 		if (!open) return;
 		const close = (event) => {
-			if (!rootRef.current?.contains(event.target)) {
+			if (!rootRef.current?.contains(event.target) && !popRef.current?.contains(event.target)) {
 				setOpen(false);
 				setAssigning(false);
 			}
@@ -23195,7 +23224,8 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 				"aria-label": "Row actions",
 				onClick: (event) => {
 					const rect = fixedBox(event.currentTarget.getBoundingClientRect());
-					setPos({ top: rect.bottom + 4, right: rect.right });
+					setFlipTop(null);
+					setPos({ top: rect.bottom + 4, btnTop: rect.top, right: rect.right });
 					setOpen((value) => {
 						if (value) setAssigning(false);
 						return !value;
@@ -23203,9 +23233,13 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 				},
 				children: "⋮"
 			}),
-			open ? /* @__PURE__ */ jsxs("div", {
+			open ? createPortal(/* @__PURE__ */ jsxs("div", {
 				className: "mon-menu-pop" + (assigning ? " mon-menu-wide" : ""),
-				style: { top: pos?.top || 0, left: Math.max(8, (pos?.right || 0) - (assigning ? 220 : 132)) },
+				ref: popRef,
+				role: "menu",
+				onClick: (event) => event.stopPropagation(),
+				onMouseDown: (event) => event.stopPropagation(),
+				style: { top: flipTop ?? (pos?.top || 0), left: Math.max(8, (pos?.right || 0) - (assigning ? 220 : 176)) },
 				children: [
 					row.ceId ? /* @__PURE__ */ jsx("button", {
 						type: "button",
@@ -23318,7 +23352,7 @@ function MonRowMenu({ row, onOpen, onPreview, onRevise, onGenerate, onAssign, ca
 						children: item.label
 					}, item.label)) : [])
 				]
-			}) : null
+			}), document.body) : null
 		]
 	});
 }
@@ -23373,7 +23407,7 @@ function MonHistoryPanel({ entries }) {
 		]
 	});
 }
-function MonitoringDashboard({ variant = "active", profile = "monitor", ceList = [], rceList = [], documents = {}, documentControl = {}, users = [], onOpenCE, onReceivedBy, onStampSubmitted, onStartRevision, onRowOpen, onDecide, actingLevel = "staff", boardColors, onGeneratePending, onAssignPending, engineOn = false, familiesOn = false, suffixesOn = false }) {
+function MonitoringDashboard({ variant = "active", profile = "monitor", ceList = [], rceList = [], documents = {}, documentControl = {}, users = [], onOpenCE, onReceivedBy, onStampSubmitted, onStartRevision, onRowOpen, onDecide, canDecideRow, actingLevel = "staff", boardColors, onGeneratePending, onAssignPending, engineOn = false, familiesOn = false, suffixesOn = false }) {
 	const colors = boardColors || defaultBoardColors();
 	const [statusFilter, setStatusFilter] = useState("All");
 	const [groupFilter, setGroupFilter] = useState("Active");
@@ -23552,7 +23586,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 	const showTracking = profile !== "approval";
 	const showToolbar = profile !== "approval";
 	const showChips = variant === "active" && profile !== "approval";
-	const colCount = profile === "monitor" ? 18 : 10 + (showEstimator ? 1 : 0) + (showJobType ? 1 : 0) + (showTracking ? 4 : 0) + (showAwards ? 2 : 0);
+	const colCount = profile === "monitor" ? 18 : 11 + (showEstimator ? 1 : 0) + (showJobType ? 1 : 0) + (showTracking ? 4 : 0) + (showAwards ? 2 : 0);
 	const folded = familiesOn ? foldFamilyRows(liveRows) : foldMonitoringRows(liveRows);
 	const data = variant === "active" ? [...pendingJobs, ...folded] : liveRows;
 	const activeGroup = profile === "approval" ? "All" : groupFilter;
@@ -23752,11 +23786,12 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 			/* @__PURE__ */ jsx(StickyTable, {
 				className: "mon-table-container",
 				enabled: ceTpl1On,
+				freeze: "first",
 				children: /* @__PURE__ */ jsxs("table", {
 					className: variant === "active" ? profile === "monitor" ? "mon-table mon-active-table mon-ce-board" : "mon-table mon-active-table" : "mon-table",
 					children: variant === "active" ? [
 						/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: profile === "monitor" ? [
-							/* @__PURE__ */ jsx("th", { className: "mon-wrap", children: "Item No." }),
+							/* @__PURE__ */ jsx("th", { className: "mon-wrap mon-item-head", children: "Item No." }),
 							/* @__PURE__ */ jsx("th", { className: "mon-estimator", children: "Estimator" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-priority", children: "Priority" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-st", children: "Status" }),
@@ -23775,6 +23810,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 							/* @__PURE__ */ jsx("th", { children: "Award Remarks" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-actions", children: "Actions" })
 						] : [
+							/* @__PURE__ */ jsx("th", { className: "mon-wrap mon-item-head", children: "Item No." }),
 							/* @__PURE__ */ jsx("th", { className: "mon-priority", children: "Priority" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-st", children: "Status" }),
 							/* @__PURE__ */ jsx("th", { className: "mon-project", children: "Project" }),
@@ -23871,20 +23907,21 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 											const request = monitoringExportRequest(picked, release1SalesActor === true);
 											if (request) setExportAsk(request);
 										},
-										extras: profile === "approval" ? [
-											approvalV2 ? { label: "Approve with comment", onClick: () => {
+										extras: profile === "approval" || profile === "user" ? [
+											ceThreadsOn === true && row.ceId ? { label: "Follow up", onClick: () => setThreadRow(row) } : null,
+											approvalV2 && (profile === "approval" || canDecideRow?.(row)) ? { label: "Approve with comment", onClick: () => {
 												void askReason({ title: "Approve with comment", label: "Comment", required: true }).then((asked) => {
 													if (!asked.ok) return;
 													onDecide?.(row, "approve-comment", asked.text);
 												});
 											} } : null,
-											approvalV2 ? { label: "Request edit", onClick: () => {
+											approvalV2 && (profile === "approval" || canDecideRow?.(row)) ? { label: "Request edit", onClick: () => {
 												void askReason({ title: "Request edit", label: "What needs to change?", required: true }).then((asked) => {
 													if (!asked.ok) return;
 													onDecide?.(row, "request-edit", asked.text);
 												});
 											} } : null,
-											!engineOn ? { label: "Reject", onClick: () => {
+											!engineOn && profile === "approval" ? { label: "Reject", onClick: () => {
 												void askReason({ title: "Reject", label: "Reason for sending this estimate back", required: true }).then((asked) => {
 													if (!asked.ok) return;
 													onDecide?.(row, "reject", asked.text);
@@ -23938,6 +23975,7 @@ function MonitoringDashboard({ variant = "active", profile = "monitor", ceList =
 								/* @__PURE__ */ jsx("td", { className: "mon-remarks", children: row.awardRemarks || "—" }),
 								actionsCell
 							] : [
+								/* @__PURE__ */ jsx("td", { className: "mon-item", children: idx + 1 }),
 								priorityCell,
 								statusCell,
 								projectCell(row.client || row.clientCode),
@@ -26413,6 +26451,10 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 					onReceivedBy,
 					onStampSubmitted,
 					onStartRevision,
+					canDecideRow: (row) => approvalRows.some((ce) => ce.id === row.ceId),
+					onDecide: (row, decision, note) => {
+						onApprovalDecision?.(row.ceId, decision, note);
+					},
 					actingLevel,
 					engineOn,
 					familiesOn,
@@ -26428,7 +26470,7 @@ function Dashboard({ ceList, rceList = [], documents = {}, onNewCE, onOpenCE, on
 						children: "Approval Monitoring"
 					}), /* @__PURE__ */ jsx("p", {
 						className: "wiz-sub",
-						children: engineOn ? "Estimates waiting on your approval. Open a row to preview, then approve or request an edit." : "Estimates waiting on your approval. Open a row to preview, then approve or reject."
+						children: engineOn ? "Estimates waiting on your approval. ✓ approves as-is; ⋮ has Approve with comment and Request edit." : "Estimates waiting on your approval. Open a row to preview, then approve or reject."
 					})] })]
 				}), /* @__PURE__ */ jsx(MonitoringDashboard, {
 					variant: "active",
@@ -28623,21 +28665,21 @@ function RCEInbox({ rceList = [], onViewRCE, ceList = [], documents = {}, docume
 				{ label: "Accepted", value: acceptedPct }
 			] })
 		}),
-		/* @__PURE__ */ jsx(StickyTable, { className: "mon-table-container", enabled: ceTpl1On, children: /* @__PURE__ */ jsxs("table", {
+		/* @__PURE__ */ jsx(StickyTable, { className: "mon-table-container", enabled: ceTpl1On, freeze: "first", children: /* @__PURE__ */ jsxs("table", {
 			className: "ce-table rce-table rce-mon-table",
 			children: [
 				/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
-					/* @__PURE__ */ jsx("th", { children: "Item No." }),
+					/* @__PURE__ */ jsx("th", { className: "mon-item-head", children: "Item No." }),
 					/* @__PURE__ */ jsx("th", { children: "Priority" }),
 					/* @__PURE__ */ jsx("th", { children: "Status" }),
 					/* @__PURE__ */ jsx("th", { children: "RCE #" }),
 					/* @__PURE__ */ jsx("th", { children: "Project" }),
 					/* @__PURE__ */ jsx("th", { children: "Type" }),
-					/* @__PURE__ */ jsx("th", { children: "Date received" }),
+					/* @__PURE__ */ jsx("th", { children: "Date Received" }),
 					/* @__PURE__ */ jsx("th", { children: "Deadline" }),
 					/* @__PURE__ */ jsx("th", { children: "Aging" }),
 					/* @__PURE__ */ jsx("th", { children: "CE Status" }),
-					/* @__PURE__ */ jsx("th", { children: "Action" })
+					/* @__PURE__ */ jsx("th", { className: "mon-actions", children: "Actions" })
 				] }) }),
 				/* @__PURE__ */ jsxs("tbody", { children: [
 					shown.map((rce, idx) => {
@@ -33143,7 +33185,8 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 					}),
 					currentView === "admin" && isAdminAccount && /* @__PURE__ */ jsxs(Fragment, { children: [
 						ceTpl6On === true ? /* @__PURE__ */ jsx(PendingMasterPanel, {}) : null,
-						/* @__PURE__ */ jsx(AccessQueue, {
+						/* @__PURE__ */ jsx(AdminHub, {
+							accessQueue: /* @__PURE__ */ jsx(AccessQueue, {
 							microsoftLinkFlow: adminConfig?.features?.microsoftLinkFlow === true,
 							departmentsOn: adminConfig?.features?.release1Departments === true,
 							onAccountDepartment: (userKey, department) => {
@@ -33161,7 +33204,6 @@ function App({ initialWorkspace, onPersist, saveState, currentUserName, accountU
 								}));
 							}
 						}),
-						/* @__PURE__ */ jsx(AdminHub, {
 							config: adminConfig,
 							onChange: (next) => {
 								if (!isAdminAccount) return;

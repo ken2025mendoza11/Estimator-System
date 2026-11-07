@@ -20,6 +20,7 @@ import { DEPARTMENTS } from "../lib/estimator/departments";
 import { QUEUE_TABS, compareAccounts, linkAllowed, queueRows, reminderDue } from "../lib/estimator/loginUi";
 
 const ROLES = ["staff", "lead", "head", "admin"];
+const ROLE_LABELS = { staff: "Staff", lead: "Lead", head: "Head", admin: "Admin" };
 
 export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow, departmentsOn = false, onAccountDepartment }) {
 	const [tab, setTab] = useState("pending");
@@ -31,6 +32,9 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow, de
 	const [reason, setReason] = useState("");
 	const [entry, setEntry] = useState("");
 	const [brand, setBrand] = useState({ name: "", logo: "", contact: "" });
+	const [pickedKey, setPickedKey] = useState("");
+	const [pickRole, setPickRole] = useState("staff");
+	const [declining, setDeclining] = useState(false);
 	const reminded = useRef(new Set());
 	const linking = linkAllowed({ microsoftLinkFlow });
 
@@ -67,6 +71,7 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow, de
 	}
 
 	const visible = tab === "duplicates" ? [] : queueRows(rows, tab);
+	const picked = visible.find((row) => (row.userKey || row.email) === pickedKey) || null;
 	const due = rows.filter((row) => row.status === "pending" && reminderDue(row.requestedAt, row.remindedAt, new Date()));
 	const clientPairs = [];
 	for (let i = 0; i < rows.length; i += 1) {
@@ -78,47 +83,81 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow, de
 	}
 
 	return (
-		<section className="ce-card ce-login-queue" aria-label="Account access queue">
+		<section className="ce-card ce-login-queue adm6-queue" aria-label="Account access queue">
 			<h2 className="ce-serif">Account access</h2>
 			<p className="ce-login-copy">Pending, duplicates, active, declined, disabled, and the allowlist. A second active account with the same email is refused.</p>
-			<label className="ce-login-check">
-				<input
-					type="checkbox"
-					checked={linking}
-					onChange={(event) => onMicrosoftLinkFlow?.(event.target.checked)}
-				/>
-				<span>Microsoft link requests (off by default). A request is stored and the accounts are not linked.</span>
-			</label>
+			<div className="adm6-queue-bar">
+				<div className="ce-login-tabs adm6-filter" role="tablist" aria-label="Access queue">
+					{QUEUE_TABS.map(([id, label]) => (
+						<button key={id} type="button" role="tab" aria-selected={tab === id} className={`adm6-filter-btn ${tab === id ? "is-on" : ""}`} onClick={() => { setTab(id); setPickedKey(""); setDeclining(false); }}>
+							{label}
+						</button>
+					))}
+				</div>
+				<label className="ce-login-check adm6-quiet-check">
+					<input
+						type="checkbox"
+						checked={linking}
+						onChange={(event) => onMicrosoftLinkFlow?.(event.target.checked)}
+					/>
+					<span>Microsoft link requests (off by default). A request is stored and the accounts are not linked.</span>
+				</label>
+			</div>
 			{due.length ? (
 				<p className="ce-login-banner" role="status">
 					{due.length} pending account{due.length === 1 ? "" : "s"} waiting more than 3 hours.
 				</p>
 			) : null}
-			<div className="ce-login-tabs" role="tablist" aria-label="Access queue">
-				{QUEUE_TABS.map(([id, label]) => (
-					<button key={id} type="button" role="tab" aria-selected={tab === id} className="ce-login-btn ce-login-btn-quiet" onClick={() => setTab(id)}>
-						{label}
-					</button>
-				))}
-			</div>
 			{note ? <p className="wiz-hint" role="status">{note}</p> : null}
 			{tab !== "duplicates" && tab !== "allowlist" ? (
-				<ul className="ce-login-people">
-					{visible.map((row) => (
-						<li key={row.userKey || row.email}>
-							<span>{row.name ? `${row.name} · ` : ""}{row.email || row.userKey} · {row.role || "staff"} · {row.status || "pending"}</span>
+				<div className={`adm6-people ${picked ? "has-panel" : ""}`}>
+					<table className="ce-table adm6-people-table">
+						<thead>
+							<tr>
+								<th>Name</th>
+								<th>Email</th>
+								<th>Role</th>
+								<th>Status</th>
+								<th aria-label="Review" />
+							</tr>
+						</thead>
+						<tbody>
+							{visible.map((row) => {
+								const key = row.userKey || row.email;
+								return (
+									<tr key={key} className={pickedKey === key ? "is-picked" : ""} onClick={() => { setPickedKey(key); setPickRole(ROLES.includes(row.role) ? row.role : "staff"); setDeclining(false); }} style={{ cursor: "pointer" }}>
+										<td>{row.name || "—"}</td>
+										<td>{row.email || row.userKey}</td>
+										<td>{row.role || "staff"}</td>
+										<td>{row.status || "pending"}{row.reason ? <span className="adm6-reason"> · {row.reason}</span> : null}</td>
+										<td><button type="button" className="ce-btn-ghost ce-btn-sm">Review</button></td>
+									</tr>
+								);
+							})}
+							{visible.length === 0 ? <tr><td colSpan={5} className="ce-empty">Nobody here.</td></tr> : null}
+						</tbody>
+					</table>
+					{picked ? (
+						<aside className="adm6-side" aria-label="Selected person">
+							<div className="adm6-side-head">
+								<div>
+									<strong>{picked.name || picked.email || picked.userKey}</strong>
+									<div className="wiz-hint" style={{ margin: 0 }}>{picked.email || picked.userKey} · {picked.status || "pending"}</div>
+								</div>
+								<button type="button" className="ce-btn-ghost ce-btn-sm" aria-label="Close" onClick={() => setPickedKey("")}>×</button>
+							</div>
 							{departmentsOn ? (
 								<label className="ce-login-field">
 									<span className="ce-field-label">Department</span>
 									<select
 										className="ce-input"
-										aria-label={`Department for ${row.email || row.userKey}`}
-										value={DEPARTMENTS.includes(row.accountDepartment) ? row.accountDepartment : ""}
-										disabled={busy === row.userKey}
+										aria-label={`Department for ${picked.email || picked.userKey}`}
+										value={DEPARTMENTS.includes(picked.accountDepartment) ? picked.accountDepartment : ""}
+										disabled={busy === picked.userKey}
 										onChange={(event) => {
 											const value = event.target.value;
-											run(row.userKey, () => setAccountDepartment(row.userKey, value).then((result) => {
-												onAccountDepartment?.(row.userKey, value);
+											run(picked.userKey, () => setAccountDepartment(picked.userKey, value).then((result) => {
+												onAccountDepartment?.(picked.userKey, value);
 												return result;
 											}));
 										}}
@@ -130,29 +169,39 @@ export function AccessQueue({ microsoftLinkFlow = false, onMicrosoftLinkFlow, de
 									</select>
 								</label>
 							) : null}
-							{row.reason ? <span>{row.reason}</span> : null}
-							<span className="ce-login-actions">
+							<span className="ce-field-label">Role</span>
+							<div className="adm6-seg" role="radiogroup" aria-label="Role">
 								{ROLES.map((role) => (
-									<button key={role} type="button" className="ce-login-btn ce-login-btn-quiet" disabled={busy === row.userKey} onClick={() => run(row.userKey, () => grantUserRole(row.userKey, role))}>
-										Grant {role}
+									<button key={role} type="button" role="radio" aria-checked={pickRole === role} className={pickRole === role ? "is-on" : ""} onClick={() => setPickRole(role)}>
+										{ROLE_LABELS[role]}
 									</button>
 								))}
-								<button type="button" className="ce-login-btn ce-login-btn-quiet" disabled={busy === row.userKey} onClick={() => run(row.userKey, () => declineUserWithReason(row.userKey, reason || "Declined"))}>
+							</div>
+							<button type="button" className="ce-btn-primary adm6-grant" disabled={busy === picked.userKey} onClick={() => run(picked.userKey, () => grantUserRole(picked.userKey, pickRole))}>
+								Grant {ROLE_LABELS[pickRole]}
+							</button>
+							<div className="adm6-side-quiet">
+								<button type="button" className="ce-btn-ghost ce-btn-sm" disabled={busy === picked.userKey} onClick={() => setDeclining((v) => !v)}>
 									Decline
 								</button>
-								<button type="button" className="ce-login-btn ce-login-btn-quiet" disabled={busy === row.userKey} onClick={() => run(row.userKey, () => disableUser(row.userKey))}>
+								<button type="button" className="ce-btn-ghost ce-btn-sm" disabled={busy === picked.userKey} onClick={() => run(picked.userKey, () => disableUser(picked.userKey))}>
 									Disable
 								</button>
-							</span>
-						</li>
-					))}
-				</ul>
-			) : null}
-			{tab === "pending" ? (
-				<label className="ce-login-field">
-					<span className="ce-field-label">Decline reason</span>
-					<input className="ce-input" value={reason} onChange={(event) => setReason(event.target.value)} />
-				</label>
+							</div>
+							{declining ? (
+								<div className="adm6-decline">
+									<label className="ce-login-field">
+										<span className="ce-field-label">Decline reason</span>
+										<input className="ce-input" value={reason} onChange={(event) => setReason(event.target.value)} />
+									</label>
+									<button type="button" className="ce-btn-ghost ce-btn-sm" disabled={busy === picked.userKey} onClick={() => run(picked.userKey, () => declineUserWithReason(picked.userKey, reason || "Declined"))}>
+										Confirm decline
+									</button>
+								</div>
+							) : null}
+						</aside>
+					) : null}
+				</div>
 			) : null}
 			{tab === "duplicates" ? (
 				<div>

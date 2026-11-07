@@ -1282,6 +1282,18 @@ function FieldErrors({ messages }) {
   );
 }
 
+function ElToolHead({ tone, icon, title, sub }) {
+  return (
+    <div className="el6-tool-head">
+      <span className={`el6-tool-icon tone-${tone}`} aria-hidden="true">{icon}</span>
+      <div>
+        <h3 className="ce-serif">{title}</h3>
+        {sub ? <p className="el6-tool-sub">{sub}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false, vehicles = [], fuelPrices = [], tolls = [] }) {
   const rates = useMemo(() => normalizeCalcConstants(constants), [constants]);
   const [tool, setTool] = useState('weld');
@@ -1331,6 +1343,7 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
     };
   });
   const [stdQuery, setStdQuery] = useState('');
+  const [stdGroup, setStdGroup] = useState('All');
   useEffect(() => {
     if (!seed || !seed.inputs) return;
     const name = seed.tool === 'plate' || seed.tool === 'pipe' ? 'raw' : seed.tool;
@@ -1349,15 +1362,17 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
   const standards = EL_STANDARDS.filter(
     (s) => !stdQuery || `${s.group} ${s.name} ${s.note}`.toLowerCase().includes(stdQuery.toLowerCase())
   );
+  const stdGroups = [...new Set(EL_STANDARDS.map((s) => s.group))];
+  const shownStandards = stdGroup === 'All' ? standards : standards.filter((s) => s.group === stdGroup);
   const money = (n) => (n == null ? '—' : `₱${n.toFixed(2)}`);
 
   return (
-    <div className="dash-container">
-      <div className="dash-header">
+    <div className="dash-container el6">
+      <div className="dash-header el6-head">
         <h2 className="ce-serif">EL Calculator</h2>
-        <p className="wiz-hint">Job inputs start blank. Highlighted fields are standards or part of the formula.</p>
+        <p className="wiz-hint">Job inputs start blank. <span className="el6-yellow-tag">Yellow</span> fields are standards or part of the formula.</p>
       </div>
-      <div className="wiz-rce-mode" style={{ marginBottom: '1rem' }}>
+      <div className="wiz-rce-mode el6-tabs" style={{ marginBottom: '1rem' }}>
         {[
           ['weld', '6.1 Welding consumables'],
           ['paint', '6.2 Paints & coatings'],
@@ -1389,47 +1404,55 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
       ) : null}
 
       {tool === 'weld' && (
-        <div className="ce-card wiz-card">
-          <h3 className="ce-serif">Welding consumables</h3>
-          <div className="wiz-grid">
-            <label className="wiz-field">
-              <span className="ce-field-label">Process</span>
-              <select
-                className="ce-input"
-                value={weld.process}
-                onChange={(e) => {
-                  const process = e.target.value;
-                  setWeld({ ...weld, process, efficiency: rates.deposition[process] });
-                }}
-              >
-                <option>SMAW</option>
-                <option>GMAW</option>
-                <option>FCAW</option>
-                <option>SAW</option>
-                <option>GTAW</option>
-              </select>
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Joint</span>
-              <select
-                className="ce-input"
-                value={weld.jointType}
-                onChange={(e) => setWeld({ ...weld, jointType: e.target.value })}
-              >
-                <option value="fillet">Fillet</option>
-                <option value="groove">Groove</option>
-              </select>
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Weld length (m)</span>
-              <input className="ce-input" type="number" value={weld.lengthM} placeholder="" onChange={(e) => setWeld({ ...weld, lengthM: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">{weld.jointType === 'fillet' ? 'Leg (mm)' : 'Thickness (mm)'}</span>
-              <input className="ce-input" type="number" value={weld.sizeMm} onChange={(e) => setWeld({ ...weld, sizeMm: e.target.value })} />
-            </label>
+        <div className="el6-layout">
+          <div className="ce-card wiz-card el6-card">
+            <ElToolHead tone="weld" icon="⚡" title="Welding consumables" sub="Pick process and joint, then enter the weld." />
+            <div className="el6-label">Process</div>
+            <div className="el6-chips" role="radiogroup" aria-label="Process">
+              {['SMAW', 'GMAW', 'FCAW', 'SAW', 'GTAW'].map((process) => (
+                <button
+                  key={process}
+                  type="button"
+                  role="radio"
+                  aria-checked={weld.process === process}
+                  className={`el6-chip ${weld.process === process ? 'is-on tone-weld' : ''}`}
+                  onClick={() => setWeld({ ...weld, process, efficiency: rates.deposition[process] })}
+                >
+                  {process}
+                </button>
+              ))}
+            </div>
+            <div className="el6-label">Joint</div>
+            <div className="el6-chips" role="radiogroup" aria-label="Joint">
+              {[['fillet', 'Fillet'], ['groove', 'Groove']].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={weld.jointType === value}
+                  className={`el6-chip ${weld.jointType === value ? 'is-on tone-weld' : ''}`}
+                  onClick={() => setWeld({ ...weld, jointType: value })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="el6-row el6-row-3">
+              <label className="wiz-field">
+                <span className="ce-field-label">Weld length (m)</span>
+                <input className="ce-input" type="number" value={weld.lengthM} placeholder="" onChange={(e) => setWeld({ ...weld, lengthM: e.target.value })} />
+              </label>
+              <label className="wiz-field">
+                <span className="ce-field-label">{weld.jointType === 'fillet' ? 'Leg (mm)' : 'Thickness (mm)'}</span>
+                <input className="ce-input" type="number" value={weld.sizeMm} onChange={(e) => setWeld({ ...weld, sizeMm: e.target.value })} />
+              </label>
+              <label className="wiz-field">
+                <span className="ce-field-label">Wastage (%)</span>
+                <input className="ce-input" type="number" value={weld.wastage} onChange={(e) => setWeld({ ...weld, wastage: e.target.value })} />
+              </label>
+            </div>
             {weld.jointType === 'groove' ? (
-              <>
+              <div className="el6-row el6-row-3">
                 <label className="wiz-field">
                   <span className="ce-field-label">Included angle (°) — standard</span>
                   <input className="ce-input el-air-input" type="number" value={weld.angle} onChange={(e) => setWeld({ ...weld, angle: e.target.value })} />
@@ -1442,32 +1465,32 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
                   <span className="ce-field-label">Reinforcement (%) — standard</span>
                   <input className="ce-input el-air-input" type="number" value={weld.reinforcement} onChange={(e) => setWeld({ ...weld, reinforcement: e.target.value })} />
                 </label>
-              </>
+              </div>
             ) : null}
-            <label className="wiz-field">
-              <span className="ce-field-label">Deposition efficiency (%) — standard</span>
-              <input className="ce-input el-air-input" type="number" value={weld.efficiency} onChange={(e) => setWeld({ ...weld, efficiency: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Density (g/cm³) — standard</span>
-              <input className="ce-input el-air-input" type="number" value={weld.density} onChange={(e) => setWeld({ ...weld, density: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Wastage (%)</span>
-              <input className="ce-input" type="number" value={weld.wastage} onChange={(e) => setWeld({ ...weld, wastage: e.target.value })} />
-            </label>
+            <div className="el6-row el6-row-3">
+              <label className="wiz-field">
+                <span className="ce-field-label">Deposition efficiency (%) — standard</span>
+                <input className="ce-input el-air-input" type="number" value={weld.efficiency} onChange={(e) => setWeld({ ...weld, efficiency: e.target.value })} />
+              </label>
+              <label className="wiz-field">
+                <span className="ce-field-label">Density (g/cm³) — standard</span>
+                <input className="ce-input el-air-input" type="number" value={weld.density} onChange={(e) => setWeld({ ...weld, density: e.target.value })} />
+              </label>
+            </div>
+            <FieldErrors messages={weldCalc.messages} />
           </div>
-          <FieldErrors messages={weldCalc.messages} />
-          <div className="el-result">
+          <div className="el-result el6-hero tone-weld">
+            <div className="el6-hero-label">Required consumable</div>
+            <div className="el6-hero-value">{weldCalc.kg == null ? '— kg' : `${weldCalc.kg.toFixed(3)} kg`}</div>
             {weld.jointType === 'groove' ? (
-              <div>Weld metal <b>{weldMetalLabel(weldCalc.kgPerM, weld.reinforcement)}</b></div>
+              <div className="el6-hero-line">Weld metal <b>{weldMetalLabel(weldCalc.kgPerM, weld.reinforcement)}</b></div>
             ) : null}
-            Required consumable <b>{weldCalc.kg == null ? '—' : `${weldCalc.kg.toFixed(3)} kg`}</b>
+            <p className="el6-hero-hint">Weld metal from length × {weld.jointType === 'fillet' ? 'leg' : 'groove'} cross-section × density, ÷ deposition efficiency, + wastage.</p>
+            <div className="el6-hero-foot">{weld.process} · {weld.jointType === 'fillet' ? 'Fillet' : 'Groove'}</div>
             {onInsert && weldCalc.ok && weldCalc.kg != null ? (
               <button
                 type="button"
-                className="ce-btn-primary ce-btn-sm"
-                style={{ marginLeft: '0.75rem' }}
+                className="ce-btn-primary ce-btn-sm el6-hero-btn"
                 onClick={() =>
                   onInsert({
                     category: 'BOCM',
@@ -1488,38 +1511,53 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
       )}
 
       {tool === 'paint' && (
-        <div className="ce-card wiz-card">
-          <h3 className="ce-serif">Paints & coatings</h3>
-          <div className="wiz-grid">
-            <label className="wiz-field">
-              <span className="ce-field-label">Area (m²)</span>
-              <input className="ce-input" type="number" value={paint.area} onChange={(e) => setPaint({ ...paint, area: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Coats</span>
-              <input className="ce-input" type="number" value={paint.coats} onChange={(e) => setPaint({ ...paint, coats: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">DFT (µm)</span>
-              <input className="ce-input" type="number" value={paint.dft} onChange={(e) => setPaint({ ...paint, dft: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Volume solids (%)</span>
-              <input className="ce-input" type="number" value={paint.solids} onChange={(e) => setPaint({ ...paint, solids: e.target.value })} />
-            </label>
-            <label className="wiz-field">
-              <span className="ce-field-label">Wastage (%)</span>
-              <input className="ce-input" type="number" value={paint.wastage} onChange={(e) => setPaint({ ...paint, wastage: e.target.value })} />
-            </label>
+        <div className="el6-layout">
+          <div className="ce-card wiz-card el6-card">
+            <ElToolHead tone="paint" icon="🖌" title="Paints & coatings" sub="Area and coats, then the film build." />
+            <div className="el6-row el6-row-2">
+              <label className="wiz-field">
+                <span className="ce-field-label">Area (m²)</span>
+                <input className="ce-input" type="number" value={paint.area} onChange={(e) => setPaint({ ...paint, area: e.target.value })} />
+              </label>
+              <label className="wiz-field">
+                <span className="ce-field-label">Coats</span>
+                <span className="el6-stepper">
+                  <button type="button" aria-label="Fewer coats" onClick={() => setPaint({ ...paint, coats: String(Math.max(0, (Number(paint.coats) || 0) - 1)) })}>−</button>
+                  <input className="ce-input" type="number" value={paint.coats} onChange={(e) => setPaint({ ...paint, coats: e.target.value })} />
+                  <button type="button" aria-label="More coats" onClick={() => setPaint({ ...paint, coats: String((Number(paint.coats) || 0) + 1) })}>+</button>
+                </span>
+              </label>
+            </div>
+            <fieldset className="el6-box">
+              <legend>Film build</legend>
+              <div className="el6-row el6-row-2">
+                <label className="wiz-field">
+                  <span className="ce-field-label">DFT (µm)</span>
+                  <input className="ce-input" type="number" value={paint.dft} onChange={(e) => setPaint({ ...paint, dft: e.target.value })} />
+                </label>
+                <label className="wiz-field">
+                  <span className="ce-field-label">Volume solids (%)</span>
+                  <input className="ce-input" type="number" value={paint.solids} onChange={(e) => setPaint({ ...paint, solids: e.target.value })} />
+                </label>
+              </div>
+            </fieldset>
+            <div className="el6-row el6-row-2">
+              <label className="wiz-field">
+                <span className="ce-field-label">Wastage (%)</span>
+                <input className="ce-input" type="number" value={paint.wastage} onChange={(e) => setPaint({ ...paint, wastage: e.target.value })} />
+              </label>
+            </div>
+            <FieldErrors messages={paintCalc.messages} />
           </div>
-          <FieldErrors messages={paintCalc.messages} />
-          <div className="el-result">
-            Paint required <b>{paintCalc.litres == null ? '—' : `${paintCalc.litres.toFixed(2)} L`}</b>
+          <div className="el-result el6-hero tone-paint">
+            <div className="el6-hero-label">Paint required</div>
+            <div className="el6-hero-value">{paintCalc.litres == null ? '— L' : `${paintCalc.litres.toFixed(2)} L`}</div>
+            <div className="el6-hero-line">Coverage per coat <b>{paintCalc.coverage == null ? '—' : `${paintCalc.coverage.toFixed(2)} m²/L`}</b></div>
+            <p className="el6-hero-hint">Coverage = volume solids × 10 ÷ DFT (µm). Litres = area × coats ÷ coverage, + wastage.</p>
             {onInsert && paintCalc.ok && paintCalc.litres != null ? (
               <button
                 type="button"
-                className="ce-btn-primary ce-btn-sm"
-                style={{ marginLeft: '0.75rem' }}
+                className="ce-btn-primary ce-btn-sm el6-hero-btn"
                 onClick={() =>
                   onInsert({
                     category: 'BOCM',
@@ -1540,43 +1578,54 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
       )}
 
       {tool === 'raw' && (
-        <div className="ce-card wiz-card">
-          <h3 className="ce-serif">Raw materials</h3>
-          <div className="wiz-rce-mode">
-            <button type="button" className={`ce-pill ${raw.kind === 'plate' ? 'ce-pill-active' : ''}`} onClick={() => setRaw({ ...raw, kind: 'plate' })}>Plate</button>
-            <button type="button" className={`ce-pill ${raw.kind === 'pipe' ? 'ce-pill-active' : ''}`} onClick={() => setRaw({ ...raw, kind: 'pipe' })}>Pipe</button>
+        <div className="el6-layout">
+          <div className="ce-card wiz-card el6-card">
+            <ElToolHead
+              tone="raw"
+              icon="▦"
+              title="Raw materials"
+              sub={raw.kind === 'plate'
+                ? 'Length and width are in metres. Thickness is in millimetres. Weight = L × W × thickness × density, then cutting waste.'
+                : `Pipe weight uses the factor ${rates.pipeFactor}: (OD − wall) × wall × ${rates.pipeFactor} × length, then cutting waste.`}
+            />
+            <div className="el6-switch" role="radiogroup" aria-label="Plate or pipe">
+              <button type="button" role="radio" aria-checked={raw.kind === 'plate'} className={raw.kind === 'plate' ? 'is-on tone-raw' : ''} onClick={() => setRaw({ ...raw, kind: 'plate' })}>Plate</button>
+              <button type="button" role="radio" aria-checked={raw.kind === 'pipe'} className={raw.kind === 'pipe' ? 'is-on tone-raw' : ''} onClick={() => setRaw({ ...raw, kind: 'pipe' })}>Pipe</button>
+            </div>
+            {raw.kind === 'plate' ? (
+              <>
+                <div className="el6-row el6-row-3">
+                  <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
+                  <label className="wiz-field"><span className="ce-field-label">Width (m)</span><input className="ce-input" type="number" value={raw.width} onChange={(e) => setRaw({ ...raw, width: e.target.value })} /></label>
+                  <label className="wiz-field"><span className="ce-field-label">Thickness (mm)</span><input className="ce-input" type="number" value={raw.thick} onChange={(e) => setRaw({ ...raw, thick: e.target.value })} /></label>
+                </div>
+                <div className="el6-row el6-row-3">
+                  <label className="wiz-field"><span className="ce-field-label">Density (g/cm³) — standard</span><input className="ce-input el-air-input" type="number" value={raw.density} onChange={(e) => setRaw({ ...raw, density: e.target.value })} /></label>
+                  <label className="wiz-field"><span className="ce-field-label">Cutting waste (%)</span><input className="ce-input el-air-input" type="number" value={raw.waste} onChange={(e) => setRaw({ ...raw, waste: e.target.value })} /></label>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="el6-row el6-row-3">
+                  <label className="wiz-field"><span className="ce-field-label">Outside Ø (mm)</span><input className="ce-input" type="number" value={raw.od} onChange={(e) => setRaw({ ...raw, od: e.target.value })} /></label>
+                  <label className="wiz-field"><span className="ce-field-label">Wall thickness (mm)</span><input className="ce-input" type="number" value={raw.wt} onChange={(e) => setRaw({ ...raw, wt: e.target.value })} /></label>
+                  <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
+                </div>
+                <div className="el6-row el6-row-3">
+                  <label className="wiz-field"><span className="ce-field-label">Cutting waste (%)</span><input className="ce-input" type="number" value={raw.waste} onChange={(e) => setRaw({ ...raw, waste: e.target.value })} /></label>
+                </div>
+              </>
+            )}
+            <FieldErrors messages={rawCalc.messages} />
           </div>
-          {raw.kind === 'plate' ? (
-            <div className="wiz-grid">
-              <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
-              <label className="wiz-field"><span className="ce-field-label">Width (m)</span><input className="ce-input" type="number" value={raw.width} onChange={(e) => setRaw({ ...raw, width: e.target.value })} /></label>
-              <label className="wiz-field"><span className="ce-field-label">Thickness (mm)</span><input className="ce-input" type="number" value={raw.thick} onChange={(e) => setRaw({ ...raw, thick: e.target.value })} /></label>
-              <label className="wiz-field"><span className="ce-field-label">Density (g/cm³) — standard</span><input className="ce-input el-air-input" type="number" value={raw.density} onChange={(e) => setRaw({ ...raw, density: e.target.value })} /></label>
-            </div>
-          ) : (
-            <div className="wiz-grid">
-              <label className="wiz-field"><span className="ce-field-label">Outside Ø (mm)</span><input className="ce-input" type="number" value={raw.od} onChange={(e) => setRaw({ ...raw, od: e.target.value })} /></label>
-              <label className="wiz-field"><span className="ce-field-label">Wall thickness (mm)</span><input className="ce-input" type="number" value={raw.wt} onChange={(e) => setRaw({ ...raw, wt: e.target.value })} /></label>
-              <label className="wiz-field"><span className="ce-field-label">Length (m)</span><input className="ce-input" type="number" value={raw.length} onChange={(e) => setRaw({ ...raw, length: e.target.value })} /></label>
-            </div>
-          )}
-          <p className="wiz-hint">
-            {raw.kind === 'plate'
-              ? 'Length and width are in metres. Thickness is in millimetres. Weight = L × W × thickness × density, then cutting waste.'
-              : `Pipe weight uses the factor ${rates.pipeFactor}: (OD − wall) × wall × ${rates.pipeFactor} × length, then cutting waste.`}
-          </p>
-          <label className="wiz-field">
-            <span className="ce-field-label">Cutting waste (%)</span>
-            <input className="ce-input" type="number" value={raw.waste} onChange={(e) => setRaw({ ...raw, waste: e.target.value })} />
-          </label>
-          <FieldErrors messages={rawCalc.messages} />
-          <div className="el-result">
-            Estimated weight <b>{rawCalc.kg == null ? '—' : `${rawCalc.kg.toFixed(2)} kg`}</b>
+          <div className="el-result el6-hero tone-raw">
+            <div className="el6-hero-label">Estimated weight</div>
+            <div className="el6-hero-value">{rawCalc.kg == null ? '— kg' : `${rawCalc.kg.toFixed(2)} kg`}</div>
+            <div className="el6-hero-foot">{raw.kind === 'pipe' ? 'Pipe' : 'Plate'}</div>
             {onInsert && rawCalc.ok && rawCalc.kg != null ? (
               <button
                 type="button"
-                className="ce-btn-primary ce-btn-sm"
-                style={{ marginLeft: '0.75rem' }}
+                className="ce-btn-primary ce-btn-sm el6-hero-btn"
                 onClick={() =>
                   onInsert({
                     category: 'BOCM',
@@ -1597,99 +1646,161 @@ export function ElCalculatorView({ onInsert, constants, seed, routeFuel = false,
       )}
 
       {tool === 'air' && (
-        <div className="ce-card wiz-card">
-          <h3 className="ce-serif">Cebu Air Cargo — freight calculator</h3>
-          <p className="wiz-hint">Weight and size are the packaging, not the item. Yellow fields are the standard rate or part of the formula. Chargeable weight is the higher of gross weight and volumetric weight, rounded up to the next 0.5 kg. A blank declared value is a zero valuation charge.</p>
-          <div className="wiz-grid">
-            {[
-              ['grossKg', 'Gross weight (kg)', false],
-              ['lengthCm', 'Length (cm)', false],
-              ['widthCm', 'Width (cm)', false],
-              ['heightCm', 'Height (cm)', false],
-              ['declaredValue', 'Declared value (PHP)', false],
-              ['ratePerKg', 'Rate (PHP / kg) — standard', true],
-              ['valuationPct', 'Valuation (% of declared value) — formula', true],
-              ['otherPct', 'Other charges (% of weight + valuation) — formula', true],
-              ['vatPct', 'VAT (%) — formula', true],
-              ['bufferPct', 'Payment buffer (%) — formula', true],
-              ['divisor', 'Volumetric divisor — formula', true],
-            ].map(([key, label, standard]) => (
-              <label className="wiz-field" key={key}>
-                <span className="ce-field-label">{label}</span>
-                <input
-                  className={standard ? 'ce-input el-air-input' : 'ce-input'}
-                  type="number"
-                  value={air[key]}
-                  onChange={(e) => setAir({ ...air, [key]: e.target.value })}
-                />
-              </label>
-            ))}
+        <div className="el6-layout">
+          <div className="ce-card wiz-card el6-card">
+            <ElToolHead tone="air" icon="✈" title="Cebu Air Cargo — freight calculator" sub="Chargeable weight is the higher of gross and volumetric, rounded up to the next 0.5 kg. A blank declared value is a zero valuation charge." />
+            <div className="el6-callout">Weight and size are the <b>packaging, not the item</b>.</div>
+            <div className="el6-row el6-row-4">
+              {[
+                ['lengthCm', 'Length (cm)'],
+                ['widthCm', 'Width (cm)'],
+                ['heightCm', 'Height (cm)'],
+                ['grossKg', 'Gross weight (kg)'],
+              ].map(([key, label]) => (
+                <label className="wiz-field" key={key}>
+                  <span className="ce-field-label">{label}</span>
+                  <input className="ce-input" type="number" value={air[key]} onChange={(e) => setAir({ ...air, [key]: e.target.value })} />
+                </label>
+              ))}
+            </div>
+            <div className="el6-row el6-row-3">
+              {[
+                ['declaredValue', 'Declared value (PHP)', false],
+                ['ratePerKg', 'Rate (PHP / kg) — standard', true],
+                ['valuationPct', 'Valuation (% of declared value) — formula', true],
+              ].map(([key, label, standard]) => (
+                <label className="wiz-field" key={key}>
+                  <span className="ce-field-label">{label}</span>
+                  <input className={standard ? 'ce-input el-air-input' : 'ce-input'} type="number" value={air[key]} onChange={(e) => setAir({ ...air, [key]: e.target.value })} />
+                </label>
+              ))}
+            </div>
+            <fieldset className="el6-box">
+              <legend>Other formula fields</legend>
+              <div className="el6-row el6-row-4">
+                {[
+                  ['otherPct', 'Other charges (% of weight + valuation) — formula'],
+                  ['vatPct', 'VAT (%) — formula'],
+                  ['bufferPct', 'Payment buffer (%) — formula'],
+                  ['divisor', 'Volumetric divisor — formula'],
+                ].map(([key, label]) => (
+                  <label className="wiz-field" key={key}>
+                    <span className="ce-field-label">{label}</span>
+                    <input className="ce-input el-air-input" type="number" value={air[key]} onChange={(e) => setAir({ ...air, [key]: e.target.value })} />
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <p className="wiz-hint">Other charges are set by the Ceb Pac checker. The formula uses the standard percent until they confirm the actual amount. Actual weight is taken at the receiving warehouse. Add the payment buffer when requesting payment so the budget is not short.</p>
+            <FieldErrors messages={airFreight.messages} />
           </div>
-          <table className="ce-table" style={{ marginTop: '0.8rem' }}>
-            <tbody>
-              <tr><td>Volumetric weight</td><td className="ce-right ce-mono">{airFreight.volumetric == null ? '—' : `${airFreight.volumetric.toFixed(3)} kg`}</td></tr>
-              <tr><td>Chargeable weight</td><td className="ce-right ce-mono">{airFreight.chargeable == null ? '—' : `${airFreight.chargeable.toFixed(3)} kg`}</td></tr>
-              <tr><td>Weight charge</td><td className="ce-right ce-mono">{money(airFreight.weightCharge)}</td></tr>
-              <tr><td>Valuation charge</td><td className="ce-right ce-mono">{money(airFreight.valuation)}</td></tr>
-              <tr><td>Other charges</td><td className="ce-right ce-mono">{money(airFreight.other)}</td></tr>
-              <tr><td>VAT</td><td className="ce-right ce-mono">{money(airFreight.vat)}</td></tr>
-              <tr><td><b>Estimated total</b></td><td className="ce-right ce-mono"><b>{money(airFreight.total)}</b></td></tr>
-              <tr><td>Request of payment</td><td className="ce-right ce-mono">{money(airFreight.request)}</td></tr>
-            </tbody>
-          </table>
-          <p className="wiz-hint">Other charges are set by the Ceb Pac checker. The formula uses the standard percent until they confirm the actual amount. Actual weight is taken at the receiving warehouse. Add the payment buffer when requesting payment so the budget is not short.</p>
-          <FieldErrors messages={airFreight.messages} />
-          {onInsert && airFreight.ok && airFreight.total != null ? (
-            <button
-              type="button"
-              className="ce-btn-primary ce-btn-sm"
-              onClick={() =>
-                onInsert({
-                  category: 'MISC',
-                  section: 'B',
-                  description: 'Cebu Air Cargo',
-                  qty: 1,
-                  days: 1,
-                  unit: 'lot',
-                  unitCost: Number(airFreight.total.toFixed(2)),
-                  notes: `from EL: Cebu Air Cargo ${airFreight.chargeable.toFixed(2)} kg chargeable, est. ₱${airFreight.total.toFixed(2)}`,
-                  calc: { tool: 'air', inputs: air, constantsVersion: rates.version, result: { total: airFreight.total, chargeable: airFreight.chargeable } },
-                })
-              }
-            >
-              Add to cost estimate
-            </button>
-          ) : null}
+          <div className="el-result el6-hero tone-air">
+            <div className="el6-vs">
+              {(() => {
+                const gross = Number(air.grossKg) || 0;
+                const vol = airFreight.volumetric ?? 0;
+                const grossWins = gross >= vol && (gross > 0 || vol > 0);
+                const volWins = vol > gross;
+                return (
+                  <>
+                    <div className={`el6-vs-cell ${grossWins ? 'is-win' : ''}`}>
+                      <span>Gross</span>
+                      <b>{air.grossKg === '' ? '—' : `${gross.toFixed(3)} kg`}</b>
+                      {grossWins ? <em>higher wins</em> : null}
+                    </div>
+                    <div className={`el6-vs-cell ${volWins ? 'is-win' : ''}`}>
+                      <span>Volumetric</span>
+                      <b>{airFreight.volumetric == null ? '—' : `${airFreight.volumetric.toFixed(3)} kg`}</b>
+                      {volWins ? <em>higher wins</em> : null}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+            <div className="el6-hero-label">Chargeable weight</div>
+            <div className="el6-hero-value">{airFreight.chargeable == null ? '— kg' : `${airFreight.chargeable.toFixed(3)} kg`}</div>
+            <table className="el6-readout">
+              <tbody>
+                <tr><td>Freight (weight charge)</td><td>{money(airFreight.weightCharge)}</td></tr>
+                <tr><td>Valuation</td><td>{money(airFreight.valuation)}</td></tr>
+                <tr><td>Other charges</td><td>{money(airFreight.other)}</td></tr>
+                <tr><td>VAT</td><td>{money(airFreight.vat)}</td></tr>
+                <tr className="is-total"><td>Estimated total</td><td>{money(airFreight.total)}</td></tr>
+                <tr><td>Request of payment</td><td>{money(airFreight.request)}</td></tr>
+              </tbody>
+            </table>
+            {onInsert && airFreight.ok && airFreight.total != null ? (
+              <button
+                type="button"
+                className="ce-btn-primary ce-btn-sm el6-hero-btn"
+                onClick={() =>
+                  onInsert({
+                    category: 'MISC',
+                    section: 'B',
+                    description: 'Cebu Air Cargo',
+                    qty: 1,
+                    days: 1,
+                    unit: 'lot',
+                    unitCost: Number(airFreight.total.toFixed(2)),
+                    notes: `from EL: Cebu Air Cargo ${airFreight.chargeable.toFixed(2)} kg chargeable, est. ₱${airFreight.total.toFixed(2)}`,
+                    calc: { tool: 'air', inputs: air, constantsVersion: rates.version, result: { total: airFreight.total, chargeable: airFreight.chargeable } },
+                  })
+                }
+              >
+                Add to cost estimate
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
 
       {tool === 'std' && (
-        <div className="ce-card wiz-card">
-          <h3 className="ce-serif">Standards database</h3>
-          <div className="mon-filter" style={{ marginBottom: '0.8rem' }}>
-            <Search size={16} />
-            <input className="ce-input" placeholder="Search standards…" value={stdQuery} onChange={(e) => setStdQuery(e.target.value)} />
-          </div>
-          <table className="ce-table">
-            <thead>
-              <tr>
-                <th>Group</th>
-                <th>Standard</th>
-                <th>Value</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {standards.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.group}</td>
-                  <td>{s.name}</td>
-                  <td className="ce-mono">{s.value}</td>
-                  <td>{s.note}</td>
-                </tr>
+        <div className="ce-card wiz-card el6-card tone-std-card">
+          <ElToolHead tone="std" icon="☰" title="Standards database" sub="Reference values used by the calculators." />
+          <div className="el6-std-bar">
+            <label className="mon-filter el6-std-search">
+              <Search size={16} />
+              <input className="ce-input" placeholder="Search standards…" value={stdQuery} onChange={(e) => setStdQuery(e.target.value)} />
+            </label>
+            <div className="el6-chips" role="radiogroup" aria-label="Group">
+              {['All', ...stdGroups].map((group) => (
+                <button key={group} type="button" role="radio" aria-checked={stdGroup === group} className={`el6-chip ${stdGroup === group ? 'is-on tone-std' : ''}`} onClick={() => setStdGroup(group)}>
+                  {group}
+                </button>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
+          <div className="el6-std-scroll">
+            <table className="ce-table el6-std-table">
+              <colgroup>
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '32%' }} />
+                <col style={{ width: '20%' }} />
+                <col style={{ width: '32%' }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Group</th>
+                  <th>Standard</th>
+                  <th>Value</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shownStandards.map((s) => (
+                  <tr key={s.id}>
+                    <td><span className="el6-group-tag">{s.group}</span></td>
+                    <td>{s.name}</td>
+                    <td className="ce-mono">{s.value}</td>
+                    <td>{s.note}</td>
+                  </tr>
+                ))}
+                {shownStandards.length === 0 ? (
+                  <tr><td colSpan={4} style={{ textAlign: 'center' }}>No standards match.</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
